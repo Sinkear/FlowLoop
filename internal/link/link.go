@@ -54,6 +54,7 @@ const (
 	MethodGoalComments = "goal.comments"
 	MethodGoalList     = "goal.list"
 	MethodGoalAssign   = "goal.assign" // agent handoff — actor resolved from the run token (the HTTP surface carries no agent identity)
+	MethodGoalAuthorize = "goal.authorize" // agent parks the goal at a human-authorization gate — approve = continue (F1)
 	MethodAgentList    = "agent.list"
 	MethodSquadList    = "squad.list"
 	MethodSubGoalList  = "subgoal.list"
@@ -178,6 +179,16 @@ type GoalAssignParams struct {
 	AssigneeType string `json:"assignee_type"` // "agent" | "squad" | "human"
 	AssigneeID   string `json:"assignee_id,omitempty"`
 	HandoffNote  string `json:"handoff_note,omitempty"`
+}
+
+// GoalAuthorizeParams parks the goal at a mid-pipeline human-authorization
+// gate (F1/F3): the owner agent states WHAT the human is authorizing and
+// what happens next, the platform parks the goal when the run ends, and the
+// approval means "continue" — not the acceptance approve (which merges and
+// closes).
+type GoalAuthorizeParams struct {
+	RPCToken
+	Statement string `json:"statement"`
 }
 
 // GoalListParams lists goals (the agent resolves ids for mentions).

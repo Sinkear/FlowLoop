@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/eushing/agentwork/internal/store"
@@ -61,6 +62,12 @@ type QueryStore interface {
 	// GoalDomainType resolves a goal's domain type (repo|scratch) — the
 	// processed-card wording branches on it.
 	GoalDomainType(ctx context.Context, goalID string) (string, error)
+	// GoalParkReason returns the reason of the goal's most recent park into
+	// review (from the activity trail — goal.review_request is CLEARED when
+	// the decision resolves, so the connector's processed-card path reads
+	// history, not the live column). The prefix ("authorize:", "verify_no_verdict:",
+	// …) is how the notify layer branches an outcome's wording by park type.
+	GoalParkReason(ctx context.Context, goalID string) (string, error)
 	// GoalTitle resolves one goal's title (milestone cards carry it).
 	GoalTitle(ctx context.Context, goalID string) (string, error)
 	// AgentName resolves one agent's name (the ask card's title names the
@@ -152,6 +159,28 @@ func (q *SQLQueryStore) GoalDomainType(ctx context.Context, goalID string) (stri
 	err := q.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(d.type,'') FROM goal g JOIN domain d ON d.id = g.domain_id WHERE g.id=?`, goalID).Scan(&t)
 	return t, err
+}
+
+// GoalParkReason reads the most recent entered_review activity's reason —
+// the durable copy of WHY the goal parked. goal.review_request is cleared on
+// resolve, so the post-decision processed card must read history. Errors
+// degrade to ("", nil): an unknown reason renders the default acceptance
+// wording, never a broken card.
+func (q *SQLQueryStore) GoalParkReason(ctx context.Context, goalID string) (string, error) {
+	var detail string
+	err := q.st.DB().QueryRowContext(ctx,
+		`SELECT detail FROM activity_log WHERE goal_id=? AND action='entered_review' ORDER BY created_at DESC LIMIT 1`,
+		goalID).Scan(&detail)
+	if err != nil {
+		return "", nil // no rows / read error — degrade to the default wording
+	}
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(detail), &d); err != nil {
+		return "", nil
+	}
+	return d.Reason, nil
 }
 
 func (q *SQLQueryStore) GoalTitle(ctx context.Context, goalID string) (string, error) {

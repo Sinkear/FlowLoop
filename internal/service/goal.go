@@ -858,6 +858,22 @@ func (s *GoalService) SubmitForReview(ctx context.Context, goalID, reason string
 	if live > 0 {
 		return nil, NewValidationError("stop queued/running runs before submitting")
 	}
+	// C1 (MarkDelivered invariant): "submit for review" is the ACCEPTANCE
+	// path — it claims the deliverable is finished. A goal with pending
+	// sub-goals is NOT finished; approving it would deliver and close the
+	// goal while sub_goal rows hang in non-terminal states forever
+	// (MarkDelivered asserts "Pending sub-goals cannot exist here" — this
+	// is the check that makes the assertion true). An agent that needs a
+	// human MID-pipeline uses RequestAuthorization instead.
+	var pendingSG int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sub_goal WHERE goal_id=? AND status NOT IN ('verified','cancelled','failed')`,
+		goalID).Scan(&pendingSG); err != nil {
+		return nil, fmt.Errorf("count pending sub-goals: %w", err)
+	}
+	if pendingSG > 0 {
+		return nil, NewValidationError("goal still has pending sub-goals — finish or cancel them before submitting (request authorization for a mid-pipeline gate instead)")
+	}
 
 	res, err := tx.ExecContext(ctx,
 		`UPDATE goal SET status='review', review_request=? WHERE id=? AND status='active'`,
@@ -888,6 +904,107 @@ func (s *GoalService) SubmitForReview(ctx context.Context, goalID, reason string
 		"reason":       reason,
 		"auto_approve": false,
 	}})
+	return s.Get(ctx, goalID)
+}
+
+// RequestAuthorization (F1: the authorize primitive): the goal's owner asks a
+// HUMAN to authorize the next step MID-PIPELINE — "stop before you continue;
+// a human decides whether you may proceed". This is NOT the acceptance review
+// (决策 7-1: 机器已尽力、人做最后裁决): the goal may be far from done — pending
+// sub-goals, unstarted stages — and the decision semantics are:
+//
+//	approve = release the goal back to active and wake the owner to CONTINUE
+//	reject  = send it back active with the human's reason (human_iterations++,
+//	          successor run woken with it — same shape as a review reject)
+//
+// The call STAGES the ask (goal.review_request gains the "authorize:" prefix)
+// and the goal parks when the requesting run ENDS — the same invariant every
+// other park path keeps (no review with a live owner run: a human approving
+// during a still-running turn would let the run's own completion then promote
+// or re-park the freshly re-activated goal). The end-of-run reconcile parks
+// staged requests before the finalization guard (see reconcileOnRunEndOnce).
+//
+// F3 rides along: the statement is the "what am I approving" the old empty
+// review_request parks never carried — it lands verbatim in the approval
+// card (notify layer renders the 卡点 row), the web panel, and the feed.
+func (s *GoalService) RequestAuthorization(ctx context.Context, goalID, agentID, runID, statement string) (*Goal, error) {
+	statement = strings.TrimSpace(statement)
+	if statement == "" {
+		return nil, NewFieldRequiredError("statement")
+	}
+	// Serialize against other reconcile-keyed transitions (handoff,
+	// submit-review, resolve): the stage write must interleave cleanly with
+	// the run's own end-of-run reconcile, which reads review_request.
+	unlock := s.lockReconcile(goalID)
+	defer unlock()
+
+	g, err := s.Get(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	if g.Status != "active" {
+		return nil, NewValidationError("only an active goal can request human authorization")
+	}
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// Invariant 6, same gate as reconcile: only a LIVE OWNER run of this
+	// goal may park it. The run token already binds run→(goal, agent, run),
+	// but the role/liveness check is defense in depth — a guest (consult/
+	// review role) or an already-terminal run must not stage a park.
+	var rc goalRunContext
+	err = tx.QueryRowContext(ctx,
+		`SELECT id,goal_id,agent_id,role,is_leader_run,COALESCE(squad_id,''),status FROM run WHERE id=?`, runID).
+		Scan(&rc.RunID, &rc.GoalID, &rc.AgentID, &rc.Role, &rc.IsLeaderRun, &rc.SquadID, &rc.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, NewValidationError("run not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load run for authorize: %w", err)
+	}
+	if rc.GoalID != goalID || rc.AgentID != agentID {
+		return nil, NewValidationError("run does not match the goal/agent")
+	}
+	if rc.Status != "running" {
+		return nil, NewValidationError("authorization must be requested from a live run")
+	}
+	owns, err := s.ownRunByGoal(ctx, tx, rc, *g)
+	if err != nil {
+		return nil, err
+	}
+	if !owns {
+		return nil, NewValidationError("only the goal's owner run can request authorization")
+	}
+	// Stage the ask. review_request on an ACTIVE goal is invisible to every
+	// consumer (the UI renders it for review goals; ResolveReview requires
+	// status=review) — the end-of-run reconcile consumes it. A second call
+	// overwrites the statement (the newest ask wins).
+	reason := "authorize: " + statement
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE goal SET review_request=? WHERE id=? AND status='active'`, reason, goalID); err != nil {
+		return nil, fmt.Errorf("stage authorization request: %w", err)
+	}
+	detail, _ := json.Marshal(map[string]string{"statement": statement, "run_id": runID})
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO activity_log (id,goal_id,actor_type,actor_id,action,detail,created_at) VALUES (?,?,?,?,'authorization_requested',?,?)`,
+		newID(), goalID, "agent", agentID, string(detail), now()); err != nil {
+		return nil, fmt.Errorf("insert authorization_requested activity: %w", err)
+	}
+	// The feed must show the ask as the agent's own words — the human (and
+	// any later reader) sees exactly what is being authorized, in the goal's
+	// language (决策 6-18: materials keep their language).
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at,run_id) VALUES (?,?,'agent',?,NULL,?,?,?)`,
+		newID(), goalID, agentID, statement, now(), runID); err != nil {
+		return nil, fmt.Errorf("insert authorization request comment: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	logging.Infof("authorize: goal %q staged a human-authorization request (run %s)", g.Title, runID)
 	return s.Get(ctx, goalID)
 }
 
@@ -1145,8 +1262,8 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 
 	var g Goal
 	err = tx.QueryRowContext(ctx,
-		`SELECT id,assignee_type,assignee_id,status,category,title,created_by_type,created_by_id FROM goal WHERE id=?`, rc.GoalID).
-		Scan(&g.ID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.Title, &g.CreatedByType, &g.CreatedByID)
+		`SELECT id,assignee_type,assignee_id,status,category,title,created_by_type,created_by_id,review_request FROM goal WHERE id=?`, rc.GoalID).
+		Scan(&g.ID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.Title, &g.CreatedByType, &g.CreatedByID, &g.ReviewRequest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // goal vanished; nothing to reconcile
 	}
@@ -1256,6 +1373,50 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 
 	switch rc.Status {
 	case "completed":
+		// F1 authorize primitive: an authorization request STAGED by this
+		// run (RequestAuthorization wrote review_request="authorize: …"
+		// while the goal stayed active) PREEMPTS the finalization guard and
+		// the acceptance judgment. An authorization gate is a mid-pipeline
+		// PAUSE ("stop before you continue; a human decides whether you may
+		// proceed"), not a finalization: pending sub-goals and unstarted
+		// stages are exactly what "wait for a human" freezes around, so
+		// the guard counts below must not apply. It also preempts the HOOTL
+		// auto-complete — an agent that explicitly asked for a human
+		// decision gets one. The park reuses the acceptance-park shape
+		// (status flip + entered_review activity + goal:reviewing), but
+		// auto_approve is FORCED false (an explicit authorization ask must
+		// never silently pass) and enqueueSquadReviewTx skips authorize
+		// parks: there is no diff to review — the human reads the agent's
+		// statement and decides.
+		if g.Status == "active" && strings.HasPrefix(g.ReviewRequest, "authorize:") {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE goal SET status='review' WHERE id=? AND status='active'`, rc.GoalID)
+			if err != nil {
+				return fmt.Errorf("park goal for authorization: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				detail, _ := json.Marshal(map[string]string{"reason": g.ReviewRequest})
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO activity_log (id,goal_id,actor_type,actor_id,action,detail,created_at) VALUES (?,?,?,?,'entered_review',?,?)`,
+					newID(), rc.GoalID, "system", "", string(detail), now()); err != nil {
+					return fmt.Errorf("insert review activity: %w", err)
+				}
+				if err := s.enqueueSquadReviewTx(ctx, tx, rc.GoalID, rc.RunID, g.ReviewRequest); err != nil {
+					return fmt.Errorf("enqueue squad review: %w", err)
+				}
+				logging.Infof("authorize: goal %q parked for human authorization (run %s ended with a staged request)", g.Title, rc.RunID)
+				pendingEvents = append(pendingEvents, events.Event{Topic: "goal:reviewing", Payload: map[string]any{
+					"goal_id":      rc.GoalID,
+					"run_id":       rc.RunID,
+					"reason":       g.ReviewRequest,
+					"category":     g.Category,
+					"auto_approve": false,
+				}})
+			} else {
+				logging.Infof("authorize: goal %q staged request skipped — goal moved off active before park", g.Title)
+			}
+			break
+		}
 		// The run's report is NOT posted by the platform — the agent
 		// communicates results via `goal comment`. The run's output stream
 		// lives in chat_message (run detail view).
@@ -1654,6 +1815,12 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 	// A handoff_loop park (决策 5-7) has no deliver step at all — the
 	// duplicate-decision guard (which protects the async merge) does not apply.
 	handoffLoopPark := strings.HasPrefix(g.ReviewRequest, "handoff_loop:")
+	// An authorize park (F1) likewise has no deliver step — approve releases
+	// the goal synchronously (status flip + successor run, ONE tx), so the
+	// async-merge window the guard exists for never opens. Guard messages
+	// ("waiting for the deliver step") would be lies here; the status=review
+	// precondition already rejects stale double-clicks.
+	authorizePark := strings.HasPrefix(g.ReviewRequest, "authorize:")
 	if decision == "approve" || decision == "reject" || decision == "redirect" {
 		var lastDecision, lastRunID string
 		err := s.st.DB().QueryRowContext(ctx,
@@ -1665,7 +1832,7 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 		// cycle's approve is history (live: the reopened goal's approve was
 		// rejected with "already approved" because the FIRST cycle's row was
 		// the latest decision).
-		if err == nil && !deliverFailed && !handoffLoopPark && lastRunID == runID {
+		if err == nil && !deliverFailed && !handoffLoopPark && !authorizePark && lastRunID == runID {
 			if decision == "approve" && lastDecision == "approve" {
 				// A human action with NO trace (no decision row, no log) is
 				// indistinguishable from a broken button — the rejected
@@ -1754,6 +1921,48 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 				`UPDATE goal SET status='active', review_request='' WHERE id=? AND status='review'`, goalID); err != nil {
 				return nil, fmt.Errorf("release handoff loop: %w", err)
 			}
+			break
+		}
+		// F1 authorize park: approve = "you may continue". The deliver step
+		// must NOT run — there is nothing to accept or merge; the goal may
+		// be far from done (pending sub-goals, unstarted stages). Release
+		// back to active and wake the owner to PROCEED (P0-2, 决策 6-15②:
+		// the release and the successor run are born in ONE transaction —
+		// a crash between them would leave a run-less active goal no
+		// startup reconcile can resurrect).
+		if authorizePark {
+			tx, err := s.st.DB().BeginTx(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			res, err := tx.ExecContext(ctx,
+				`UPDATE goal SET status='active', review_request='' WHERE id=? AND status='review'`,
+				goalID)
+			if err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("release authorization: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				_ = tx.Rollback()
+				return nil, NewValidationError("goal is no longer in review")
+			}
+			// The wake note states WHAT the approval means — F3's "approve
+			// consequence" made true at the one place the owner reads it:
+			// it was authorized to CONTINUE, not to deliver. attempt resets
+			// to 1 (a fresh human-directed cycle, same as reject).
+			wakeNote := "The human approved the authorization request — continue with the next step of the plan."
+			_, runEv, err := s.enqueueOwnerIntentTx(ctx, tx, goalID, g.AssigneeType, g.AssigneeID, "active", wakeNote, decisionCommentID, "active")
+			if err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("enqueue after authorize approve: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			if runEv != nil {
+				s.bus.Publish(ctx, *runEv)
+			}
+			logging.Infof("authorize: goal %q released — owner woken to continue", g.Title)
 			break
 		}
 		// Stay in review; the daemon's deliver step is the only mover from
@@ -2462,6 +2671,14 @@ func (s *GoalService) ReconcileAllActive(ctx context.Context) (int, error) {
 // call is the collaboration itself).
 func (s *GoalService) enqueueSquadReviewTx(ctx context.Context, tx *sql.Tx, goalID, parkRunID, reviewReason string) error {
 	if strings.HasPrefix(reviewReason, "handoff_loop:") {
+		return nil
+	}
+	// F1/R3: an authorization park carries no diff to review — the reviewer
+	// runs exist for ACCEPTANCE ("inspect the diff and the feed"); pointing
+	// them at a mid-pipeline pause produced mis-framed opinions like
+	// "the upgrade was never executed" (exactly what the gate froze). The
+	// human reads the agent's authorization statement and decides.
+	if strings.HasPrefix(reviewReason, "authorize:") {
 		return nil
 	}
 	if s.runSvc == nil {

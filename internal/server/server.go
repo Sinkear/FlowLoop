@@ -616,6 +616,26 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			return out, nil
 		})
 
+		// goal.authorize (F1/F3): the owner run parks the goal at a
+		// human-authorization gate with a human-readable statement of what
+		// approval means ("继续执行下一步"). The run token identifies the
+		// owner run — a non-owner agent cannot park someone else's goal.
+		peer.Handle(link.MethodGoalAuthorize, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+			id, rpcErr := resolve(raw)
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			var p link.GoalAuthorizeParams
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "invalid params"}
+			}
+			out, err := s.goalSvc.RequestAuthorization(ctx, id.GoalID, id.AgentID, id.RunID, p.Statement)
+			if err != nil {
+				return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
+			}
+			return out, nil
+		})
+
 		peer.Handle(link.MethodGoalList, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
 			if _, rpcErr := resolve(raw); rpcErr != nil {
 				return nil, rpcErr

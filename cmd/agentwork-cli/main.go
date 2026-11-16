@@ -156,6 +156,10 @@ Subcommands:
   goal reopen --goal <id> [--reason R]       reopen a finished/cancelled goal
   goal submit-review [--reason R] <id>       submit an active goal for review (the owner's
                                              explicit close-out when no merge remains)
+  goal authorize --statement S               park the goal at a human-authorization gate:
+                                             approval means CONTINUE (no merge, no close) —
+                                             use it for mid-pipeline "wait for human" gates,
+                                             not for close-out (submit-review is that)
   goal delete <id>                           delete a goal (comma-separated batch)
   goal create --title T [--description D] [--assignee A] [--status S] [--category hitl|hootl]
                                              create a goal; --category hitl (default, human
@@ -237,6 +241,8 @@ func goalCmd(goalID, agentID string, args []string) {
 		goalReopen(args[1:])
 	case "submit-review":
 		goalSubmitReview(args[1:])
+	case "authorize":
+		goalAuthorize(args[1:])
 	case "delete":
 		goalDelete(args[1:])
 	case "create":
@@ -505,6 +511,31 @@ func goalSubmitReview(args []string) {
 	post(serverURL()+"/goals/"+rest[0]+"/submit-review", map[string]any{
 		"reason": *reason,
 	})
+}
+
+// goalAuthorize parks the goal at a HUMAN AUTHORIZATION GATE (F1/F3 fix).
+// Unlike submit-review (whose approve = merge & close), the authorize
+// approve = release: the owner run is woken to continue the plan. The
+// statement is what the approving human reads — state what is being
+// authorized and what will happen next, not a platform-internal reason.
+// Must be called from the live owner run (the token identifies it).
+func goalAuthorize(args []string) {
+	fs := flag.NewFlagSet("goal authorize", flag.ExitOnError)
+	statement := fs.String("statement", "", "what the human is authorizing + what happens next (required, human-readable)")
+	fs.Parse(args)
+	if *statement == "" {
+		fail("--statement is required")
+	}
+	var res struct {
+		ID string `json:"id"`
+	}
+	if err := rpcCall(link.MethodGoalAuthorize, link.GoalAuthorizeParams{
+		RPCToken:  rpcToken(),
+		Statement: *statement,
+	}, &res); err != nil {
+		fail("%v", err)
+	}
+	rpcPrintJSON(res)
 }
 
 // goalDelete deletes a goal (supports comma-separated batch) via dispatch.

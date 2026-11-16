@@ -39,9 +39,10 @@ import (
 // a night of uptime). token/tokenExp are guarded by mu.
 // approvalCardRec is one sent approval card's patch handle.
 type approvalCardRec struct {
-	messageID  string
-	hadPending bool   // the card showed a "审查中" hint — only then is the opinion patch meaningful
-	domainType string // repo|scratch — the processed-card wording branches on it
+	messageID    string
+	hadPending   bool   // the card showed a "审查中" hint — only then is the opinion patch meaningful
+	domainType   string // repo|scratch — the processed-card wording branches on it
+	authorizePark bool  // F1: an authorization gate — the processed card says "continue", not "merging"
 }
 
 type Notifier struct {
@@ -244,7 +245,7 @@ func (n *Notifier) onGoalReviewing(_ context.Context, e events.Event) {
 						pending = reviewers
 					}
 					if card, err := buildReviewCard(g, pending); err == nil {
-						n.sendApprovalCard(goalID, card, len(pending) > 0, g.DomainType)
+						n.sendApprovalCard(goalID, card, len(pending) > 0, g.DomainType, strings.HasPrefix(g.Reason, "authorize:"))
 						return
 					}
 				}
@@ -254,6 +255,12 @@ func (n *Notifier) onGoalReviewing(_ context.Context, e events.Event) {
 	title := n.goalTitle(ctx, goalID)
 	if title == "" {
 		title = short(goalID)
+	}
+	// F3: the fallback line must not claim a merge for a park type that has
+	// nothing to merge — an authorization park's approve means "continue".
+	if strings.HasPrefix(reason, "authorize:") {
+		n.asyncSend(fmt.Sprintf("🔔 待授权：**%s** 等你决定\n`goal %s`\n%s\n（批准 = 放行继续，不合入、不关单；驳回 = 打回重规划）", title, short(goalID), strings.TrimPrefix(reason, "authorize: ")))
+		return
 	}
 	n.asyncSend(fmt.Sprintf("🔔 待审批：**%s** 等你决定\n`goal %s`\n%s\n（批准后平台自动合入）", title, short(goalID), reason)) // domain type unknown without the store — repo wording is the default
 }
@@ -343,7 +350,7 @@ func (n *Notifier) onGoalReviewResolved(_ context.Context, e events.Event) {
 	if !ok || rec.messageID == "" {
 		return // never sent / already handled — nothing to patch
 	}
-	card, err := buildProcessedCard(goalID, decision, rec.domainType == "scratch")
+	card, err := buildProcessedCard(goalID, decision, rec.domainType == "scratch", rec.authorizePark)
 	if err != nil {
 		return
 	}
@@ -360,7 +367,7 @@ var (
 
 // sendApprovalCard sends the approval card and records its message_id for
 // the review_ready patch.
-func (n *Notifier) sendApprovalCard(goalID, cardJSON string, hadPending bool, domainType string) {
+func (n *Notifier) sendApprovalCard(goalID, cardJSON string, hadPending bool, domainType string, authorizePark bool) {
 	go func() {
 		msgID, err := n.SendCard(cardJSON)
 		if err != nil {
@@ -369,7 +376,7 @@ func (n *Notifier) sendApprovalCard(goalID, cardJSON string, hadPending bool, do
 		}
 		if msgID != "" {
 			n.mu.Lock()
-			n.approvalCards[goalID] = approvalCardRec{messageID: msgID, hadPending: hadPending, domainType: domainType}
+			n.approvalCards[goalID] = approvalCardRec{messageID: msgID, hadPending: hadPending, domainType: domainType, authorizePark: authorizePark}
 			n.mu.Unlock()
 		}
 	}()
