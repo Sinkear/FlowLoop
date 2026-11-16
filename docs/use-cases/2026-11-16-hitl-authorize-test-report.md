@@ -37,12 +37,12 @@
 
 - 方法：以伪造的 `AGENTWORK_RUN_ID`（全零串）调用 authorize，预期「run not found」拒绝。
 - 实际：调用**成功**。结论：**run 身份由签名 token 决定，客户端 env 身份被忽略**——身份伪造无效，token 权威（正向安全发现）。
-- 副作用与处置：探针调用在主 goal 真实暂存了一条授权请求；已按「newest ask wins」语义用同 run 的后续 authorize 调用覆盖为正式修正卡点（该覆盖行为本身即特性实测项）。
+- 副作用与处置：探针调用在主 goal 真实暂存了一条授权请求；已按「newest ask wins」语义用同 run 的后续 authorize 调用覆盖为正式修正卡点（该覆盖行为本身即特性实测项）。该修正卡点已获人批准——批准即清除暂存、goal 回 active 并唤醒 owner，探针副作用闭环（同一 run 的暂存请求被人批准撤销，亦验证了「approve = 清除暂存 + 继续」对非计划内请求同样成立）。
 - owner 守卫的负向用例由单元测试覆盖（`goal_authorize_test.go`）：`TestAuthorizeNonOwnerRejected`、`TestAuthorizeFromDeadRunRejected`、`TestAuthorizeParkSkipsReviewerRuns`、`TestAuthorizeSurvivesPendingSubGoals`、`TestAuthorizeDuplicateDecisionIsIdempotent`。
 
-### 场景② 中途澄清（goal comment --ask · 待执行）
+### 场景② 中途澄清（goal comment --ask · 实测中）
 
-计划：执行中向人提出真实问题（场景③放行动作的 A/B 选择），goal 不停摆、人的回复唤醒 owner run。与 authorize 的差异点：--ask 是「问询」，goal 保持 active，无审批卡。
+执行：向人提出真实问题——场景③放行动作的 A/B 选择（A. 升级全局 CLI 入口到 v0.1.1；B. 不动全局入口，放行动作改为清理测试副产物）。goal 不停摆、人的回复唤醒 owner run。与 authorize 的差异点：--ask 是「问询」，goal 保持 active，无审批卡。本轮按发现 5 的注记单独成轮，不带暂存 authorize 请求。
 
 ### 场景③ 权限放行（authorize 卡点 · 待执行）
 
