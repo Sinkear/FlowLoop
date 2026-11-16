@@ -103,6 +103,58 @@ func Open(path string) (*Store, error) {
 		// the migration because the index references it and schema.sql runs
 		// before the ALTER on an old DB.
 		`ALTER TABLE goal ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
+
+		// RSI (self-improvement): per-goal execution mode + capture knobs.
+		// Columns live in the migration for the same reason as
+		// connection_id — an old DB gains them before any index/query runs.
+		`ALTER TABLE goal ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'infer'`,
+		`ALTER TABLE goal ADD COLUMN content_capture TEXT NOT NULL DEFAULT 'redacted'`,
+		`ALTER TABLE goal ADD COLUMN budget_usd REAL NOT NULL DEFAULT 2`,
+		`ALTER TABLE goal ADD COLUMN sample_rate REAL NOT NULL DEFAULT 1`,
+		// W-RSI (2026-11-08): workflow-level observation replaces span-level
+		// trace. Sub-goal gains declared dependencies; rsi_report freezes the
+		// orchestration graph; trace_span is retired outright.
+		`ALTER TABLE sub_goal ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'`,
+		// Gating liveness + anchor (2026-11-14): a gated sub-goal's dispatch
+		// comment id is persisted at creation so the run released LATER by
+		// wakeDependentsTx can still carry the causal anchor as its
+		// trigger_comment_id (without the column the wake path had to pass "",
+		// and the report comment lost its dispatch parent). Old rows read ''.
+		`ALTER TABLE sub_goal ADD COLUMN dispatch_comment_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE rsi_report ADD COLUMN workflow_json TEXT NOT NULL DEFAULT '{}'`,
+		// training_session: span counters retire with trace_span; workflow
+		// summary columns take their place. Old trace_count/cost_usd columns
+		// stay in existing DBs as dead weight (SQLite has no DROP COLUMN in
+		// the SQLite versions we target).
+		`ALTER TABLE training_session ADD COLUMN node_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE training_session ADD COLUMN critical_path_ms INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE training_session ADD COLUMN parallel_speedup REAL NOT NULL DEFAULT 0`,
+		`ALTER TABLE training_session ADD COLUMN finding_count INTEGER NOT NULL DEFAULT 0`,
+		`DROP TABLE IF EXISTS trace_span`,
+		// Insight panel (2026-11-08): the optimization-round ledger replaces
+		// the never-written v1 snapshot table — trend data derives from rounds.
+		`DROP TABLE IF EXISTS rsi_metric_snapshot`,
+		`CREATE TABLE IF NOT EXISTS rsi_round (
+		    id               TEXT PRIMARY KEY,
+		    session_id       TEXT NOT NULL REFERENCES training_session(id),
+		    goal_id          TEXT NOT NULL,
+		    round_no         INTEGER NOT NULL,
+		    trigger          TEXT NOT NULL DEFAULT 'terminal',
+		    metrics_json     TEXT NOT NULL DEFAULT '{}',
+		    baseline_json    TEXT NOT NULL DEFAULT '{}',
+		    delta_json       TEXT NOT NULL DEFAULT '{}',
+		    finding_count    INTEGER NOT NULL DEFAULT 0,
+		    critical_count   INTEGER NOT NULL DEFAULT 0,
+		    top_category     TEXT NOT NULL DEFAULT '',
+		    top_title        TEXT NOT NULL DEFAULT '',
+		    findings_json    TEXT NOT NULL DEFAULT '[]',
+		    summary          TEXT NOT NULL DEFAULT '',
+		    narrative        TEXT NOT NULL DEFAULT '',
+		    created_at       TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_rsi_round_session ON rsi_round(session_id, round_no)`,
+		`CREATE INDEX IF NOT EXISTS idx_rsi_round_goal ON rsi_round(goal_id, created_at)`,
+
 		// HITL/HOOTL task category: a goal created by a human/agent defaults
 		// to hitl (the existing human-checkpoint flow); hootl goals finish
 		// directly on completion without entering review.

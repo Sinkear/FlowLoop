@@ -55,6 +55,14 @@ let createdGoal: { id: string; title: string } | null = null;
 let perm: NewGoalState["perm"] = null;
 
 let stewardId: string | null = null;
+
+// 页面侧 StewardSetup 手动建好管家后回调进来：让下一次 ensureClient 直接
+// 采纳这个 id，而不是再走 listAgents 兜底（新管家此刻就在列表里，但显式
+// 采纳能避免竞态，也让「刚创建就点提交」不用等轮询）。
+export function adoptSteward(id: string): void {
+  if (id) stewardId = id;
+}
+
 // 本次「交给管家」的起点时间：建成功后靠它从 /goals 里认出这条新任务，
 // 不依赖管家把 id 报回来（它可能省略、可能幻觉）。
 let startedAt = 0;

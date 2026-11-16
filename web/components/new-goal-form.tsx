@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Button, Dialog, Field, inputCls } from "@/components/ui";
 import { useCreateGoal, useHooks } from "@/lib/queries";
-import { bindGoalHook } from "@/lib/api";
-import { HOOK_EVENTS, type HookEvent } from "@/lib/types";
+import { bindGoalHook, type CreateGoalBody } from "@/lib/api";
+import { HOOK_EVENTS, type ExecutionMode, type HookEvent } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 // 新建 Goal 的表单（对话框形态）。
 // 单独抽成组件是因为两个入口都用它：任务页的「手动新建」，以及 /goals/new 里
@@ -31,6 +32,12 @@ export function NewGoalForm({
   const [assigneeType, setAssigneeType] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [assigneeErr, setAssigneeErr] = useState("");
+  // 运行模式与训练高级项（§5.6）：默认推理，高级项只在训练时展开；
+  // 默认值隐藏是因为 90% 的场景不需要动它们。
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("infer");
+  const [contentCapture, setContentCapture] = useState<"redacted" | "none" | "full">("redacted");
+  const [budgetUsd, setBudgetUsd] = useState("2");
+  const [sampleRatePct, setSampleRatePct] = useState("100");
   // 结束后执行（Hooks）：hookId → 事件。创建后按返回的 goal.id 逐个绑定
   // （后端 Create 不收 hooks 数组，走独立的 POST /goals/{id}/hooks 端点）。
   const { data: hookItems } = useHooks();
@@ -40,7 +47,7 @@ export function NewGoalForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const body: Record<string, string> = { title, category };
+    const body: CreateGoalBody = { title, category };
     if (description) body.description = description;
     if (assigneeType && assigneeId) {
       body.assignee_type = assigneeType;
@@ -66,7 +73,19 @@ export function NewGoalForm({
       }
       body.domain_id = domainId;
     }
-    createGoal.mutate(body as Record<string, string> & { title: string }, {
+    // 运行模式随 goal 一起落库：infer 只记基础指标，train 才建分析会话。
+    // （后端缺省也是 infer，这里仍显式传，便于抓包核对。）
+    body.execution_mode = executionMode;
+    if (executionMode === "train") {
+      body.content_capture = contentCapture;
+      // 数值字段做一次夹取：空输入/非法值回落到默认，不让 NaN 写进库。
+      // 后端约束：<=0 回落 2、>100 报 400，这里先夹到合法区间。
+      const budget = Number(budgetUsd);
+      body.budget_usd = Number.isFinite(budget) && budget > 0 && budget <= 100 ? budget : 2;
+      const pct = Number(sampleRatePct);
+      body.sample_rate = Number.isFinite(pct) && pct > 0 && pct <= 100 ? pct / 100 : 1;
+    }
+    createGoal.mutate(body, {
       onSuccess: async (created) => {
         // 先把勾选的 hooks 绑上再关对话框——绑定失败不吞掉（用户会以为绑上了）。
         const entries = Object.entries(hookSel);
@@ -175,6 +194,85 @@ export function NewGoalForm({
             </select>
           </Field>
         )}
+        {/* 运行模式：两栏单选卡片（不是下拉——两个选项各带一句解释，选错代价大）。 */}
+        <div className="space-y-1">
+          <span className="block text-xs font-medium text-ink-2">运行模式</span>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { value: "infer", label: "推理", desc: "只记录基础指标（耗时/状态）" },
+                { value: "train", label: "训练", desc: "记录编排与耗时元数据，完成后自动分析" },
+              ] as const
+            ).map((m) => (
+              <label
+                key={m.value}
+                className={cn(
+                  "flex cursor-pointer flex-col gap-1 rounded-md border px-3 py-2 transition-colors duration-150",
+                  executionMode === m.value
+                    ? "border-accent/50 bg-accent/10"
+                    : "border-line bg-surface-2 hover:border-line-strong"
+                )}
+              >
+                <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <input
+                    type="radio"
+                    name="execution_mode"
+                    value={m.value}
+                    checked={executionMode === m.value}
+                    onChange={() => setExecutionMode(m.value)}
+                    className="accent-accent"
+                  />
+                  {m.label}
+                </span>
+                <span className="pl-5 text-[11px] leading-relaxed text-ink-3">{m.desc}</span>
+              </label>
+            ))}
+          </div>
+          <span className="block text-xs text-ink-3">
+            训练模式记录执行编排与耗时元数据，用于“哪块慢”的分析；不训练模型权重，也不保存对话正文。
+          </span>
+        </div>
+
+        {executionMode === "train" && (
+          <div className="space-y-3 rounded-md border border-line bg-surface-2/40 p-3">
+            <div className="text-xs font-medium text-ink-2">训练高级项</div>
+            <Field label="内容采集" hint="预留字段：当前仅保存该选项，尚未读取工具正文或参数。">
+              <select
+                value={contentCapture}
+                onChange={(e) => setContentCapture(e.target.value as "redacted" | "none" | "full")}
+                className={inputCls}
+              >
+                <option value="redacted">脱敏（推荐）</option>
+                <option value="none">仅结构（不读正文）</option>
+                <option value="full">完整（含正文）</option>
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="分析预算（美元）" hint="预留字段：当前仅保存上限，尚未触发预算降级">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={budgetUsd}
+                  onChange={(e) => setBudgetUsd(e.target.value)}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="采样率（%）" hint="低于 100% 时随机跳过训练分析；当前不按任务成败豁免">
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={sampleRatePct}
+                  onChange={(e) => setSampleRatePct(e.target.value)}
+                  className={inputCls}
+                />
+              </Field>
+            </div>
+          </div>
+        )}
+
         {/* 结束后执行（Hooks）：折叠区，只有存在启用的 hook 时才出现（spec v0.2 §5.3） */}
         {enabledHooks.length > 0 && (
           <details className="rounded-lg border border-line/60 bg-surface-0/40 px-3 py-2">

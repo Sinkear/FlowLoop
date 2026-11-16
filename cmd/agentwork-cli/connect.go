@@ -170,7 +170,11 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 		cliLogf("link: dial %s: %v", wsURL, err)
 		return fmt.Errorf("dial: %w", err)
 	}
-	peer := link.NewPeer(conn)
+	// Handlers-first init: construct the peer UNSERVED, register the link's
+	// handlers (chat relay, config.push), then StartReadLoop — the daemon can
+	// push a frame the instant the socket opens, and a live reader would
+	// dispatch it against a nil handler ("method not found").
+	peer := link.NewPeerUnserved(conn)
 	defer peer.Close()
 	// Phase 2, PULL model: the machine POLLS for work over THIS link
 	// (run.poll — the daemon never writes dispatches; the push direction
@@ -269,6 +273,9 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 		}
 		return res, nil
 	})
+	// Every handler is registered — StartReadLoop must run BEFORE the first
+	// call (register) so the response can be routed back.
+	peer.StartReadLoop()
 
 	clis := probeCLIs(ctx, scanDirs)
 	cliLogf("link: probed %d agent CLI(s)", len(clis))

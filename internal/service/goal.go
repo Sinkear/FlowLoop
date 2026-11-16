@@ -61,6 +61,14 @@ type Goal struct {
 	// CurrentAgentID is the agent of the goal's latest running/queued run —
 	// the list card's "who is working right now" ('' = nobody in flight).
 	CurrentAgentID string `json:"current_agent_id"`
+	// ExecutionMode selects plain inference (default) or training. Training
+	// records every run/tool/usage event as a trace span and analyzes the
+	// goal once it reaches a terminal state. RSI (self-improvement) never
+	// changes the executing agent's behavior — it is observation + advice.
+	ExecutionMode  string  `json:"execution_mode"`
+	ContentCapture string  `json:"content_capture"` // none|redacted|full
+	BudgetUSD      float64 `json:"budget_usd"`
+	SampleRate     float64 `json:"sample_rate"`
 }
 
 // goalRunContext is what ReconcileOnRunEnd reasons about. Carried separately
@@ -95,6 +103,33 @@ type goalRunContext struct {
 }
 
 const maxAttempts = 3
+
+// nonRetryableMarkers lists failure-summary substrings that identify
+// DETERMINISTIC faults: they cannot heal with time, so a retry is theater
+// that only burns the retry budget and re-wakes the leader for nothing.
+// Whitelist starts with the narrowest high-confidence marker only
+// (model-configuration errors); transient faults keep the full retry
+// behavior below. Extend only with equally unambiguous markers.
+// (RSI R2 提案3【已批准】—— 基线重建 agentwork-int-v2 时语义化重放)
+var nonRetryableMarkers = []string{
+	"Model unavailable",
+}
+
+// isNonRetryable reports whether a failed run's summary matches a
+// deterministic (non-retryable) fault. Empty summaries are always
+// retryable — absence of evidence is not evidence of a config error.
+func isNonRetryable(summary string) bool {
+	s := strings.TrimSpace(summary)
+	if s == "" {
+		return false
+	}
+	for _, m := range nonRetryableMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
 
 // retryBackoffFor spaces retry attempts: attempt 2 waits 30s, attempt 3
 // waits 60s (capped at 5m). A transient failure (dead link, machine
@@ -134,6 +169,10 @@ type GoalService struct {
 	// (no git worktree) — the cleanup is skipped and reconcile proceeds as
 	// before. Wired by the daemon via SetStaleConflictResolver.
 	staleConf StaleConflictResolver
+
+	// rsi is the training-session / trace-analysis service. Optional: nil
+	// disables training-session creation and terminal analysis.
+	rsi *RSIService
 
 	// reconcileLocks serializes ReconcileGoal per goal (single-process): an
 	// event storm fires run.terminal + sub_goal.* concurrently, and racing
@@ -182,6 +221,11 @@ func (s *GoalService) SetRunService(rs *RunService) { s.runSvc = rs }
 // in the constructor) so tests construct GoalService without a git worktree;
 // a nil resolver simply skips stale-conflict cleanup.
 func (s *GoalService) SetStaleConflictResolver(r StaleConflictResolver) { s.staleConf = r }
+
+// SetRSI wires the RSI service. Optional: tests and CLI builds construct the
+// goal service without it, and nil simply disables training-session creation
+// and the terminal analysis trigger.
+func (s *GoalService) SetRSI(r *RSIService) { s.rsi = r }
 
 // Create inserts a goal. backlog (the semantic invariant) does not enqueue a
 // run; an ACTIVE agent/squad goal births its first run IN the same
@@ -257,6 +301,34 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		}
 	}
 
+	// RSI defaults + validation. An omitted mode is inference, so every old
+	// client keeps working; the trace knobs only apply to training goals.
+	if g.ExecutionMode == "" {
+		g.ExecutionMode = "infer"
+	}
+	if g.ExecutionMode != "infer" && g.ExecutionMode != "train" {
+		return nil, NewValidationError("execution_mode must be infer or train")
+	}
+	if g.ContentCapture == "" {
+		g.ContentCapture = "redacted"
+	}
+	switch g.ContentCapture {
+	case "none", "redacted", "full":
+	default:
+		return nil, NewValidationError("content_capture must be none, redacted, or full")
+	}
+	if g.BudgetUSD <= 0 {
+		g.BudgetUSD = 2
+	}
+	if g.BudgetUSD > 100 {
+		return nil, NewValidationError("budget_usd must be <= 100")
+	}
+	if g.SampleRate <= 0 {
+		g.SampleRate = 1
+	}
+	if g.SampleRate > 1 {
+		return nil, NewValidationError("sample_rate must be in (0,1]")
+	}
 	g.ID = newID()
 	g.CreatedAt = now()
 
@@ -271,9 +343,9 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		domainID = g.DomainID
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at,source_ref,connection_id)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		g.ID, g.Title, g.Description, domainID, g.AssigneeType, g.AssigneeID, g.Status, g.Category, g.HandoffNote, g.CreatedByType, g.CreatedByID, g.CreatedAt, g.SourceRef, g.ConnectionID); err != nil {
+		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at,source_ref,connection_id,execution_mode,content_capture,budget_usd,sample_rate)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		g.ID, g.Title, g.Description, domainID, g.AssigneeType, g.AssigneeID, g.Status, g.Category, g.HandoffNote, g.CreatedByType, g.CreatedByID, g.CreatedAt, g.SourceRef, g.ConnectionID, g.ExecutionMode, g.ContentCapture, g.BudgetUSD, g.SampleRate); err != nil {
 		return nil, fmt.Errorf("insert goal: %w", err)
 	}
 	// The creation activity carries the category: the UI timeline reads this
@@ -337,12 +409,19 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		s.bus.Publish(ctx, *runEv)
 	}
 	s.bus.Publish(ctx, events.Event{Topic: "goal:created", Payload: g})
+	// Training goals get their session row now (status waiting/skipped), so
+	// the Training tab lists the goal before its first run starts.
+	if s.rsi != nil && g.ExecutionMode == "train" {
+		if err := s.rsi.EnsureSession(context.Background(), &g); err != nil {
+			logging.Infof("rsi: ensure session for goal %s: %v", g.ID, err)
+		}
+	}
 	return &g, nil
 }
 
 func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,
+		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,
 		        (SELECT r.agent_id FROM run r WHERE r.goal_id = g.id AND r.status IN ('running','queued') ORDER BY r.created_at DESC LIMIT 1),
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
@@ -357,7 +436,7 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	for rows.Next() {
 		var g Goal
 		var domainID, currentAgent sql.NullString
-		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &currentAgent, &g.ReviewPhase); err != nil {
+		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &currentAgent, &g.ReviewPhase); err != nil {
 			return nil, err
 		}
 		g.DomainID = domainID.String
@@ -513,14 +592,14 @@ func (s *GoalService) Get(ctx context.Context, id string) (*Goal, error) {
 	var g Goal
 	var domainID, currentAgent sql.NullString
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,
+		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,
 		        (SELECT r.agent_id FROM run r WHERE r.goal_id = g.id AND r.status IN ('running','queued') ORDER BY r.created_at DESC LIMIT 1),
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
 		     ELSE 'awaiting_review' END
 		 FROM goal g WHERE g.id=?`, id).
-		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &currentAgent, &g.ReviewPhase)
+		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &currentAgent, &g.ReviewPhase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1619,6 +1698,10 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 		pendingEvents = append(pendingEvents, events.Event{Topic: "goal:finished", Payload: map[string]any{
 			"goal_id": rc.GoalID, "status": "done", "summary": doneSummary,
 		}})
+		if s.rsi != nil {
+			goalID := rc.GoalID
+			afterCommit = append(afterCommit, func() { s.rsi.OnGoalTerminal(context.Background(), goalID) })
+		}
 
 	case "failed":
 		// Team-import goals are one-shot: a retry run gets a new run_id, but
@@ -1630,7 +1713,16 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 		// "resume from prior progress" semantics; the agent re-clones each
 		// attempt anyway.)
 		isImportGoal := g.CreatedByType == "system" && g.CreatedByID == ImportCreatedByID
-		if rc.Attempt < maxAttempts && !isImportGoal {
+		// P3: deterministic faults (model/config/auth errors) cannot heal
+		// with time — same "retry buys nothing" rule as import goals above.
+		// Skip the retry and fall through to the goal-failed terminal branch
+		// with a summary that names the cause, so a human can tell
+		// "environment/config error" from "the work itself failed".
+		nonRetryable := isNonRetryable(rc.Summary)
+		if nonRetryable {
+			rc.Summary = rc.Summary + "（环境/配置错误，重试无效）"
+		}
+		if rc.Attempt < maxAttempts && !isImportGoal && !nonRetryable {
 			// Retry: enqueue a fresh run at attempt+1 on the same agent so
 			// history is preserved. P0-3 (决策 6-13): the retry run is born
 			// IN this transaction — a crash after the commit can no longer
@@ -1681,6 +1773,10 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 				"goal_id": rc.GoalID, "status": "failed", "summary": rc.Summary,
 				"agent_ran": rc.SessionID != "",
 			}})
+			if s.rsi != nil {
+				goalID := rc.GoalID
+				afterCommit = append(afterCommit, func() { s.rsi.OnGoalTerminal(context.Background(), goalID) })
+			}
 		}
 	case "cancelled":
 		// The run ended without completing or failing the goal: a timeout /
@@ -3160,6 +3256,12 @@ func (s *GoalService) MarkDelivered(ctx context.Context, goalID string, success 
 	s.bus.Publish(ctx, events.Event{Topic: event, Payload: map[string]any{
 		"goal_id": goalID, "note": note, "commits": fixCommits,
 	}})
+	// W-RSI: deliver success is a terminal path that bypasses done()/failed()
+	// — hook the training freeze here too, or a train goal that completes via
+	// deliver never analyzes (live: session stuck 'waiting' after goal done).
+	if success && s.rsi != nil {
+		s.rsi.OnGoalTerminal(context.Background(), goalID)
+	}
 	return s.Get(ctx, goalID)
 }
 

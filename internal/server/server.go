@@ -53,6 +53,8 @@ type Server struct {
 	// nil = the endpoints report "not configured").
 	templates     *service.TemplateService
 	templateApply *service.TemplateApplyService
+	// rsi: training sessions / trace analysis (optional — nil disables it).
+	rsiSvc *service.RSIService
 	// hookSvc: the lifecycle-hooks registry + executor (optional in tests).
 	hookSvc *service.HookService
 }
@@ -63,6 +65,10 @@ func New(st *store.Store, bus *events.Bus, d *daemon.Daemon, goalSvc *service.Go
 
 // SetTemplates wires the template library + apply service (kept out of New's
 // already-long parameter list — the setter matches the daemon wiring style).
+// SetRSI wires the training-session / trace-analysis service (kept out of
+// New's parameter list, like SetTemplates).
+func (s *Server) SetRSI(rsi *service.RSIService) { s.rsiSvc = rsi }
+
 func (s *Server) SetTemplates(templates *service.TemplateService, templateApply *service.TemplateApplyService) {
 	s.templates = templates
 	s.templateApply = templateApply
@@ -129,6 +135,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		TeamImport: s.teamImportSvc,
 		Intake:     s.intakeSvc,
 		Connection: service.NewConnectionService(s.st, s.bus),
+		RSI:        s.rsiSvc,
 		Hooks:      s.hookSvc,
 		// M4-B: the real-time issue triggers (github + gitcode) share the
 		// poller's create path (source_ref idempotency makes webhook + poll
@@ -262,7 +269,11 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			logging.Infof("connect: upgrade: %v", err)
 			return
 		}
-		peer := link.NewPeer(conn)
+		// Handlers-first init: construct the peer UNSERVED, register every
+		// handler, then StartReadLoop — with the reader live from the start
+		// a machine's first register frame could race handler registration
+		// and be answered "method not found" (live flake under load).
+		peer := link.NewPeerUnserved(conn)
 		// The peer binds to its machine on register; on link death the
 		// daemon drops it (dispatches then fail-fast with "machine offline").
 		// The registered id is written by the register handler and read by
@@ -407,6 +418,8 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			logging.Infof("connect: machine %s probe update: %d agent CLI(s)", p.MachineID, len(p.CLIs))
 			return link.RegisterResult{OK: true}, nil
 		})
+		// Every handler is registered — start consuming frames now.
+		peer.StartReadLoop()
 		peer.Wait()
 	})
 	// Chat keepalive: the ACP relay has no inherent traffic during an agent's
@@ -550,7 +563,10 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			logging.Infof("rpc: upgrade: %v", err)
 			return
 		}
-		peer := link.NewPeer(conn)
+		// Handlers-first init (see /connect): an agent's one-shot rpc dials
+		// and calls immediately, so an already-running reader could dispatch
+		// the first frame before its handler exists.
+		peer := link.NewPeerUnserved(conn)
 		agentSvc := service.NewAgentService(s.st, s.bus)
 
 		resolve := func(raw json.RawMessage) (*service.RunIdentity, *link.RPCError) {
@@ -699,7 +715,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			if err := json.Unmarshal(raw, &p); err != nil || p.Title == "" || p.AssigneeID == "" {
 				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "title and assignee_id are required"}
 			}
-			sg, err := s.goalSvc.CreateSubGoal(ctx, id.GoalID, p.Title, p.Description, p.AssigneeID, p.VerifierID, "agent", id.AgentID)
+			sg, err := s.goalSvc.CreateSubGoal(ctx, id.GoalID, p.Title, p.Description, p.AssigneeID, p.VerifierID, p.DependsOn, "agent", id.AgentID)
 			if err != nil {
 				return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
 			}
@@ -866,6 +882,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			return map[string]any{"goal_total": len(all), "goal_by_status": counts}, nil
 		})
 
+		peer.StartReadLoop() // every handler registered — consume frames now
 		peer.Wait()
 	})
 

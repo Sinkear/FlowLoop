@@ -6,7 +6,9 @@ import Link from "next/link";
 import { ArrowRight, Check, Loader2, PenLine, Send, Sparkles, Square, Trash2 } from "lucide-react";
 import { PageBody, PageHeader, SectionCard, Button, inputCls } from "@/components/ui";
 import { NewGoalForm } from "@/components/new-goal-form";
+import { StewardSetup } from "@/components/steward-setup";
 import {
+  adoptSteward,
   ask,
   clearPerm,
   getNewGoalServerVersion,
@@ -112,6 +114,11 @@ export default function NewGoalPage() {
               desc="写目标就行，不用写实现步骤——管家会按平台的规矩补负责人和项目。"
             >
               <div className="space-y-3 p-4">
+                <StewardSetup
+                  onCreated={(id) => {
+                    adoptSteward(id);
+                  }}
+                />
                 <textarea
                   autoFocus
                   value={text}

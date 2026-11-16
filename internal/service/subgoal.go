@@ -21,16 +21,18 @@ import (
 // rejects, unbounded) are the authoritative counters (决策 6-9) — run.attempt
 // is just the instance ordinal.
 type SubGoal struct {
-	ID               string `json:"id"`
-	GoalID           string `json:"goal_id"`
-	Title            string `json:"title"`
-	Description      string `json:"description"`
-	AssigneeID       string `json:"assignee_id"`
-	VerifierID       string `json:"verifier_id"` // '' = machine (domain verify commands)
-	Status           string `json:"status"`      // running|verifying|verified|rejected|cancelled|failed（pending/done 无写入路径，见 schema.sql）
-	ExecutionAttempt int    `json:"execution_attempt"`
-	QualityIteration int    `json:"quality_iteration"`
-	CreatedAt        string `json:"created_at"`
+	ID                string   `json:"id"`
+	GoalID            string   `json:"goal_id"`
+	Title             string   `json:"title"`
+	Description       string   `json:"description"`
+	AssigneeID        string   `json:"assignee_id"`
+	VerifierID        string   `json:"verifier_id"`         // '' = machine (domain verify commands)
+	DependsOn         []string `json:"depends_on"`          // first run waits until ALL are verified (W-RSI gating)
+	DispatchCommentID string   `json:"dispatch_comment_id"` // the leader's dispatch comment for this work item ('' = legacy row): the run released LATER by wakeDependentsTx carries it as run.trigger_comment_id, so a gated work item's report still threads to its dispatch
+	Status            string   `json:"status"`              // running|verifying|verified|rejected|cancelled|failed（pending/done 无写入路径，见 schema.sql）
+	ExecutionAttempt  int      `json:"execution_attempt"`
+	QualityIteration  int      `json:"quality_iteration"`
+	CreatedAt         string   `json:"created_at"`
 }
 
 // maxExecutionAttempts bounds the sub-goal's machine retry chain (决策 6-5,
@@ -47,7 +49,7 @@ const maxActiveSubGoals = 20
 // run enqueued. The goal's owner/status are untouched. Only the goal's owner
 // (agent run), a squad leader, or a human may create (checked by the caller —
 // the MCP tool's requireOwnerOf; the service trusts the caller identity).
-func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, description, assigneeID, verifierID, createdByType, createdByID string) (*SubGoal, error) {
+func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, description, assigneeID, verifierID string, dependsOn []string, createdByType, createdByID string) (*SubGoal, error) {
 	if title == "" {
 		return nil, NewFieldRequiredError("title")
 	}
@@ -117,6 +119,35 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 			return nil, err
 		}
 	}
+	// Depends-on gating (W-RSI 2026-11-08): normalize declared dependencies.
+	// A dep must exist, belong to the same goal, and not be terminal-failed;
+	// the graph stays acyclic by construction (deps predate the new node).
+	deps := make([]string, 0, len(dependsOn))
+	seenDeps := map[string]bool{}
+	for _, d := range dependsOn {
+		d = strings.TrimSpace(d)
+		if d == "" || seenDeps[d] {
+			continue
+		}
+		seenDeps[d] = true
+		deps = append(deps, d)
+	}
+	for _, d := range deps {
+		var depGoal, depStatus string
+		err := s.st.DB().QueryRowContext(ctx, `SELECT goal_id,status FROM sub_goal WHERE id=?`, d).Scan(&depGoal, &depStatus)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, NewValidationError(fmt.Sprintf("depends_on: sub-goal %q not found", d))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("check dependency %s: %w", d, err)
+		}
+		if depGoal != goalID {
+			return nil, NewValidationError("depends_on: sub-goal " + d + " belongs to another goal")
+		}
+		if depStatus == "failed" || depStatus == "cancelled" {
+			return nil, NewValidationError("depends_on: sub-goal " + d + " is " + depStatus + " — it can never release this work item")
+		}
+	}
 	ts := now()
 	sg := SubGoal{
 		ID:          newID(),
@@ -125,6 +156,7 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 		Description: description,
 		AssigneeID:  assigneeID,
 		VerifierID:  verifierID,
+		DependsOn:   deps,
 		Status:      "running",
 		CreatedAt:   ts,
 	}
@@ -141,9 +173,9 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sub_goal (id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		sg.ID, sg.GoalID, sg.Title, sg.Description, sg.AssigneeID, sg.VerifierID, sg.Status, sg.ExecutionAttempt, sg.QualityIteration, sg.CreatedAt); err != nil {
+		`INSERT INTO sub_goal (id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,depends_on)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		sg.ID, sg.GoalID, sg.Title, sg.Description, sg.AssigneeID, sg.VerifierID, sg.Status, sg.ExecutionAttempt, sg.QualityIteration, sg.CreatedAt, encodeDeps(deps)); err != nil {
 		return nil, fmt.Errorf("insert sub_goal: %w", err)
 	}
 	// P2-1 (决策 6-15⑩): the dispatch comment is born WITH the sub-goal and
@@ -185,14 +217,44 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 		dispatchID, sg.GoalID, createdByType, createdByID, dispatchContent, ts); err != nil {
 		return nil, fmt.Errorf("insert dispatch comment: %w", err)
 	}
-	_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, sg.ID, dispatchID)
-	if err != nil {
-		return nil, fmt.Errorf("enqueue sub-goal run: %w", err)
+	// Anchor persistence (gating liveness, 2026-11-14): a GATED sub-goal gets
+	// NO run at creation, so the dispatch comment id has nowhere to live on a
+	// run row. Persist it here, in the same transaction, and wakeDependentsTx
+	// will stamp it as the released run's trigger_comment_id — otherwise that
+	// run is born with trigger='' and the assignee's report cannot thread to
+	// the dispatch (comment.create falls back to the goal root, and the wake
+	// context degrades to "the platform").
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET dispatch_comment_id=? WHERE id=?`, dispatchID, sg.ID); err != nil {
+		return nil, fmt.Errorf("stamp dispatch comment id: %w", err)
+	}
+	sg.DispatchCommentID = dispatchID
+	// Depends-on gating: the first run is born only when every declared
+	// dependency is already verified. Otherwise the sub-goal waits (no run
+	// row ⇒ nothing claimable) and wakeDependentsTx releases it in the
+	// transaction that verifies the last unmet dep.
+	depsReady := true
+	if len(deps) > 0 {
+		var verifiedCount int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sub_goal WHERE goal_id=? AND status='verified' AND id IN (`+depsPlaceholders(len(deps))+`)`,
+			append([]any{goalID}, depsArgs(deps)...)...).Scan(&verifiedCount); err != nil {
+			return nil, fmt.Errorf("check dependencies: %w", err)
+		}
+		depsReady = verifiedCount == len(deps)
+	}
+	var runEv *events.Event
+	if depsReady {
+		_, ev, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, sg.ID, dispatchID)
+		if err != nil {
+			return nil, fmt.Errorf("enqueue sub-goal run: %w", err)
+		}
+		runEv = ev
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	logging.Infof("sub-goal: created %q (goal %s) → assignee=%s verifier=%s", sg.Title, sg.GoalID, sg.AssigneeID, sg.VerifierID)
+	logging.Infof("sub-goal: created %q (goal %s) → assignee=%s verifier=%s deps=%d gated=%v", sg.Title, sg.GoalID, sg.AssigneeID, sg.VerifierID, len(deps), !depsReady)
 	s.bus.Publish(ctx, events.Event{Topic: "sub_goal.created", Payload: map[string]any{
 		"goal_id": goalID, "sub_goal_id": sg.ID,
 	}})
@@ -205,23 +267,25 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 // GetSubGoal loads one sub-goal row.
 func (s *GoalService) GetSubGoal(ctx context.Context, id string) (*SubGoal, error) {
 	var sg SubGoal
+	var depsRaw string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at
+		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,'')
 		 FROM sub_goal WHERE id=?`, id).
-		Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt)
+		Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	sg.DependsOn = decodeDeps(depsRaw)
 	return &sg, nil
 }
 
 // ListSubGoals lists a goal's sub-goals (oldest first).
 func (s *GoalService) ListSubGoals(ctx context.Context, goalID string) ([]SubGoal, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at
+		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,'')
 		 FROM sub_goal WHERE goal_id=? ORDER BY created_at`, goalID)
 	if err != nil {
 		return nil, err
@@ -230,9 +294,11 @@ func (s *GoalService) ListSubGoals(ctx context.Context, goalID string) ([]SubGoa
 	out := []SubGoal{}
 	for rows.Next() {
 		var sg SubGoal
-		if err := rows.Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt); err != nil {
+		var depsRaw string
+		if err := rows.Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID); err != nil {
 			return nil, err
 		}
+		sg.DependsOn = decodeDeps(depsRaw)
 		out = append(out, sg)
 	}
 	return out, rows.Err()
@@ -319,6 +385,19 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 		if n, _ := res.RowsAffected(); n == 0 {
 			break // already terminal (cancelled/rejected raced) — no change
 		}
+		// Machine verification audit row (2026-11-14): the human/agent verifier
+		// path records a verification_result row in VerifySubGoal, but the
+		// MACHINE path promoted verified with NO row — so the workflow graph
+		// (which derives its v: nodes from verification_result) showed no
+		// verification node for machine-verified work. Write the audit row in
+		// the SAME transaction as the verified transition (P0-1); the row's
+		// empty verifier_run_id marks it as the machine round (schema contract:
+		// "machine verification records one row per run-end check").
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
+			newID(), sg.GoalID, sg.ID, "machine verification passed", "machine gate passed (run "+rc.RunID+")", now()); err != nil {
+			return fmt.Errorf("insert machine verification_result: %w", err)
+		}
 		changeID, err := s.materializeChangeTx(ctx, tx, sg, rc.BaseRef, rc.HeadRef)
 		if err != nil {
 			return err
@@ -334,14 +413,34 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 				"goal_id": sg.GoalID, "change_id": changeID, "sub_goal_id": sg.ID,
 			}})
 		}
+		// Depends-on gating: release gated siblings whose deps are now ALL
+		// verified (their first runs are born in THIS transaction, P0-3).
+		wakeEvs, err := s.wakeDependentsTx(ctx, tx, sg.GoalID, sg.ID)
+		if err != nil {
+			return err
+		}
+		evs = append(evs, wakeEvs...)
 	case "failed", "cancelled":
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE sub_goal SET execution_attempt=execution_attempt+1 WHERE id=? AND status IN ('running','done')`,
 			sg.ID); err != nil {
 			return fmt.Errorf("bump execution_attempt: %w", err)
 		}
+		var status string
 		var attempt int
-		_ = tx.QueryRowContext(ctx, `SELECT execution_attempt FROM sub_goal WHERE id=?`, sg.ID).Scan(&attempt)
+		if err := tx.QueryRowContext(ctx, `SELECT status, execution_attempt FROM sub_goal WHERE id=?`, sg.ID).Scan(&status, &attempt); err != nil {
+			return fmt.Errorf("reload sub-goal after failure: %w", err)
+		}
+		// Only a still-RUNNING sub-goal continues its retry chain. A CANCELLED
+		// sub-goal must never be resurrected: CancelSubGoal cancelled its queued
+		// runs in the cancel transaction, and the daemon then kills the in-flight
+		// one — that run's late terminal outcome lands right here, and without
+		// this guard the bounded retry would enqueue a fresh run on a work item
+		// the owner already cancelled. (Any other raced terminal state is the
+		// same: no retry, no status write.)
+		if status != "running" {
+			break
+		}
 		if attempt < maxExecutionAttempts {
 			// Retry the assignee — the retry run is born in THIS transaction
 			// (P0-3): a crash can no longer lose the successor run.
@@ -357,12 +456,24 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 			}
 		} else {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE sub_goal SET status='failed' WHERE id=? AND status IN ('running','done')`, sg.ID); err != nil {
+				`UPDATE sub_goal SET status='failed' WHERE id=? AND status='running'`, sg.ID); err != nil {
 				return fmt.Errorf("fail sub-goal: %w", err)
 			}
 			evs = append(evs, events.Event{Topic: "sub_goal.failed", Payload: map[string]any{
 				"goal_id": sg.GoalID, "sub_goal_id": sg.ID, "execution_attempt": attempt,
 			}})
+			// LIVENESS (2026-11-14): the retry chain is exhausted — this
+			// dependency can never verify, so every still-gated dependent would
+			// otherwise wait forever (no run is born for it, nothing reconciles
+			// it, the goal finalization guard counts it pending, and `goal wait`
+			// burns its 10min timeout). Cascade the failure to those dependents
+			// in THIS transaction. A dependency that merely failed an attempt
+			// (attempt < max, retry above) is NOT cascaded — it may still verify.
+			cascadeEvs, err := s.failGatedDependentsTx(ctx, tx, sg.GoalID, sg.ID)
+			if err != nil {
+				return err
+			}
+			evs = append(evs, cascadeEvs...)
 		}
 	}
 
@@ -541,6 +652,12 @@ func (s *GoalService) VerifySubGoal(ctx context.Context, runID, verdict, summary
 				"goal_id": sg.GoalID, "change_id": changeID, "sub_goal_id": sg.ID,
 			}})
 		}
+		// Depends-on gating: release gated siblings (first runs born here).
+		wakeEvs, err := s.wakeDependentsTx(ctx, tx, sg.GoalID, sg.ID)
+		if err != nil {
+			return err
+		}
+		evs = append(evs, wakeEvs...)
 	} else {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE sub_goal SET status='running', quality_iteration=quality_iteration+1 WHERE id=? AND status='verifying'`,
@@ -1202,8 +1319,19 @@ func (s *GoalService) ListVerificationResults(ctx context.Context, subGoalID str
 // CancelSubGoal cancels a sub-goal (owner management, 决策 6-1): conditional
 // transition on non-terminal states; the sub-goal's queued run is dropped and
 // the daemon kills a running one (sub_goal.cancelled event → runCancels).
+//
+// LIVENESS (2026-11-14): a cancelled dependency can never verify either, so
+// the cancellation and the cascade to its still-gated dependents happen in ONE
+// transaction — without it a gated child stays running with no run, forever
+// holds the goal's finalization guard, and makes `goal wait` time out.
 func (s *GoalService) CancelSubGoal(ctx context.Context, subGoalID string) (*SubGoal, error) {
-	res, err := s.st.DB().ExecContext(ctx,
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
 		`UPDATE sub_goal SET status='cancelled' WHERE id=? AND status NOT IN ('verified','cancelled','failed')`,
 		subGoalID)
 	if err != nil {
@@ -1212,18 +1340,28 @@ func (s *GoalService) CancelSubGoal(ctx context.Context, subGoalID string) (*Sub
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, NewValidationError("the sub-goal is already terminal")
 	}
-	if _, err := s.st.DB().ExecContext(ctx,
+	var goalID string
+	if err := tx.QueryRowContext(ctx, `SELECT goal_id FROM sub_goal WHERE id=?`, subGoalID).Scan(&goalID); err != nil {
+		return nil, fmt.Errorf("load cancelled sub-goal: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE run SET status='cancelled' WHERE sub_goal_id=? AND status='queued'`, subGoalID); err != nil {
 		return nil, fmt.Errorf("cancel sub-goal queued runs: %w", err)
 	}
-	sg, err := s.GetSubGoal(ctx, subGoalID)
+	cascadeEvs, err := s.failGatedDependentsTx(ctx, tx, goalID, subGoalID)
 	if err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	s.bus.Publish(ctx, events.Event{Topic: "sub_goal.cancelled", Payload: map[string]any{
-		"goal_id": sg.GoalID, "sub_goal_id": sg.ID,
+		"goal_id": goalID, "sub_goal_id": subGoalID,
 	}})
-	return sg, nil
+	for _, e := range cascadeEvs {
+		s.bus.Publish(ctx, e)
+	}
+	return s.GetSubGoal(ctx, subGoalID)
 }
 
 // RetrySubGoal re-arms a terminal-failed sub-goal: reset execution_attempt=0
@@ -1238,12 +1376,34 @@ func (s *GoalService) RetrySubGoal(ctx context.Context, subGoalID string) (*SubG
 	}
 	defer tx.Rollback()
 
-	var goalID string
-	if err := tx.QueryRowContext(ctx, `SELECT goal_id FROM sub_goal WHERE id=?`, subGoalID).Scan(&goalID); err != nil {
+	var goalID, depsRaw, status string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT goal_id, COALESCE(depends_on,'[]'), status FROM sub_goal WHERE id=?`, subGoalID).
+		Scan(&goalID, &depsRaw, &status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("load sub-goal: %w", err)
+	}
+	if status != "failed" {
+		return nil, NewValidationError("the sub-goal is not failed — nothing to retry")
+	}
+	// GATING (2026-11-14): a retry must not BYPASS depends_on. The retry makes
+	// the work item runnable again — exactly what CreateSubGoal refuses while a
+	// dependency is unsatisfied and what wakeDependentsTx enforces for a
+	// released child. Without this check a failed gated child could be re-armed
+	// and run before its dependencies verify (the gate would only be
+	// cosmetic). The unmet deps are named so the owner knows what to restore
+	// first (typically RetrySubGoal on a failed dependency, or waiting for a
+	// verify run).
+	if deps := decodeDeps(depsRaw); len(deps) > 0 {
+		statuses, err := depStatusesTx(ctx, tx, deps)
+		if err != nil {
+			return nil, err
+		}
+		if unmet := unmetDeps(deps, statuses); len(unmet) > 0 {
+			return nil, NewValidationError("retry refused: depends_on is not satisfied (unmet: " + strings.Join(unmet, ", ") + ") — restore the dependencies first")
+		}
 	}
 
 	res, err := tx.ExecContext(ctx,
@@ -1312,4 +1472,298 @@ func (s *GoalService) WaitChildren(ctx context.Context, goalID string) ([]SubGoa
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// wakeDependentsTx releases dependency-gated sub-goals after a verified
+// transition (W-RSI depends_on gating, 2026-11-08): a gated sub-goal is
+// created WITHOUT its first run; the first run is enqueued here in the SAME
+// transaction that verified the last unmet dependency (P0-3 — the run cannot
+// be lost to a crash). Returns run events for post-commit publish.
+//
+// LIVENESS (2026-11-14): a dependency that DIED (retry chain exhausted →
+// failed, or cancelled) can never verify, so a dependent gated on it must not
+// be `continue`d past forever. The cascade runs first, in this transaction:
+// every gated dependent of a dead dependency goes terminally failed with a
+// system comment (failGatedDependentsTx). The per-candidate dead-dep check
+// below is the defensive belt to that suspenders — a dead dependency can never
+// silently keep a child parked.
+func (s *GoalService) wakeDependentsTx(ctx context.Context, tx *sql.Tx, goalID, justVerified string) ([]events.Event, error) {
+	evs, err := s.failGatedDependentsTx(ctx, tx, goalID, justVerified)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := gatedSubGoalsTx(ctx, tx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range pending {
+		if len(g.deps) == 0 {
+			continue // never created without a run — ungated
+		}
+		statuses, err := depStatusesTx(ctx, tx, g.deps)
+		if err != nil {
+			return nil, err
+		}
+		if deadDep, deadStatus := firstDeadDep(g.deps, statuses); deadDep != "" {
+			ev, err := s.failGatedSubGoalTx(ctx, tx, goalID, g.id, deadDep, deadStatus)
+			if err != nil {
+				return nil, err
+			}
+			if ev != nil {
+				evs = append(evs, *ev)
+			}
+			continue
+		}
+		ready := true
+		for _, d := range g.deps {
+			if statuses[d] != "verified" {
+				ready = false
+				break
+			}
+		}
+		if !ready {
+			continue
+		}
+		// ANCHOR (2026-11-14): the released run carries the sub-goal's dispatch
+		// comment id (persisted by CreateSubGoal) as its trigger_comment_id, so
+		// the assignee's report threads to the dispatch and the wake context
+		// names the leader instead of degrading to "the platform". Legacy rows
+		// have '' — the run keeps no anchor, exactly the old behaviour.
+		_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, g.id, g.dispatchID)
+		if err != nil {
+			return nil, fmt.Errorf("wake gated sub-goal %s: %w", g.id, err)
+		}
+		logging.Infof("sub-goal: released %s — all depends_on verified (trigger %s)", g.id, justVerified)
+		evs = append(evs, events.Event{Topic: "sub_goal.released", Payload: map[string]any{
+			"goal_id": goalID, "sub_goal_id": g.id, "trigger_sub_goal_id": justVerified,
+		}})
+		if runEv != nil {
+			evs = append(evs, *runEv)
+		}
+	}
+	return evs, nil
+}
+
+// gatedSubGoal is a dependency-gated work item still waiting for release: it is
+// 'running' and has NO sub-goal run yet (its first run is born only when every
+// dependency verifies, or it is released by wakeDependentsTx). dispatchID is
+// the dispatch comment anchor persisted at creation (” on legacy rows).
+type gatedSubGoal struct {
+	id         string
+	deps       []string
+	dispatchID string
+}
+
+// gatedSubGoalsTx scans a goal's still-gated work items — the release
+// candidates and the cascade candidates are the same set (sub-goals that are
+// running but have no role='subgoal' run yet).
+func gatedSubGoalsTx(ctx context.Context, tx *sql.Tx, goalID string) ([]gatedSubGoal, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, COALESCE(depends_on,'[]'), COALESCE(dispatch_comment_id,'') FROM sub_goal
+		 WHERE goal_id=? AND status='running'
+		   AND NOT EXISTS (SELECT 1 FROM run WHERE run.sub_goal_id=sub_goal.id AND run.role='subgoal')`,
+		goalID)
+	if err != nil {
+		return nil, fmt.Errorf("scan gated sub-goals: %w", err)
+	}
+	defer rows.Close()
+	var pending []gatedSubGoal
+	for rows.Next() {
+		var g gatedSubGoal
+		var depsRaw string
+		if err := rows.Scan(&g.id, &depsRaw, &g.dispatchID); err != nil {
+			return nil, err
+		}
+		g.deps = decodeDeps(depsRaw)
+		pending = append(pending, g)
+	}
+	return pending, rows.Err()
+}
+
+// depStatusesTx loads the current status of every dependency id. An id absent
+// from the map has NO row and is treated as dead by firstDeadDep — a vanished
+// dependency can never verify.
+func depStatusesTx(ctx context.Context, tx *sql.Tx, deps []string) (map[string]string, error) {
+	out := make(map[string]string, len(deps))
+	if len(deps) == 0 {
+		return out, nil
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id,status FROM sub_goal WHERE id IN (`+depsPlaceholders(len(deps))+`)`, depsArgs(deps)...)
+	if err != nil {
+		return nil, fmt.Errorf("load dependency statuses: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, err
+		}
+		out[id] = status
+	}
+	return out, rows.Err()
+}
+
+// firstDeadDep returns the first dependency that can never verify — failed
+// (the retry chain is exhausted) or cancelled — plus its status. A dependency
+// with no row at all is dead too ("missing"). Empty id + status means every
+// dependency is still alive (running/verifying) or verified.
+func firstDeadDep(deps []string, statuses map[string]string) (depID, status string) {
+	for _, d := range deps {
+		st, ok := statuses[d]
+		if !ok {
+			return d, "missing"
+		}
+		if st == "failed" || st == "cancelled" {
+			return d, st
+		}
+	}
+	return "", ""
+}
+
+// unmetDeps renders the dependencies that are not verified as "id (status)"
+// (or "id (missing)") for the RetrySubGoal validation message.
+func unmetDeps(deps []string, statuses map[string]string) []string {
+	var out []string
+	for _, d := range deps {
+		st, ok := statuses[d]
+		if !ok {
+			out = append(out, d+" (missing)")
+			continue
+		}
+		if st != "verified" {
+			out = append(out, d+" ("+st+")")
+		}
+	}
+	return out
+}
+
+// failGatedDependentsTx cascades a dependency's TERMINAL death (failed after
+// the retry chain is exhausted, or cancelled) to the sub-goals it gates, in the
+// caller's transaction (liveness fix, 2026-11-14).
+//
+// The defect it closes: a gated sub-goal is born WITHOUT a run, and only
+// wakeDependentsTx can release it — but that only happens when a dependency
+// VERIFIES. A dead dependency can never verify, so the child stayed 'running'
+// with no run forever: nothing reconciles it, the goal's finalization guard
+// counts it pending (so the goal can never reach done/review), and `goal wait`
+// burns its 10min timeout. A dependency that merely failed ONE attempt is still
+// retrying (attempt < maxExecutionAttempts, status='running') and is NOT
+// cascaded — it may still verify.
+//
+// Transitivity: a cascaded dependent becomes terminally failed itself, i.e. a
+// dead dependency of ITS dependents — so the loop repeats to a fixpoint (A
+// dies → B gated on A fails → C gated on B fails). Every iteration permanently
+// removes at least one candidate (its status leaves 'running'), so this
+// terminates.
+func (s *GoalService) failGatedDependentsTx(ctx context.Context, tx *sql.Tx, goalID, triggerSGID string) ([]events.Event, error) {
+	var evs []events.Event
+	for {
+		pending, err := gatedSubGoalsTx(ctx, tx, goalID)
+		if err != nil {
+			return nil, err
+		}
+		changed := false
+		for _, g := range pending {
+			if len(g.deps) == 0 {
+				continue
+			}
+			statuses, err := depStatusesTx(ctx, tx, g.deps)
+			if err != nil {
+				return nil, err
+			}
+			deadDep, deadStatus := firstDeadDep(g.deps, statuses)
+			if deadDep == "" {
+				continue
+			}
+			ev, err := s.failGatedSubGoalTx(ctx, tx, goalID, g.id, deadDep, deadStatus)
+			if err != nil {
+				return nil, err
+			}
+			if ev != nil {
+				evs = append(evs, *ev)
+				changed = true
+			}
+		}
+		if !changed {
+			if len(evs) > 0 {
+				logging.Infof("sub-goal: cascaded %d gated dependent(s) after dependency %s became terminal (goal %s)", len(evs), triggerSGID, goalID)
+			}
+			return evs, nil
+		}
+	}
+}
+
+// failGatedSubGoalTx terminally fails ONE still-gated dependent whose
+// dependency is dead and records the reason as a SYSTEM comment (the platform's
+// voice): the owner/human must see WHY a work item died without ever running.
+// The UPDATE is conditional on 'running' AND no role='subgoal' run — a child
+// released between the scan and this write is never clobbered (nil event).
+func (s *GoalService) failGatedSubGoalTx(ctx context.Context, tx *sql.Tx, goalID, sgID, depID, depStatus string) (*events.Event, error) {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET status='failed'
+		  WHERE id=? AND status='running'
+		    AND NOT EXISTS (SELECT 1 FROM run WHERE run.sub_goal_id=? AND run.role='subgoal')`,
+		sgID, sgID)
+	if err != nil {
+		return nil, fmt.Errorf("fail gated sub-goal %s: %w", sgID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, nil
+	}
+	reason := "不存在"
+	switch depStatus {
+	case "failed":
+		reason = "失败"
+	case "cancelled":
+		reason = "取消"
+	}
+	content := fmt.Sprintf("依赖 %s %s，无法满足门控，该工作项已置为 failed。", depID, reason)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
+		newID(), goalID, content, now()); err != nil {
+		return nil, fmt.Errorf("insert gating-failure comment: %w", err)
+	}
+	logging.Infof("sub-goal: failed gated %s — dependency %s is %s", sgID, depID, depStatus)
+	ev := events.Event{Topic: "sub_goal.failed", Payload: map[string]any{
+		"goal_id": goalID, "sub_goal_id": sgID, "execution_attempt": 0,
+		"cascade": true, "depends_on_failed": depID, "dependency_status": depStatus,
+	}}
+	return &ev, nil
+}
+
+// decodeDeps parses a sub_goal.depends_on JSON array (bad JSON → nil).
+func decodeDeps(raw string) []string {
+	var out []string
+	if raw == "" {
+		return nil
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}
+
+// encodeDeps serializes a dependency list to the JSON column form.
+func encodeDeps(deps []string) string {
+	if len(deps) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(deps)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// depsPlaceholders renders "?,?,?" for an IN clause.
+func depsPlaceholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+// depsArgs lifts []string to []any for database/sql.
+func depsArgs(deps []string) []any {
+	out := make([]any, len(deps))
+	for i, d := range deps {
+		out[i] = d
+	}
+	return out
 }

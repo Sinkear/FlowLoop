@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Trash2, Send, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui";
+import { StewardSetup } from "@/components/steward-setup";
 import { AcpChatClient, ChatEvent, PermissionRequest } from "@/lib/acp";
 import { describeStewardFailure } from "@/lib/steward";
 import { StreamCards } from "@/lib/run-messages";
@@ -280,9 +281,13 @@ export function StewardChat({ className }: { className?: string }) {
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {noAgents && (
-          <p className="py-10 text-center text-sm text-ink-3">
-            管家未就绪——连接一台机器并重启服务后自动创建。
-          </p>
+          <StewardSetup
+            className="mx-auto my-8 max-w-md"
+            onCreated={(id) => {
+              setNoAgents(false);
+              setSelectedId(id);
+            }}
+          />
         )}
         {!noAgents && messages.length === 0 && (
           isStewardChat ? (

@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useGoal, useAgents, useSquads, useGoalEvents } from "@/lib/queries";
+import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -12,7 +12,8 @@ import { GoalChanges } from "@/components/goal-changes";
 import { GoalHooksPanel } from "@/components/goal-hooks-panel";
 import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
-import { Badge, AttentionChip, PageBody } from "@/components/ui";
+import { Badge, AttentionChip, PageBody, SectionCard } from "@/components/ui";
+import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import type { Goal } from "@/lib/types";
 
 export default function GoalDetailPage() {
@@ -32,6 +33,12 @@ function GoalDetailPageInner() {
   const { data: goal, isLoading } = useGoal(id);
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
+  const {
+    data: workflow,
+    isLoading: workflowLoading,
+    isError: workflowError,
+    error: workflowErr,
+  } = useGoalWorkflow(id);
 
   if (isLoading) return <div className="p-8 text-sm text-ink-3">加载中…</div>;
   if (!goal) return <div className="p-8 text-sm text-ink-3">找不到 Goal。</div>;
@@ -98,6 +105,26 @@ function GoalDetailPageInner() {
 
       {/* Changes（v2：子任务的逻辑交付物 + 修订史——owner 的集成视图） */}
       <GoalChanges goalId={id} />
+
+      {/* 编排：live DAG（训练分析里冻结的是同一张图的终态版本） */}
+      <SectionCard
+        title="编排"
+        count={workflow?.nodes?.length}
+        desc="只读编排图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后训练分析会冻结同一张图"
+        bodyClassName="p-0"
+      >
+        <WorkflowGraphView
+          graph={workflow}
+          loading={workflowLoading}
+          error={
+            workflowError
+              ? workflowErr instanceof Error
+                ? workflowErr.message
+                : String(workflowErr)
+              : null
+          }
+        />
+      </SectionCard>
 
       {/* Hooks（v1：任务结束后的自定义脚本——生效绑定 = goal 级 + 项目继承） */}
       <GoalHooksPanel goalId={id} goalStatus={goal.status} />
