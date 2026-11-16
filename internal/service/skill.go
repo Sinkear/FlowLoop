@@ -33,7 +33,7 @@ type Skill struct {
 
 // skillSelectColumns is the canonical skill-row projection. Every skill read
 // must use it so the remote-source columns are never forgotten.
-const skillSelectColumns = `id,name,description,created_at,repo_url,repo_provider,repo_branch,repo_path,repo_token,last_synced_at,last_sync_action,last_remote_sha`
+const skillSelectColumns = `id,name,description,created_at,repo_url,repo_provider,repo_branch,repo_path,repo_token,last_synced_at,last_sync_action,last_remote_sha,last_sync_digest`
 
 // skillRowScanner is satisfied by *sql.Row and *sql.Rows.
 type skillRowScanner interface {
@@ -46,13 +46,14 @@ func scanSkill(row skillRowScanner) (*Skill, error) {
 		sk                                          Skill
 		repoURL, provider, branch, path, token      string
 		lastSyncedAt, lastSyncAction, lastRemoteSHA string
+		lastSyncDigest                              string
 	)
 	if err := row.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.CreatedAt,
 		&repoURL, &provider, &branch, &path, &token,
-		&lastSyncedAt, &lastSyncAction, &lastRemoteSHA); err != nil {
+		&lastSyncedAt, &lastSyncAction, &lastRemoteSHA, &lastSyncDigest); err != nil {
 		return nil, err
 	}
-	sk.Source = newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSyncAction, lastRemoteSHA)
+	sk.Source = newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSyncAction, lastRemoteSHA, lastSyncDigest)
 	return &sk, nil
 }
 
