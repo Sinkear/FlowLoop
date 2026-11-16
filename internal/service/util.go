@@ -19,6 +19,16 @@ var ErrNotFound = errors.New("not found")
 // Handlers map it to HTTP 400.
 var ErrValidation = errors.New("validation error")
 
+// ErrForbidden is returned when the configured git token's identity lacks
+// push/PR permission on the skill's remote repository. Handlers map it to
+// HTTP 403.
+var ErrForbidden = errors.New("forbidden")
+
+// ErrConflict is returned for state-conflict requests that are well-formed
+// but cannot be applied to the current state (e.g. modifying hook bindings of
+// a terminal goal). Handlers map it to HTTP 409.
+var ErrConflict = errors.New("conflict")
+
 // validationError wraps a message with ErrValidation so errors.Is works.
 // code is a machine-readable error code (may be empty for plain validation
 // errors); see codes.go for the shared set. detail is an optional set of
@@ -61,6 +71,16 @@ func NewCodedErrorDetail(code, msg string, detail map[string]any) error {
 func NewFieldRequiredError(field string) error {
 	return NewCodedErrorDetail(CodeFieldRequired, field+" is required", map[string]any{"field": field})
 }
+
+// conflictError wraps a message with ErrConflict so errors.Is works while
+// keeping its own message. Handlers map it to HTTP 409.
+type conflictError struct{ msg string }
+
+func (e *conflictError) Error() string { return e.msg }
+func (e *conflictError) Unwrap() error { return ErrConflict }
+
+// NewConflictError returns an error that satisfies errors.Is(err, ErrConflict).
+func NewConflictError(msg string) error { return &conflictError{msg: msg} }
 
 // IsRetryableReviewWait reports whether a ResolveReview error is the
 // "goal is not in review YET" race — the auto-approval caller (digest) may

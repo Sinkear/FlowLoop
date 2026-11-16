@@ -31,11 +31,24 @@ import (
 func buildReviewCard(g ReviewGoal, pendingReviewers []string) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**%s**", g.Title)
+	authorizePark := strings.HasPrefix(g.Reason, "authorize:")
 	if g.Reason != "" {
-		b.WriteString("\n**卡点**：" + g.Reason)
+		reason := g.Reason
+		if authorizePark {
+			// F3: the "authorize:" prefix is a platform routing token — the
+			// human reads the agent's statement, not the machine's marker.
+			reason = strings.TrimSpace(strings.TrimPrefix(g.Reason, "authorize:"))
+		}
+		b.WriteString("\n**卡点**：" + reason)
 	}
 	if ev := evidenceSummary(g.Evidence); ev != "" {
 		b.WriteString("\n\n" + ev)
+	}
+	if authorizePark {
+		// F3: an authorization gate must SAY what each button does —
+		// without this line, "approve" on a mid-pipeline pause reads as
+		// "accept the current state and close".
+		b.WriteString("\n\n**批准** = 放行：agent 将继续执行下一步（不合入、不关单）；**驳回** = 打回：agent 将带你的意见重新规划。")
 	}
 	if len(pendingReviewers) > 0 {
 		b.WriteString("\n\n🔎 审查中：" + strings.Join(pendingReviewers, "、") + "——可等待他们的意见后再决定")
@@ -62,7 +75,7 @@ func buildReviewCard(g ReviewGoal, pendingReviewers []string) (string, error) {
 			"elements": []map[string]any{
 			{"tag": "markdown", "content": b.String()},
 			{"tag": "hr"},
-			reviewButtonRow(g.GoalID, g.RunID),
+			reviewButtonRow(g.GoalID, g.RunID, authorizePark),
 			},
 		},
 	}
@@ -73,7 +86,10 @@ func buildReviewCard(g ReviewGoal, pendingReviewers []string) (string, error) {
 // reviewButtonRow builds the column_set element containing the two approval
 // buttons (批准 / 驳回). Button values carry {action, goal_id, run_id} so
 // onCardAction can correlate the click to the goal + evidence run.
-func reviewButtonRow(goalID, runID string) map[string]any {
+// authorizePark relabels the buttons for a mid-pipeline authorization gate
+// (F1: "批准并继续" — the action value stays "approve"; ResolveReview's
+// authorize branch supplies the continue semantics).
+func reviewButtonRow(goalID, runID string, authorizePark bool) map[string]any {
 	btn := func(label, action, btnType string) map[string]any {
 		return map[string]any{
 			"tag":   "button",
@@ -84,13 +100,17 @@ func reviewButtonRow(goalID, runID string) map[string]any {
 			"value": map[string]any{"action": action, "goal_id": goalID, "run_id": runID},
 		}
 	}
+	approveLabel, rejectLabel := "✅ 批准", "❌ 驳回"
+	if authorizePark {
+		approveLabel, rejectLabel = "✅ 批准并继续", "❌ 驳回（打回）"
+	}
 	return map[string]any{
 		"tag":                "column_set",
 		"flex_mode":          "flow",
 		"horizontal_spacing": "8px",
 		"columns": []map[string]any{
-			{"tag": "column", "width": "auto", "elements": []map[string]any{btn("✅ 批准", "approve", "primary_filled")}},
-			{"tag": "column", "width": "auto", "elements": []map[string]any{btn("❌ 驳回", "reject", "danger_filled")}},
+			{"tag": "column", "width": "auto", "elements": []map[string]any{btn(approveLabel, "approve", "primary_filled")}},
+			{"tag": "column", "width": "auto", "elements": []map[string]any{btn(rejectLabel, "reject", "danger_filled")}},
 		},
 	}
 }
@@ -169,14 +189,19 @@ func buildAskCard(agentName, goalTitle, question, goalID, commentID string) (str
 
 // buildProcessedCard replaces the approval card after a button decision: the
 // buttons are gone, the outcome is stamped (M3-1, the Message.Update path).
-func buildProcessedCard(goalID, decision string, scratch bool) (string, error) {
+// authorizePark stamps the mid-pipeline outcome (F1): approve means the agent
+// CONTINUES — the acceptance card's "平台正在自动合入" stamp would be a lie.
+func buildProcessedCard(goalID, decision string, scratch, authorizePark bool) (string, error) {
 	ok := decision == "approve"
 	header, body := "❌ 已驳回", "该卡点已驳回，goal 将带决策意见重跑。"
 	if ok {
 		header = "✅ 已批准"
-		if scratch {
+		switch {
+		case authorizePark:
+			body = "已放行——agent 将继续执行下一步。"
+		case scratch:
 			body = "任务完成——按汇报验收（产物在项目目录，无合入步骤）。"
-		} else {
+		default:
 			body = "平台正在自动合入（merge + 复验 + push）。"
 		}
 	}

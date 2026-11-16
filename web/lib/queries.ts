@@ -9,10 +9,30 @@ import {
   listSkills,
   createSkill,
   deleteSkill,
+  configureSkillSource,
+  clearSkillSource,
+  compareSkillSync,
+  runSkillSync,
+  createSkillPullRequest,
+  listHooks,
+  createHook,
+  getHook,
+  updateHook,
+  updateHookContent,
+  testHook,
+  deleteHook,
+  listHookRuns,
+  bindGoalHook,
+  listGoalHooks,
+  unbindGoalHook,
+  bindDomainHook,
+  listDomainHooks,
+  unbindDomainHook,
   listAgents,
   createAgent,
   updateAgent,
   deleteAgent,
+  getAgentDeleteImpact,
   listPinnedAgents,
   setAgentPin,
   listGoals,
@@ -25,6 +45,7 @@ import {
   reopenGoal,
   activateGoal,
   continueGoal,
+  submitGoalReview,
   listGoalRuns,
   listGoalRunMessages,
   listGoalComments,
@@ -101,8 +122,14 @@ export const qk = {
   runtimes: ["runtimes"] as const,
   machines: ["machines"] as const,
   skills: ["skills"] as const,
+  skillSync: (id: string) => ["skills", id, "sync"] as const,
+  hooks: ["hooks"] as const,
+  hookRuns: (id: string) => ["hooks", id, "runs"] as const,
+  goalHooks: (goalId: string) => ["hooks", "goal", goalId] as const,
+  domainHooks: (domainId: string) => ["hooks", "domain", domainId] as const,
   agents: ["agents"] as const,
   pinnedAgents: ["agents", "pinned"] as const,
+  agentDeleteImpact: (id: string) => ["agents", id, "delete-impact"] as const,
   goals: ["goals"] as const,
   goal: (id: string) => ["goals", id] as const,
   goalRuns: (goalId: string) => ["goals", goalId, "runs"] as const,
@@ -174,6 +201,193 @@ export function useDeleteSkill() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.skills }),
   });
 }
+
+// ── Skill 远端仓库源同步（Feature A）──
+// 所有写操作都同时刷新技能列表（source/last_sync_* 会变）和该技能的 compare。
+function invalidateSkillSync(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: qk.skills });
+  qc.invalidateQueries({ queryKey: qk.skillSync(id) });
+}
+
+export function useConfigureSkillSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      body: { repo_url: string; provider?: string; branch?: string; path?: string; token?: string };
+    }) => configureSkillSource(vars.id, vars.body),
+    onSuccess: (_data, vars) => invalidateSkillSync(qc, vars.id),
+  });
+}
+
+export function useClearSkillSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => clearSkillSource(id),
+    onSuccess: (_data, id) => invalidateSkillSync(qc, id),
+  });
+}
+
+// 只读比较：远端探测失败（403/网络）是业务结果，不自动重试。
+export function useSkillSyncCompare(skillId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.skillSync(skillId),
+    queryFn: () => compareSkillSync(skillId),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useRunSkillSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; direction: "pull" | "push" }) =>
+      runSkillSync(vars.id, vars.direction),
+    onSuccess: (_data, vars) => invalidateSkillSync(qc, vars.id),
+  });
+}
+
+export function useCreateSkillPullRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; title?: string; body?: string }) =>
+      createSkillPullRequest(vars.id, { title: vars.title, body: vars.body }),
+    onSuccess: (_data, vars) => invalidateSkillSync(qc, vars.id),
+  });
+}
+
+// ── Hooks（生命周期钩子，spec: tmp/hooks-spec.md v0.2） ──
+// 绑定行（goal/domain 生效集）与运行历史都挂在 ["hooks", …] 前缀下：
+// hook:started / hook:completed 事件一次 invalidate 全部刷新。
+export function useHookEvents() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: qk.hooks });
+  useWSEvent("hook:started", invalidate);
+  useWSEvent("hook:completed", invalidate);
+}
+
+export function useHooks() {
+  return useQuery({ queryKey: qk.hooks, queryFn: listHooks });
+}
+export function useCreateHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: createHook,
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.hooks }),
+  });
+}
+export function useUpdateHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      body: {
+        name?: string;
+        description?: string;
+        interpreter?: string;
+        timeout_sec?: number;
+        enabled?: boolean;
+        params?: Record<string, string>;
+      };
+    }) => updateHook(vars.id, vars.body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.hooks });
+    },
+  });
+}
+export function useUpdateHookContent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; content: string }) =>
+      updateHookContent(vars.id, { content: vars.content }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.hooks }),
+  });
+}
+export function useTestHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; event?: import("./types").HookEvent }) =>
+      testHook(vars.id, vars.event ? { event: vars.event } : undefined),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.hooks }),
+  });
+}
+export function useDeleteHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteHook,
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.hooks }),
+  });
+}
+export function useHookRuns(id: string, limit = 20, enabled = true) {
+  return useQuery({
+    queryKey: qk.hookRuns(id),
+    queryFn: () => listHookRuns(id, limit),
+    enabled,
+  });
+}
+// goal 的生效集（domain 继承 + goal 级，goal 覆盖同 hook+event 的 domain 绑定）。
+export function useGoalHooks(goalId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.goalHooks(goalId),
+    queryFn: () => listGoalHooks(goalId),
+    enabled,
+  });
+}
+export function useBindGoalHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      goalId: string;
+      body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> };
+    }) => bindGoalHook(vars.goalId, vars.body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.goalHooks(vars.goalId) });
+      qc.invalidateQueries({ queryKey: qk.hooks });
+    },
+  });
+}
+export function useUnbindGoalHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { goalId: string; bindingId: string }) =>
+      unbindGoalHook(vars.goalId, vars.bindingId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.goalHooks(vars.goalId) });
+      qc.invalidateQueries({ queryKey: qk.hooks });
+    },
+  });
+}
+export function useDomainHooks(domainId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.domainHooks(domainId),
+    queryFn: () => listDomainHooks(domainId),
+    enabled,
+  });
+}
+export function useBindDomainHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      domainId: string;
+      body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> };
+    }) => bindDomainHook(vars.domainId, vars.body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.domainHooks(vars.domainId) });
+      qc.invalidateQueries({ queryKey: qk.hooks });
+    },
+  });
+}
+export function useUnbindDomainHook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { domainId: string; bindingId: string }) =>
+      unbindDomainHook(vars.domainId, vars.bindingId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.domainHooks(vars.domainId) });
+      qc.invalidateQueries({ queryKey: qk.hooks });
+    },
+  });
+}
 export function useCreateRuntime() {
   const qc = useQueryClient();
   return useMutation({
@@ -218,6 +432,20 @@ export function useDeleteAgent() {
       qc.invalidateQueries({ queryKey: qk.agents });
       qc.invalidateQueries({ queryKey: qk.pinnedAgents });
     },
+  });
+}
+
+// useAgentDeleteImpact fetches the pre-delete impact report for the delete
+// confirm dialog. Disabled while no agent is selected (dialog closed); the
+// dialog opens only after a click, so one fetch per open (staleTime keeps a
+// quick cancel→reopen from re-hitting the API, refetch on open is fine).
+export function useAgentDeleteImpact(id: string | null) {
+  return useQuery({
+    queryKey: qk.agentDeleteImpact(id ?? ""),
+    queryFn: () => getAgentDeleteImpact(id as string),
+    enabled: !!id,
+    staleTime: 5_000,
+    retry: false,
   });
 }
 
@@ -304,6 +532,21 @@ export function useContinueGoal() {
       qc.invalidateQueries({ queryKey: qk.goals });
       qc.invalidateQueries({ queryKey: qk.goal(id) });
       qc.invalidateQueries({ queryKey: ["goals", id, "runs"] });
+    },
+  });
+}
+// Explicit submit-for-review (contract task 8.2): the goal flips active→review
+// and waits for a human decision. Invalidate goal/goals/timeline so the card,
+// list chip and feed all show the review state.
+export function useSubmitGoalReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      submitGoalReview(id, reason),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.goals });
+      qc.invalidateQueries({ queryKey: qk.goal(vars.id) });
+      qc.invalidateQueries({ queryKey: qk.goalTimeline(vars.id) });
     },
   });
 }

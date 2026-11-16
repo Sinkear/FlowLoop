@@ -39,6 +39,9 @@ var topics = []string{
 	// but were missing from this whitelist, so the frontend never received
 	// import completion/failure notifications.
 	"team:import_enqueued", "team:imported", "team:import_failed",
+	// hook execution lifecycle — published by HookService (hook.go). Drives
+	// the Hooks panel's live run feed.
+	"hook:started", "hook:completed",
 }
 
 // Hub owns the set of active WS clients and fans out bus events to them.

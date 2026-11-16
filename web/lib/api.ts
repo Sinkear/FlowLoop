@@ -62,6 +62,32 @@ export const createSkill = (body: { file: File }) => {
   return api<import("./types").Skill>("/skills", { method: "POST", body: fd });
 };
 export const deleteSkill = (id: string) => api<void>(`/skills/${id}`, { method: "DELETE" });
+
+// ── Skill remote source (Feature A) ──
+// Source config: PUT replaces the binding; an omitted/empty token keeps the
+// stored one (single-user convenience). DELETE clears the binding incl. token.
+export const configureSkillSource = (
+  id: string,
+  body: { repo_url: string; provider?: string; branch?: string; path?: string; token?: string }
+) => api<import("./types").Skill>(`/skills/${id}/source`, { method: "PUT", body: JSON.stringify(body) });
+export const clearSkillSource = (id: string) =>
+  api<import("./types").Skill>(`/skills/${id}/source`, { method: "DELETE" });
+// Read-only compare of the local skill dir vs the remote repo; also probes the
+// configured token's push/PR permission (can_push).
+export const compareSkillSync = (id: string) =>
+  api<import("./types").SyncResult>(`/skills/${id}/sync`);
+// pull replaces local files with the remote ones; push commits local files to
+// the configured branch. Both verify push permission server-side (403).
+export const runSkillSync = (id: string, direction: "pull" | "push") =>
+  api<import("./types").SyncResult>(`/skills/${id}/sync`, {
+    method: "POST",
+    body: JSON.stringify({ direction }),
+  });
+export const createSkillPullRequest = (id: string, body?: { title?: string; body?: string }) =>
+  api<import("./types").SkillPullRequestResult>(`/skills/${id}/pull-request`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
 export const getRuntime = (id: string) => api<Runtime>(`/runtimes/${id}`);
 export const createRuntime = (body: Omit<Runtime, "id" | "created_at">) =>
   api<Runtime>("/runtimes", { method: "POST", body: JSON.stringify(body) });
@@ -78,6 +104,31 @@ export const updateAgent = (id: string, body: Record<string, unknown>) =>
 
 export const deleteAgent = (id: string) =>
   api<void>(`/agents/${id}`, { method: "DELETE" });
+
+// AgentDeleteImpact is the pre-delete impact report (GET
+// /agents/{id}/delete-impact): what a delete removes (schedules, run rows)
+// and what it keeps (finished goals, whose assignee then reads "已删除
+// agent"). Blockers are hard stops (active runs / goals still holding the
+// agent); the backend re-checks them, the dialog only mirrors them.
+export interface AgentDeleteBlocker {
+  kind: string;
+  count: number;
+  message: string;
+}
+export interface AgentDeleteImpact {
+  agent_id: string;
+  can_delete: boolean;
+  active_runs: number;
+  active_goals: number;
+  runs: number;
+  schedules: number;
+  enabled_schedules: number;
+  terminal_goals: number;
+  sub_goals: number;
+  blockers: AgentDeleteBlocker[];
+}
+export const getAgentDeleteImpact = (id: string) =>
+  api<AgentDeleteImpact>(`/agents/${id}/delete-impact`);
 
 // ── Agent pin (sidebar) ──
 // Pin state lives in the agent_pin table (single-user, per-agent only). Row
@@ -104,6 +155,7 @@ export interface CreateGoalBody {
   assignee_type?: string;
   assignee_id?: string;
   status?: string;
+  category?: string; // hitl | hootl（后端空值→hitl）
   handoff_note?: string;
   created_by_type?: string;
   created_by_id?: string;
@@ -130,6 +182,10 @@ export const resolveGoalReview = (
 ) => api<Goal>(`/goals/${id}/review`, { method: "POST", body: JSON.stringify(body) });
 export const activateGoal = (id: string) =>
   api<Goal>(`/goals/${id}/activate`, { method: "POST" });
+// Explicit human/agent hand-off to review (contract task 8.2): the active
+// owner declares the deliverable ready; the goal is parked for a human.
+export const submitGoalReview = (id: string, reason?: string) =>
+  api<{ goal: Goal }>(`/goals/${id}/submit-review`, { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) });
 // Continue a paused goal (run stopped by the human, goal still active):
 // enqueue a fresh owner run with a pause-resume wake note.
 export const continueGoal = (id: string) =>
@@ -357,6 +413,7 @@ export const createSchedule = (body: {
   domain_id: string;
   cron_expression: string;
   timezone?: string;
+  category?: string; // hitl | hootl
 }) => api<Schedule>("/schedules", { method: "POST", body: JSON.stringify(body) });
 export const updateSchedule = (id: string, body: {
   name: string;
@@ -367,6 +424,7 @@ export const updateSchedule = (id: string, body: {
   domain_id: string;
   cron_expression: string;
   timezone?: string;
+  category?: string; // hitl | hootl
 }) => api<Schedule>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
 export const deleteSchedule = (id: string) =>
   api<void>(`/schedules/${id}`, { method: "DELETE" });
@@ -433,3 +491,55 @@ export const listSquadWorkflows = (squadId: string, limit = 10) =>
   api<WorkflowGoalSummary[]>(
     `/workflows/squads/${squadId}?limit=${Math.max(1, Math.min(50, Math.trunc(limit)))}`
   );
+// ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
+
+export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");
+export const listHookEvents = () =>
+  api<{ events: import("./types").HookEvent[] }>("/hooks/events");
+export const createHook = (body: {
+  name: string;
+  description?: string;
+  content: string;
+  interpreter?: string;
+  timeout_sec?: number;
+  params?: Record<string, string>;
+}) => api<import("./types").Hook>("/hooks", { method: "POST", body: JSON.stringify(body) });
+export const getHook = (id: string) => api<import("./types").Hook>(`/hooks/${id}`);
+// meta 更新走指针语义：不传的字段保持原值；params 传了即整体替换（传 {} 清空）。
+export const updateHook = (
+  id: string,
+  body: {
+    name?: string;
+    description?: string;
+    interpreter?: string;
+    timeout_sec?: number;
+    enabled?: boolean;
+    params?: Record<string, string>;
+  }
+) => api<import("./types").Hook>(`/hooks/${id}`, { method: "PUT", body: JSON.stringify(body) });
+// 更新脚本内容（会更新 content_hash —— tripwire 徽标由此点亮）。
+export const updateHookContent = (id: string, body: { content: string }) =>
+  api<import("./types").Hook>(`/hooks/${id}/content`, { method: "PUT", body: JSON.stringify(body) });
+// 试跑：合成样例 payload 真实执行一次，返回 hook_run 记录。
+export const testHook = (id: string, body?: { event?: import("./types").HookEvent }) =>
+  api<import("./types").HookRun>(`/hooks/${id}/test`, { method: "POST", body: JSON.stringify(body ?? {}) });
+export const deleteHook = (id: string) =>
+  api<{ deleted: string }>(`/hooks/${id}`, { method: "DELETE" });
+export const listHookRuns = (id: string, limit?: number) =>
+  api<import("./types").HookRun[]>(`/hooks/${id}/runs${limit ? `?limit=${limit}` : ""}`);
+
+// 绑定（goal 级 / domain 级）。seq 是同事件内的执行顺序（升序）；
+// params 是绑定级参数，浅合并覆盖 hook 默认参数。
+export const bindGoalHook = (goalId: string, body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> }) =>
+  api<import("./types").HookBinding>(`/goals/${goalId}/hooks`, { method: "POST", body: JSON.stringify(body) });
+// 生效集：domain 继承 + goal 级（goal 覆盖 domain 同 hook+event）。
+export const listGoalHooks = (goalId: string) =>
+  api<import("./types").HookBinding[]>(`/goals/${goalId}/hooks`);
+export const unbindGoalHook = (goalId: string, bindingId: string) =>
+  api<{ deleted: string }>(`/goals/${goalId}/hooks/${bindingId}`, { method: "DELETE" });
+export const bindDomainHook = (domainId: string, body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> }) =>
+  api<import("./types").HookBinding>(`/domains/${domainId}/hooks`, { method: "POST", body: JSON.stringify(body) });
+export const listDomainHooks = (domainId: string) =>
+  api<import("./types").HookBinding[]>(`/domains/${domainId}/hooks`);
+export const unbindDomainHook = (domainId: string, bindingId: string) =>
+  api<{ deleted: string }>(`/domains/${domainId}/hooks/${bindingId}`, { method: "DELETE" });

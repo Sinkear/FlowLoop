@@ -154,9 +154,16 @@ Subcommands:
                                              --assignee_type: agent (default) | squad)
   goal cancel <id>                           cancel a goal
   goal reopen --goal <id> [--reason R]       reopen a finished/cancelled goal
+  goal submit-review [--reason R] <id>       submit an active goal for review (the owner's
+                                             explicit close-out when no merge remains)
+  goal authorize --statement S               park the goal at a human-authorization gate:
+                                             approval means CONTINUE (no merge, no close) —
+                                             use it for mid-pipeline "wait for human" gates,
+                                             not for close-out (submit-review is that)
   goal delete <id>                           delete a goal (comma-separated batch)
-  goal create --title T [--description D] [--assignee A] [--status S]
-                                             create a goal
+  goal create --title T [--description D] [--assignee A] [--status S] [--category hitl|hootl]
+                                             create a goal; --category hitl (default, human
+                                             recheck) | hootl (finish without human recheck)
   goal comment --text T [--role R]           post a comment on the current goal; --text may
                                              contain a structured mention [@Name](mention://agent/<id>)
                                              to enqueue a run on that agent
@@ -174,6 +181,9 @@ Subcommands:
   squad add-member --squad <name> --agent <id>       add member(s) to a squad
   squad remove-member --squad <name> --agent <id>    remove member(s) from a squad
   schedule list                              list all schedules (JSON)
+  create <kind> [flags]                      create goal/agent/squad/domain/schedule/team from
+                                             decisions (steward path); goal/schedule accept
+                                             --category hitl|hootl
   schedule stop <name>                       stop (disable) a schedule
   schedule enable <name>                     re-enable a stopped schedule
   schedule delete <name>                     delete a schedule (comma-separated batch)
@@ -215,7 +225,7 @@ Environment (injected by daemon):
 
 func goalCmd(goalID, agentID string, args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: agentwork-cli goal <list|status|assign|cancel|reopen|delete|create|comment|comments|wait>")
+		fmt.Fprintln(os.Stderr, "usage: agentwork-cli goal <list|status|assign|cancel|reopen|submit-review|delete|create|comment|comments|wait>")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -229,6 +239,10 @@ func goalCmd(goalID, agentID string, args []string) {
 		goalCancel(args[1:])
 	case "reopen":
 		goalReopen(args[1:])
+	case "submit-review":
+		goalSubmitReview(args[1:])
+	case "authorize":
+		goalAuthorize(args[1:])
 	case "delete":
 		goalDelete(args[1:])
 	case "create":
@@ -362,6 +376,7 @@ func goalCreate(goalID, agentID string, args []string) {
 	// every agent-created goal a sub-goal that blocks its parent).
 	parent := fs.String("parent", "", "parent goal id (explicit sub-goal; NOT defaulted)")
 	status := fs.String("status", "active", "goal status")
+	category := fs.String("category", "", "hitl (default) | hootl (skip human recheck)")
 	fs.Parse(args)
 	if *title == "" {
 		fail("--title is required")
@@ -381,6 +396,9 @@ func goalCreate(goalID, agentID string, args []string) {
 		"status":          *status,
 		"created_by_type": "agent",
 		"created_by_id":   agentID,
+	}
+	if *category != "" {
+		body["category"] = *category
 	}
 	post(serverURL()+"/goals", body)
 }
@@ -475,6 +493,49 @@ func goalReopen(args []string) {
 		"goal_id": *goalID,
 		"goal":    map[string]any{"description": *reason},
 	})
+}
+
+// goalSubmitReview moves an active goal into review at the owner's explicit
+// request (task 8.2) — the positive close-out path when the work lives in the
+// feed and no merge is left. Posts the dedicated server route (the same HTTP
+// surface the Web button uses), so the status flip, activity row, system
+// comment and goal:reviewing event all happen in one service transaction.
+func goalSubmitReview(args []string) {
+	fs := flag.NewFlagSet("goal submit-review", flag.ExitOnError)
+	reason := fs.String("reason", "", "review request reason (optional)")
+	fs.Parse(args)
+	rest := fs.Args()
+	if len(rest) < 1 {
+		fail("usage: agentwork-cli goal submit-review [--reason R] <goal-id>")
+	}
+	post(serverURL()+"/goals/"+rest[0]+"/submit-review", map[string]any{
+		"reason": *reason,
+	})
+}
+
+// goalAuthorize parks the goal at a HUMAN AUTHORIZATION GATE (F1/F3 fix).
+// Unlike submit-review (whose approve = merge & close), the authorize
+// approve = release: the owner run is woken to continue the plan. The
+// statement is what the approving human reads — state what is being
+// authorized and what will happen next, not a platform-internal reason.
+// Must be called from the live owner run (the token identifies it).
+func goalAuthorize(args []string) {
+	fs := flag.NewFlagSet("goal authorize", flag.ExitOnError)
+	statement := fs.String("statement", "", "what the human is authorizing + what happens next (required, human-readable)")
+	fs.Parse(args)
+	if *statement == "" {
+		fail("--statement is required")
+	}
+	var res struct {
+		ID string `json:"id"`
+	}
+	if err := rpcCall(link.MethodGoalAuthorize, link.GoalAuthorizeParams{
+		RPCToken:  rpcToken(),
+		Statement: *statement,
+	}, &res); err != nil {
+		fail("%v", err)
+	}
+	rpcPrintJSON(res)
 }
 
 // goalDelete deletes a goal (supports comma-separated batch) via dispatch.
@@ -982,7 +1043,7 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team)", kind)
 	}
 	fs := flag.NewFlagSet("create "+kind, flag.ExitOnError)
-	var s1, s2, s3, s4, s5, s6, s7 string
+	var s1, s2, s3, s4, s5, s6, s7, s8 string
 
 	switch kind {
 	case "goal":
@@ -991,8 +1052,9 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fs.StringVar(&s3, "assignee", "", "assignee agent/squad id or name")
 		fs.StringVar(&s4, "assignee_type", "", "agent (default) | squad")
 		fs.StringVar(&s5, "domain", "", "domain id or name (required)")
+		fs.StringVar(&s6, "category", "", "hitl (default) | hootl (skip human recheck)")
 		fs.Parse(args)
-		return map[string]any{"intent": intent, "goal": map[string]any{"title": s1, "description": s2, "assignee_id": s3, "assignee_type": s4, "domain_id": s5}}
+		return map[string]any{"intent": intent, "goal": map[string]any{"title": s1, "description": s2, "assignee_id": s3, "assignee_type": s4, "domain_id": s5, "category": s6}}
 	case "agent":
 		fs.StringVar(&s1, "name", "", "agent name (required)")
 		fs.StringVar(&s2, "runtime", "", "runtime id or name (required)")
@@ -1039,8 +1101,9 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fs.StringVar(&s5, "assignee", "", "assignee agent/squad id or name")
 		fs.StringVar(&s6, "assignee_type", "", "agent (default) | squad")
 		fs.StringVar(&s7, "domain", "", "domain id or name (required)")
+		fs.StringVar(&s8, "category", "", "hitl (default) | hootl (skip human recheck)")
 		fs.Parse(args)
-		return map[string]any{"intent": intent, "schedule": map[string]any{"name": s1, "title": s2, "description": s3, "cron": s4, "assignee_id": s5, "assignee_type": s6, "domain_id": s7}}
+		return map[string]any{"intent": intent, "schedule": map[string]any{"name": s1, "title": s2, "description": s3, "cron": s4, "assignee_id": s5, "assignee_type": s6, "domain_id": s7, "category": s8}}
 	case "team":
 		fs.StringVar(&s1, "url", "", "git repo URL (required)")
 		fs.StringVar(&s2, "branch", "", "branch (default: repo default)")

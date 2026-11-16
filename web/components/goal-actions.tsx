@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAgents, useSquads, useAssignGoal, useCancelGoal,
-  useReopenGoal, useDeleteGoal, useResolveGoalReview, useGoalRuns, useGoalComments, useActivateGoal, useContinueGoal, useDomains } from "@/lib/queries";
+  useReopenGoal, useDeleteGoal, useResolveGoalReview, useGoalRuns, useGoalComments, useActivateGoal, useContinueGoal, useDomains, useSubmitGoalReview } from "@/lib/queries";
 import { Button, Dialog, Field, inputCls, ConfirmDialog, ReviewPhaseBadge } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import type { Goal } from "@/lib/types";
@@ -14,9 +14,11 @@ export function GoalActions({ goal }: { goal: Goal }) {
   const reopen = useReopenGoal();
   const activate = useActivateGoal();
   const cont = useContinueGoal();
+  const submitReview = useSubmitGoalReview();
   const { data: runs } = useGoalRuns(goal.id);
   const [showAssign, setShowAssign] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showSubmitReview, setShowSubmitReview] = useState(false);
 
   const isTerminal =
     goal.status === "done" || goal.status === "failed" || goal.status === "cancelled";
@@ -44,6 +46,15 @@ export function GoalActions({ goal }: { goal: Goal }) {
         </Button>
       )}
 
+      {goal.status === "active" && (
+        <Button
+          variant="outline"
+          onClick={() => { submitReview.reset(); setShowSubmitReview(true); }}
+        >
+          提交审核
+        </Button>
+      )}
+
       {!isTerminal && (
         <Button variant="danger" onClick={() => cancel.mutate(goal.id)} disabled={cancel.isPending}>
           {cancel.isPending ? "取消中…" : "取消"}
@@ -61,6 +72,20 @@ export function GoalActions({ goal }: { goal: Goal }) {
       {goal.status === "review" && <ReviewPanel goal={goal} />}
 
       {showAssign && <AssignDialog goal={goal} onClose={() => setShowAssign(false)} />}
+      {showSubmitReview && (
+        <SubmitReviewDialog
+          goal={goal}
+          onClose={() => { submitReview.reset(); setShowSubmitReview(false); }}
+          pending={submitReview.isPending}
+          error={submitReview.isError ? String(submitReview.error) : null}
+          onSubmit={(reason) =>
+            submitReview.mutate(
+              { id: goal.id, reason },
+              { onSuccess: () => setShowSubmitReview(false) }
+            )
+          }
+        />
+      )}
       {showDelete && (
         <ConfirmDialog
           title="确认删除"
@@ -72,10 +97,10 @@ export function GoalActions({ goal }: { goal: Goal }) {
       )}
 
       {(assign.isError || cancel.isError || deleteGoal.isError || cont.isError ||
-        reopen.isError || activate.isError) && (
+        reopen.isError || activate.isError || submitReview.isError) && (
         <p className="text-sm text-red-400 w-full">
           {String(assign.error ?? cancel.error ?? deleteGoal.error ?? cont.error ??
-            reopen.error ?? activate.error)}
+            reopen.error ?? activate.error ?? submitReview.error)}
         </p>
       )}
     </div>
@@ -87,12 +112,18 @@ export function GoalActions({ goal }: { goal: Goal }) {
 // + push) or reject (back to the agent with the reason as the next scope).
 // The evidence bundle from the last run is shown so the decision is made on
 // facts, not trust.
+//
+// F1: an "authorize:" park is a MID-PIPELINE gate, not acceptance — its
+// approve means "continue" (no merge, no close). Every outcome label below
+// branches on authorizePark so the human sees what the button actually does.
 function ReviewPanel({ goal }: { goal: Goal }) {
   const resolve = useResolveGoalReview();
   const { data: domains } = useDomains();
   // A scratch domain has nothing to merge — approval closes the loop
   // directly (the deliverable is the project directory's contents).
   const scratch = domains?.find((d) => d.id === goal.domain_id)?.type === "scratch";
+  // An authorization gate (goal authorize): approve = release to continue.
+  const authorizePark = goal.review_request?.startsWith("authorize:") ?? false;
   const { data: runs } = useGoalRuns(goal.id);
   const { data: comments } = useGoalComments(goal.id);
   const { data: agents } = useAgents();
@@ -234,7 +265,11 @@ function ReviewPanel({ goal }: { goal: Goal }) {
 
       {resolveOutcome === "approved" && (
         <p className="text-sm text-emerald-300 font-medium">
-          {scratch ? "已批准——按汇报验收，任务完成。" : "已批准——平台正在合入（merge + 复验 + push），完成后此卡自动关闭。"}
+          {authorizePark
+            ? "已批准——agent 将继续执行下一步。"
+            : scratch
+              ? "已批准——按汇报验收，任务完成。"
+              : "已批准——平台正在合入（merge + 复验 + push），完成后此卡自动关闭。"}
         </p>
       )}
       {resolveOutcome === "rejected" && (
@@ -270,8 +305,8 @@ function ReviewPanel({ goal }: { goal: Goal }) {
             {resolve.isPending
               ? "处理中…"
               : resolveOutcome === "approved"
-                ? (scratch ? "已批准，完成" : "已批准，合入中…")
-                : (scratch ? "批准（按汇报验收）" : "批准并自动合入")}
+                ? (authorizePark ? "已批准，继续中…" : scratch ? "已批准，完成" : "已批准，合入中…")
+                : (authorizePark ? "批准并继续" : scratch ? "批准（按汇报验收）" : "批准并自动合入")}
           </Button>
           <Button variant="outline" onClick={() => setRejectForm("reject")} disabled={resolveOutcome === "approved"}>
             驳回
@@ -374,6 +409,57 @@ function AssignDialog({ goal, onClose }: { goal: Goal; onClose: () => void }) {
         {assign.isError && (
           <p className="text-sm text-red-400">{String(assign.error)}</p>
         )}
+      </form>
+    </Dialog>
+  );
+}
+
+// SubmitReviewDialog: explicit active → review hand-off (contract task 8.2).
+// The reason is optional and lands in review_request + a system comment.
+function SubmitReviewDialog({
+  goal, onClose, onSubmit, pending, error,
+}: {
+  goal: Goal;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+  pending: boolean;
+  error: string | null;
+}) {
+  const [reason, setReason] = useState("");
+  return (
+    <Dialog
+      title="提交审核"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button type="submit" form="submit-review-form" disabled={pending}>
+            {pending ? "提交中…" : "提交"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="submit-review-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit(reason.trim());
+        }}
+        className="space-y-4"
+      >
+        <p className="text-sm text-ink-2 leading-relaxed">
+          确定把 Goal「{goal.title}」提交审核吗？提交后由人验收交付物，Goal 进入待审批状态。
+        </p>
+        <Field label="说明（可选）" hint="会展示在审批卡片上，告诉审查者交付物在哪、看什么">
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className={inputCls}
+            rows={4}
+            placeholder="例如：交付物在 feed 的汇报里，重点看 diff 与验证输出…"
+          />
+        </Field>
+        {error && <p className="text-sm text-red-400">{error}</p>}
       </form>
     </Dialog>
   );

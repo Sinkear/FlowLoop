@@ -1,15 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowRight, Check, Loader2, PenLine, Send, Sparkles, Trash2 } from "lucide-react";
+import { ArrowRight, Check, Loader2, PenLine, Send, Sparkles, Square, Trash2 } from "lucide-react";
 import { PageBody, PageHeader, SectionCard, Button, inputCls } from "@/components/ui";
 import { NewGoalForm } from "@/components/new-goal-form";
 import { StewardSetup } from "@/components/steward-setup";
-import { AcpChatClient, ChatEvent, PermissionRequest } from "@/lib/acp";
-import { listAgents, listGoals } from "@/lib/api";
-import { describeStewardFailure } from "@/lib/steward";
+import {
+  adoptSteward,
+  ask,
+  clearPerm,
+  getNewGoalServerVersion,
+  getNewGoalState,
+  getNewGoalVersion,
+  reset,
+  resumeIfNeeded,
+  retry,
+  stop,
+  subscribeNewGoal,
+} from "@/lib/new-goal-chat";
 import { useAgents, useSquads, useDomains } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -19,16 +29,12 @@ import { cn } from "@/lib/utils";
 //      二次点击没有任何反馈（用户反馈的“点两次不生效”）。
 //   2) 建任务是要写一段话的，独立页面能把“描述—管家反馈—追问”这条线放得下。
 // 兜底：管家不可用（没有在线机器）时，同一页里能直接手动填表，不是死路。
-
-type Phase = "idle" | "connecting" | "ready" | "running" | "created" | "failed";
-
-interface Line {
-  id: number;
-  role: "user" | "agent" | "tool" | "system";
-  text: string;
-  toolName?: string;
-  pending?: boolean;
-}
+//
+// 生命周期（2026-11-16 修复后的架构）：对话连接、记录、建任务轮询全部住在
+// 模块级 store（web/lib/new-goal-chat.ts）里，本组件只是一个「视图」——
+// 切到别的页面（app router 会卸载本组件）不会断开连接、不会丢记录、不会
+// 掐死管家正在跑的建任务命令；回到本页直接续上现场。浏览器刷新/关闭则靠
+// store 的流程快照 + CLI 侧的会话持久化接回原对话（见 store 头注释）。
 
 const EXAMPLES = [
   "把 webhook 投递失败的重试逻辑写成一份文档，放到 webhook 面板旁边",
@@ -42,171 +48,51 @@ export default function NewGoalPage() {
   const { data: squads } = useSquads();
   const { data: domains } = useDomains();
 
-  const [phase, setPhase] = useState<Phase>("idle");
+  useSyncExternalStore(subscribeNewGoal, getNewGoalVersion, getNewGoalServerVersion);
+  const st = getNewGoalState();
+  const perm = st.perm;
+  const busy = st.busy;
+
   const [text, setText] = useState("");
   const [followUp, setFollowUp] = useState("");
-  const [lines, setLines] = useState<Line[]>([]);
-  const [error, setError] = useState("");
-  const [createdTitle, setCreatedTitle] = useState("");
   const [manual, setManual] = useState(false);
-  const [perm, setPerm] = useState<{
-    req: PermissionRequest;
-    respond: (o: { optionId?: string; cancelled?: boolean }) => void;
-  } | null>(null);
-
-  const clientRef = useRef<AcpChatClient | null>(null);
-  const sessionRef = useRef("");
-  const stewardRef = useRef<string | null>(null);
-  // 起点时间：创建成功后用它挑出“这次新建的那条”任务，不依赖管家回传的 id。
-  const startedAtRef = useRef(0);
-  const lineId = useRef(0);
+  // 半死连接提醒：连接在、但机器一直不回应时，别让用户盯着一个无声的转圈。
+  const [slow, setSlow] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const busy = phase === "connecting" || phase === "running";
 
-  const push = useCallback((line: Omit<Line, "id">) => {
-    lineId.current += 1;
-    setLines((prev) => {
-      // 流式片段合并到一个气泡里（与管家聊天一致）。
-      const last = prev[prev.length - 1];
-      if (last && last.role === line.role && (line.role === "agent") && !last.pending) {
-        return [...prev.slice(0, -1), { ...last, text: last.text + line.text }];
-      }
-      return [...prev, { ...line, id: lineId.current }];
-    });
+  // 上次刷新/关闭页面留下的未完成流程（快照在 store 里）→ 接回对话并续跑
+  // 「建好了没」的轮询。StrictMode 双挂载安全：store 自己有握手去重。
+  useEffect(() => {
+    void resumeIfNeeded();
   }, []);
 
+  // 自动滚到最新一条。
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [lines, busy]);
+  }, [st.lines, busy]);
 
-  // 连接管家（懒连接：打开页面不建会话，不浪费一次 CLI 启动）。
-  const ensureClient = useCallback(async () => {
-    if (clientRef.current && sessionRef.current) return clientRef.current;
-    setPhase("connecting");
-    const steward = stewardRef.current
-      ? { id: stewardRef.current }
-      : (await listAgents()).find((a) => a.type === "steward");
-    if (!steward) {
-      setPhase("failed");
-      setError("还没有管家 agent。管家只会自动绑定 hwcloud CLI；可以在这里或「对话」页立即手动创建。");
-      throw new Error("no steward");
+  // 守护：连接在、但 60s 没有任何进展 —— 提示可能是半死连接，别静默转圈。
+  useEffect(() => {
+    if (st.phase !== "running" && st.phase !== "connecting") {
+      setSlow(false);
+      return;
     }
-    stewardRef.current = steward.id;
-    const client = new AcpChatClient({
-      onEvent: (ev: ChatEvent) => {
-        if (ev.kind === "agent") push({ role: "agent", text: ev.text });
-        else if (ev.kind === "tool") {
-          if (ev.isResult) {
-            setLines((prev) =>
-              prev.map((l) =>
-                l.role === "tool" && l.toolName === ev.toolName && l.pending
-                  ? { ...l, text: ev.output ?? "", pending: false }
-                  : l
-              )
-            );
-          } else {
-            push({ role: "tool", text: ev.text, toolName: ev.toolName, pending: true });
-          }
-        }
-      },
-      onPermissionRequest: (req, respond) => setPerm({ req, respond }),
-      onClose: () => setError((e) => e || "与管家的连接断开了"),
-    });
-    const host = window.location.host;
-    await client.connect(
-      `ws${window.location.protocol === "https:" ? "s" : ""}://${host}/backend/agents/${steward.id}/acp`
-    );
-    sessionRef.current = await client.newSession();
-    clientRef.current = client;
-    setPhase("ready");
-    return client;
-  }, [push]);
+    const timer = window.setTimeout(() => setSlow(true), 60_000);
+    return () => window.clearTimeout(timer);
+  }, [st.phase]);
 
+  // 建成功 → 切回任务视图。phase=created 可能发生在用户不在本页的时候
+  // （切去了别的页面，轮询在 store 里继续跑）——回到本页时补上这次跳转，
+  // 然后 reset 让 store 干净地迎接下一段流程。
   useEffect(() => {
-    return () => {
-      clientRef.current?.close();
-      clientRef.current = null;
-      sessionRef.current = "";
-    };
-  }, []);
-
-  // 跟管家说一句话：把“要做什么”包成一条建任务的指令，让 CLI 直接建。
-  const ask = useCallback(
-    async (say: string, first: boolean) => {
-      const body = say.trim();
-      if (!body || busy) return;
-      setError("");
-      try {
-        const client = await ensureClient();
-        if (first) {
-          startedAtRef.current = Date.now();
-          setLines([]);
-          push({
-            role: "user",
-            text: body,
-          });
-          push({
-            role: "system",
-            text: "已交给管家：它用 agentwork CLI 建任务，建好会自动切回任务视图。",
-          });
-          await client.prompt(
-            sessionRef.current,
-            [
-              "帮我创建一条任务（goal），需求如下：",
-              "",
-              body,
-              "",
-              "请用 `agentwork create goal --title \"...\"` 建出来（负责人/项目能判断就一起带上，缺字段就问我要）。",
-              "建完后用一句话告诉我任务标题，不要做别的改动。",
-            ].join("\n")
-          );
-        } else {
-          push({ role: "user", text: body });
-          await client.prompt(sessionRef.current, body);
-        }
-        setPhase("ready");
-        setFollowUp("");
-      } catch (e) {
-        setPhase("failed");
-        const raw = String((e as Error).message ?? e);
-        const head = /连接已关闭|连接失败|not connected/.test(raw)
-          ? "与管家的连接没建立起来。"
-          : raw;
-        setError(head);
-        // 诊断慢一点没关系，先把失败原因摆出来，再补上具体到机器/CLI 的解释。
-        void describeStewardFailure(stewardRef.current).then((why) => {
-          if (why) setError((prev) => (prev ? `${prev}\n${why}` : why));
-        });
-      }
-    },
-    [busy, ensureClient, push]
-  );
-
-  // 轮询：只要出现“本次提交之后创建”的任务，就算创建成功 → 切回任务视图。
-  useEffect(() => {
-    if (!startedAtRef.current) return;
-    if (phase === "created" || phase === "failed") return;
-    const startISO = new Date(startedAtRef.current - 2000).toISOString();
-    const timer = window.setInterval(async () => {
-      try {
-        const goals = await listGoals();
-        const hit = goals.find((g) => g.created_at && g.created_at >= startISO);
-        if (hit) {
-          setCreatedTitle(hit.title);
-          setPhase("created");
-          window.setTimeout(() => router.push(`/goals/${hit.id}`), 900);
-        }
-      } catch {
-        // 轮询失败不打断对话，下一轮再试
-      }
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [phase, router]);
-
-  const submitFirst = () => {
-    setPhase("running");
-    void ask(text, true);
-  };
+    if (st.phase !== "created" || !st.createdGoal) return;
+    const goalId = st.createdGoal.id;
+    const timer = window.setTimeout(() => {
+      reset();
+      router.push(`/goals/${goalId}`);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [st.phase, st.createdGoal, router]);
 
   return (
     <PageBody>
@@ -222,7 +108,7 @@ export default function NewGoalPage() {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
-          {phase === "idle" ? (
+          {st.phase === "idle" ? (
             <SectionCard
               title="要做什么？"
               desc="写目标就行，不用写实现步骤——管家会按平台的规矩补负责人和项目。"
@@ -230,7 +116,7 @@ export default function NewGoalPage() {
               <div className="space-y-3 p-4">
                 <StewardSetup
                   onCreated={(id) => {
-                    stewardRef.current = id;
+                    adoptSteward(id);
                   }}
                 />
                 <textarea
@@ -240,7 +126,7 @@ export default function NewGoalPage() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
-                      submitFirst();
+                      void ask(text, true);
                     }
                   }}
                   rows={5}
@@ -248,7 +134,11 @@ export default function NewGoalPage() {
                   className={cn(inputCls, "resize-none leading-relaxed")}
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button onClick={submitFirst} disabled={!text.trim()} className="gap-1.5">
+                  <Button
+                    onClick={() => void ask(text, true)}
+                    disabled={!text.trim()}
+                    className="gap-1.5"
+                  >
                     <Sparkles className="h-3.5 w-3.5" /> 交给管家创建
                   </Button>
                   <Button variant="outline" onClick={() => setManual(true)} className="gap-1.5">
@@ -261,15 +151,15 @@ export default function NewGoalPage() {
           ) : (
             <SectionCard
               title="管家"
-              count={lines.filter((l) => l.role !== "system").length}
+              count={st.lines.filter((l) => l.role !== "system").length}
               desc={
-                phase === "connecting"
+                st.phase === "connecting"
                   ? "正在连接管家…"
-                  : phase === "running"
-                    ? "正在创建…"
-                    : phase === "created"
+                  : st.phase === "running"
+                    ? "正在创建…（切去别的页面也不会中断，回来接着看）"
+                    : st.phase === "created"
                       ? "已创建，正在切回任务视图"
-                      : phase === "failed"
+                      : st.phase === "failed"
                         ? "没建成"
                         : "可以继续补充要求"
               }
@@ -277,14 +167,11 @@ export default function NewGoalPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setLines([]);
-                    setPhase("idle");
+                    // 重来：彻底作废这一轮流程（连接、记录、快照、轮询全清）。
+                    reset();
                     setText("");
-                    setError("");
-                    startedAtRef.current = 0;
-                    clientRef.current?.close();
-                    clientRef.current = null;
-                    sessionRef.current = "";
+                    setFollowUp("");
+                    setSlow(false);
                   }}
                   className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
                 >
@@ -293,7 +180,7 @@ export default function NewGoalPage() {
               }
             >
               <div ref={scrollRef} className="max-h-[46vh] min-h-[220px] space-y-3 overflow-y-auto p-4">
-                {lines.map((l) => {
+                {st.lines.map((l) => {
                   if (l.role === "system") {
                     return (
                       <p key={l.id} className="text-[11px] text-ink-3">
@@ -333,37 +220,71 @@ export default function NewGoalPage() {
                 {busy && (
                   <div className="flex items-center gap-2 text-sm text-ink-3">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {phase === "connecting" ? "连接管家…" : "管家正在建任务…"}
+                    {st.phase === "connecting" ? "连接管家…" : "管家正在建任务…"}
                   </div>
                 )}
-                {phase === "created" && (
+                {st.phase === "created" && (
                   <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
                     <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>已创建「{createdTitle || "任务"}」，正在打开任务详情…</span>
+                    <span>已创建「{st.createdGoal?.title || "任务"}」，正在打开任务详情…</span>
                   </div>
                 )}
-                {error && (
+                {slow && st.phase !== "failed" && st.phase !== "created" && (
+                  <div className="space-y-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-xs text-ink-2">
+                    <p>已经 60 秒没有新的进展——连接可能处于半死状态（socket 还在，但机器那头没回应）。</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {st.lastAsk && (
+                        <button
+                          type="button"
+                          onClick={retry}
+                          className="font-medium underline decoration-dotted underline-offset-2 hover:text-ink"
+                        >
+                          断开重试
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setManual(true)}
+                        className="underline decoration-dotted underline-offset-2 hover:text-ink"
+                      >
+                        改用手动填写
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {st.error && (
                   <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                    {error.split("\n").map((line, i) => (
+                    {st.error.split("\n").map((line, i) => (
                       <p key={i}>{line}</p>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => setManual(true)}
-                      className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
-                    >
-                      改用手动填写
-                    </button>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {st.lastAsk && (
+                        <button
+                          type="button"
+                          onClick={retry}
+                          className="font-medium underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                        >
+                          重试（重新连接并再提交一次）
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setManual(true)}
+                        className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
+                      >
+                        改用手动填写
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
 
-              {phase !== "created" && (
+              {st.phase !== "created" && (
                 <div className="flex gap-2 border-t border-line bg-surface-0/40 px-4 py-3">
                   <input
                     className={cn(inputCls, "flex-1")}
                     placeholder={
-                      phase === "failed"
+                      st.phase === "failed"
                         ? "管家没连上，可以直接手动填…"
                         : "补充一句：用哪个负责人、挂哪个项目…"
                     }
@@ -373,17 +294,32 @@ export default function NewGoalPage() {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
                         void ask(followUp, false);
+                        setFollowUp("");
                       }
                     }}
-                    disabled={busy || phase === "failed"}
+                    disabled={busy || st.phase === "failed"}
                   />
-                  <Button
-                    onClick={() => void ask(followUp, false)}
-                    disabled={busy || phase === "failed" || !followUp.trim()}
-                    className="gap-1.5"
-                  >
-                    <Send className="h-3.5 w-3.5" /> 发送
-                  </Button>
+                  {busy ? (
+                    <Button
+                      variant="danger"
+                      onClick={stop}
+                      className="gap-1.5"
+                      title="中断当前这轮（连接保留，可以继续补充）"
+                    >
+                      <Square className="h-3.5 w-3.5 fill-current" /> 停止
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        void ask(followUp, false);
+                        setFollowUp("");
+                      }}
+                      disabled={st.phase === "failed" || !followUp.trim()}
+                      className="gap-1.5"
+                    >
+                      <Send className="h-3.5 w-3.5" /> 发送
+                    </Button>
+                  )}
                 </div>
               )}
             </SectionCard>
@@ -416,10 +352,7 @@ export default function NewGoalPage() {
                   type="button"
                   onClick={() => {
                     setText(e);
-                    if (phase !== "idle") {
-                      setLines([]);
-                      setPhase("idle");
-                    }
+                    if (st.phase !== "idle") reset();
                   }}
                   className="flex w-full items-start gap-2 px-4 py-2.5 text-left text-xs leading-relaxed text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
                 >
@@ -460,7 +393,7 @@ export default function NewGoalPage() {
                     key={o.optionId}
                     onClick={() => {
                       perm.respond({ optionId: o.optionId });
-                      setPerm(null);
+                      clearPerm();
                     }}
                   >
                     {o.name || "允许"}
@@ -474,7 +407,7 @@ export default function NewGoalPage() {
                     variant="outline"
                     onClick={() => {
                       perm.respond({ optionId: o.optionId });
-                      setPerm(null);
+                      clearPerm();
                     }}
                   >
                     {o.name || "拒绝"}
@@ -484,7 +417,7 @@ export default function NewGoalPage() {
                 variant="outline"
                 onClick={() => {
                   perm.respond({ cancelled: true });
-                  setPerm(null);
+                  clearPerm();
                 }}
               >
                 取消
