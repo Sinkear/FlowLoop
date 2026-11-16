@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,12 +170,22 @@ func TestSkillSourceConfig(t *testing.T) {
 
 	// Prior sync bookkeeping survives a re-PUT with an empty token (token
 	// kept) on the SAME repo.
-	if err := svc.markSynced(ctx, sk.ID, "pulled", "abc123"); err != nil {
+	if err := svc.markSynced(ctx, sk.ID, "pulled", "abc123", "digest-1"); err != nil {
 		t.Fatal(err)
 	}
 	got = mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills"})
 	if got.Source.Token != "secret-token" || got.Source.LastSyncAction != "pulled" || got.Source.LastRemoteSHA != "abc123" {
 		t.Fatalf("same-repo update = %+v", got.Source)
+	}
+	if got.Source.LastSyncDigest != "digest-1" {
+		t.Fatalf("same-repo update must preserve the sync digest, got %q", got.Source.LastSyncDigest)
+	}
+
+	// Same repo but a different path targets a different tree: the recorded
+	// baseline would misattribute later compares, so it resets too.
+	got = mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Path: "skills/other"})
+	if got.Source.LastSyncAction != "" || got.Source.LastRemoteSHA != "" || got.Source.LastSyncedAt != "" || got.Source.LastSyncDigest != "" {
+		t.Fatalf("same-repo different-path update = %+v", got.Source)
 	}
 
 	// A different repo resets the sync bookkeeping and re-derives the host.
@@ -238,16 +249,19 @@ func TestDiffSkillFilesPullViewpoint(t *testing.T) {
 	if counts.Added != 1 || counts.Removed != 1 || counts.Modified != 1 || counts.Unchanged != 0 {
 		t.Fatalf("counts = %+v", counts)
 	}
-	if got := syncState(SyncCounts{Removed: 1, Modified: 1}); got != "local_ahead" {
+	// These pin the baseline-less heuristic (used only for bindings that
+	// were never synced): added = remote-only drives remote_ahead,
+	// removed/modified = local changes drive local_ahead.
+	if got := syncCountsHeuristic(SyncCounts{Removed: 1, Modified: 1}); got != "local_ahead" {
 		t.Fatalf("local-only state = %q", got)
 	}
-	if got := syncState(SyncCounts{Added: 1}); got != "remote_ahead" {
+	if got := syncCountsHeuristic(SyncCounts{Added: 1}); got != "remote_ahead" {
 		t.Fatalf("remote-only state = %q", got)
 	}
-	if got := syncState(SyncCounts{Added: 1, Removed: 1}); got != "diverged" {
+	if got := syncCountsHeuristic(SyncCounts{Added: 1, Removed: 1}); got != "diverged" {
 		t.Fatalf("diverged state = %q", got)
 	}
-	if got := syncState(SyncCounts{}); got != "in_sync" {
+	if got := syncCountsHeuristic(SyncCounts{}); got != "in_sync" {
 		t.Fatalf("in-sync state = %q", got)
 	}
 }
@@ -668,5 +682,246 @@ func TestSkillCompareToleratesMissingLocalFiles(t *testing.T) {
 	}
 	if cmp.LocalMissing || cmp.State != "in_sync" {
 		t.Fatalf("after pull: local_missing=%v state=%q, want in_sync", cmp.LocalMissing, cmp.State)
+	}
+}
+
+// ── sync-state attribution (regression) ──
+//
+// The counts-only heuristic read a modified-only diff after a pull as
+// "local_ahead" even when the local copy was untouched — the reported bug:
+// a skill pulled 2 days ago, then a PR merged on the remote (all files
+// modified, nothing added/removed), showed 本地有新改动 and nudged a push
+// of stale content. These tests pin attribution against the last-sync
+// baseline: WHO moved since the last sync, not just THAT the sides differ.
+
+// seedPulled binds the source and pulls the given remote content once, so
+// the skill starts from a synced baseline.
+func seedPulled(t *testing.T, svc *SkillService, sk *Skill, git *fakeRemoteGit, prov *fakePullProvider, files map[string]string) {
+	t.Helper()
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	prov.canPush = true
+	git.files = copyFiles(files)
+	if _, err := svc.Sync(context.Background(), sk.ID, "pull"); err != nil {
+		t.Fatalf("seed pull: %v", err)
+	}
+}
+
+// TestSkillCompareAfterPullRemoteMoves: THE bug. Remote merges a PR after
+// the last pull; local is untouched. Diff shape: modified=2, added=0,
+// removed=0 — exactly the shape the old heuristic misread as local_ahead.
+func TestSkillCompareAfterPullRemoteMoves(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nseed\n"})
+	seedPulled(t, svc, sk, git, prov, map[string]string{
+		"SKILL.md":  "---\nname: sync-skill\ndescription: demo\n---\nv1\n",
+		"helper.md": "h1\n",
+	})
+
+	// The pull recorded a digest baseline of the synced file set.
+	var digest string
+	if err := svc.st.DB().QueryRowContext(ctx, `SELECT last_sync_digest FROM skill WHERE id=?`, sk.ID).Scan(&digest); err != nil || digest == "" {
+		t.Fatalf("last_sync_digest after pull = %q, %v", digest, err)
+	}
+
+	// Remote moves on (PR merged); nobody touched the local copy.
+	git.sha = "db39ab33"
+	git.files = map[string]string{
+		"SKILL.md":  "---\nname: sync-skill\ndescription: demo\n---\nv2\n",
+		"helper.md": "h2\n",
+	}
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "remote_ahead" {
+		t.Fatalf("state = %q, want remote_ahead (local untouched; counts %+v)", cmp.State, cmp.Counts)
+	}
+	if cmp.Counts.Modified != 2 || cmp.Counts.Added != 0 || cmp.Counts.Removed != 0 {
+		t.Fatalf("counts = %+v, want modified=2 added=0 removed=0", cmp.Counts)
+	}
+
+	// Catching up settles the badge back to in_sync.
+	if _, err := svc.Sync(ctx, sk.ID, "pull"); err != nil {
+		t.Fatalf("catch-up pull: %v", err)
+	}
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "in_sync" {
+		t.Fatalf("state after catch-up pull = %q, want in_sync", cmp.State)
+	}
+}
+
+// TestSkillCompareAfterPullLocalEdits: remote stays at the synced
+// baseline, the local copy is edited → the diff is local → local_ahead.
+func TestSkillCompareAfterPullLocalEdits(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nseed\n"})
+	seedPulled(t, svc, sk, git, prov, map[string]string{
+		"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nv1\n",
+	})
+
+	if err := os.WriteFile(filepath.Join(skillDir(sk.ID), "SKILL.md"),
+		[]byte("---\nname: sync-skill\ndescription: demo\n---\nlocal edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "local_ahead" {
+		t.Fatalf("state = %q, want local_ahead (remote untouched; counts %+v)", cmp.State, cmp.Counts)
+	}
+}
+
+// TestSkillCompareAfterPullBothMoved: both sides moved since the sync →
+// diverged (a human decides).
+func TestSkillCompareAfterPullBothMoved(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nseed\n"})
+	seedPulled(t, svc, sk, git, prov, map[string]string{
+		"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nv1\n",
+	})
+
+	if err := os.WriteFile(filepath.Join(skillDir(sk.ID), "SKILL.md"),
+		[]byte("---\nname: sync-skill\ndescription: demo\n---\nlocal edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git.sha = "moved-on"
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nv2\n"}
+
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("state = %q, want diverged (both sides moved; counts %+v)", cmp.State, cmp.Counts)
+	}
+}
+
+// TestSkillCompareLegacySHARows: rows synced by a daemon predating the
+// digest column have no baseline fingerprint — only the synced SHA. An
+// unmoved remote head attributes every diff to local edits (the old
+// behavior); a moved head cannot be attributed → diverged, honestly, with
+// both SHAs on the panel for the human. One pull upgrades the row to
+// digest-backed attribution.
+func TestSkillCompareLegacySHARows(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nlocal edit\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	prov.canPush = true
+
+	// Simulate a row written by the pre-digest daemon.
+	if _, err := svc.st.DB().ExecContext(ctx,
+		`UPDATE skill SET last_sync_action='pulled', last_remote_sha='remote-sha-1', last_sync_digest='' WHERE id=?`, sk.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remote head still at the synced SHA → the diff must be local edits.
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nremote v1\n"}
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "local_ahead" {
+		t.Fatalf("legacy same-SHA state = %q, want local_ahead (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// Remote head moved → cannot attribute without a baseline → diverged.
+	git.sha = "moved-sha"
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("legacy moved-SHA state = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+}
+
+// TestSkillCompareAfterPullRequest: the PR baseline is the pre-PR remote
+// base (the common ancestor). While the PR is pending the diff reads
+// local_ahead — local moved beyond the ancestor; once main merges the PR
+// the sides read in_sync; if main moves on afterwards the badge tracks
+// remote_ahead, not a stale push nudge.
+func TestSkillCompareAfterPullRequest(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nlocal change\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	prov.canPush = true
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nold remote\n"}
+
+	if _, err := svc.PullRequest(ctx, sk.ID, "Update skill", "why"); err != nil {
+		t.Fatalf("PullRequest: %v", err)
+	}
+
+	// PR pending: main still at the pre-PR base; local sits on the branch.
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "local_ahead" {
+		t.Fatalf("state with PR pending = %q, want local_ahead (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// PR merged into main: sides agree again.
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nlocal change\n"}
+	git.sha = "merged-sha"
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "in_sync" {
+		t.Fatalf("state after merge = %q, want in_sync (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// Main moves on past the merge while local rests. The recorded baseline
+	// is still the PRE-PR base (Compare never mutates bookkeeping), so
+	// neither side can be proven untouched relative to it → diverged: the
+	// safe "human decides" state, never a wrong push nudge. The window
+	// closes at the next pull, which refreshes the baseline.
+	git.sha = "moved-past-merge"
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nremote v2\n"}
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("state after main moves past merge, no intervening pull = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// Catch up (pull the merged+moved main), then the same shape — remote
+	// moves again, local rests — reads remote_ahead precisely.
+	if _, err := svc.Sync(ctx, sk.ID, "pull"); err != nil {
+		t.Fatalf("catch-up pull: %v", err)
+	}
+	git.sha = "moved-again"
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nremote v3\n"}
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "remote_ahead" {
+		t.Fatalf("state after catch-up, remote moves on = %q, want remote_ahead (counts %+v)", cmp.State, cmp.Counts)
+	}
+}
+
+// TestSyncDigestBasics pins the fingerprint contract: order-independent,
+// content- and file-set-sensitive, and never the empty string (empty means
+// "no baseline" — never synced — so the sentinel must not collide).
+func TestSyncDigestBasics(t *testing.T) {
+	base := map[string]string{"SKILL.md": "x", "sub/h.md": "y"}
+	if syncDigest(base) != syncDigest(map[string]string{"sub/h.md": "y", "SKILL.md": "x"}) {
+		t.Fatal("syncDigest must be insertion-order independent")
+	}
+	if syncDigest(base) == syncDigest(map[string]string{"SKILL.md": "x", "sub/h.md": "z"}) {
+		t.Fatal("syncDigest must change with content")
+	}
+	if syncDigest(base) == syncDigest(map[string]string{"SKILL.md": "x", "sub/h.md": "y", "new.md": "n"}) {
+		t.Fatal("syncDigest must change with the file set")
+	}
+	if got := syncDigest(map[string]string{}); got == "" {
+		t.Fatal("syncDigest of the empty set must be non-empty (\"\" is the never-synced sentinel)")
 	}
 }

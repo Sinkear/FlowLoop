@@ -154,7 +154,12 @@ CREATE TABLE IF NOT EXISTS skill (
     repo_token       TEXT NOT NULL DEFAULT '',
     last_synced_at   TEXT NOT NULL DEFAULT '',
     last_sync_action TEXT NOT NULL DEFAULT '',  -- pulled | pushed | pr
-    last_remote_sha  TEXT NOT NULL DEFAULT ''
+    last_remote_sha  TEXT NOT NULL DEFAULT '',
+    -- Content fingerprint of the file set both sides agreed on at the last
+    -- sync (pulled/pushed content; for a PR, the pre-PR remote base). The
+    -- compare state uses it to attribute a diff to the side that actually
+    -- moved, instead of guessing from the diff shape. Never exposed via API.
+    last_sync_digest TEXT NOT NULL DEFAULT ''
 );
 
 -- A squad is a routing group. It does no work itself: assigning a goal to a

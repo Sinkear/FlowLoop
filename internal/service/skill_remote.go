@@ -33,12 +33,17 @@ type SkillSource struct {
 	LastSyncedAt   string `json:"last_synced_at"`
 	LastSyncAction string `json:"last_sync_action"`
 	LastRemoteSHA  string `json:"last_remote_sha"`
+	// LastSyncDigest fingerprints the file set both sides agreed on at the
+	// last sync (pulled/pushed content; for a PR, the pre-PR remote base).
+	// Compare uses it to attribute a content diff to the side that actually
+	// moved. Internal — never serialized.
+	LastSyncDigest string `json:"-"`
 	Token          string `json:"-"`
 }
 
 // newSkillSource builds the API-visible source from one skill row. It
 // returns nil when no repo is configured (the JSON field is omitted).
-func newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSyncAction, lastRemoteSHA string) *SkillSource {
+func newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSyncAction, lastRemoteSHA, lastSyncDigest string) *SkillSource {
 	if strings.TrimSpace(repoURL) == "" {
 		return nil
 	}
@@ -51,6 +56,7 @@ func newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSy
 		LastSyncedAt:   lastSyncedAt,
 		LastSyncAction: lastSyncAction,
 		LastRemoteSHA:  lastRemoteSHA,
+		LastSyncDigest: lastSyncDigest,
 		Token:          token,
 	}
 }
@@ -128,16 +134,22 @@ func (s *SkillService) SetSource(ctx context.Context, id string, in SkillSourceI
 	if err != nil {
 		return nil, err
 	}
-	lastSyncedAt, lastSyncAction, lastRemoteSHA := "", "", ""
-	if sk.Source != nil && sk.Source.RepoURL == src.RepoURL {
+	// Prior sync bookkeeping survives a re-PUT on the SAME target — repo,
+	// branch AND path. Anything else (different repo, or a different
+	// branch/path inside the same repo) points at a different tree, so the
+	// recorded baseline (SHA + digest) would misattribute later compares.
+	lastSyncedAt, lastSyncAction, lastRemoteSHA, lastSyncDigest := "", "", "", ""
+	if sk.Source != nil && sk.Source.RepoURL == src.RepoURL &&
+		sk.Source.Branch == src.Branch && sk.Source.Path == src.Path {
 		lastSyncedAt = sk.Source.LastSyncedAt
 		lastSyncAction = sk.Source.LastSyncAction
 		lastRemoteSHA = sk.Source.LastRemoteSHA
+		lastSyncDigest = sk.Source.LastSyncDigest
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
-		`UPDATE skill SET repo_url=?,repo_provider=?,repo_branch=?,repo_path=?,repo_token=?,last_synced_at=?,last_sync_action=?,last_remote_sha=? WHERE id=?`,
+		`UPDATE skill SET repo_url=?,repo_provider=?,repo_branch=?,repo_path=?,repo_token=?,last_synced_at=?,last_sync_action=?,last_remote_sha=?,last_sync_digest=? WHERE id=?`,
 		src.RepoURL, src.Provider, src.Branch, src.Path, src.Token,
-		lastSyncedAt, lastSyncAction, lastRemoteSHA, id); err != nil {
+		lastSyncedAt, lastSyncAction, lastRemoteSHA, lastSyncDigest, id); err != nil {
 		return nil, fmt.Errorf("update skill source: %w", err)
 	}
 	return s.Get(ctx, id)
@@ -150,7 +162,7 @@ func (s *SkillService) ClearSource(ctx context.Context, id string) (*Skill, erro
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
-		`UPDATE skill SET repo_url='',repo_provider='',repo_branch='',repo_path='',repo_token='',last_synced_at='',last_sync_action='',last_remote_sha='' WHERE id=?`,
+		`UPDATE skill SET repo_url='',repo_provider='',repo_branch='',repo_path='',repo_token='',last_synced_at='',last_sync_action='',last_remote_sha='',last_sync_digest='' WHERE id=?`,
 		id); err != nil {
 		return nil, fmt.Errorf("clear skill source: %w", err)
 	}
@@ -413,12 +425,21 @@ func (s *SkillService) Compare(ctx context.Context, id string) (*SyncCompare, er
 	remote := cleanRemoteFiles(rs.Files)
 	entries, counts := diffSkillFiles(local, remote)
 	identity, canPush := s.probePush(ctx, cfg)
+	state := syncState(syncStateInput{
+		counts:        counts,
+		localMissing:  localMissing,
+		lastDigest:    sk.Source.LastSyncDigest,
+		localDigest:   syncDigest(local),
+		remoteDigest:  syncDigest(remote),
+		lastRemoteSHA: sk.Source.LastRemoteSHA,
+		remoteSHA:     rs.SHA,
+	})
 	return &SyncCompare{
 		LocalMissing: localMissing,
 		SkillID:      sk.ID,
 		Identity:     identity,
 		CanPush:      canPush,
-		State:        syncState(counts),
+		State:        state,
 		BaseBranch:   cfg.Branch,
 		RemoteSHA:    rs.SHA,
 		Entries:      entries,
@@ -495,7 +516,7 @@ func (s *SkillService) PullRequest(ctx context.Context, id, title, body string) 
 	if err != nil {
 		return nil, fmt.Errorf("create pull request: %w", err)
 	}
-	if err := s.markSynced(ctx, sk.ID, "pr", commit); err != nil {
+	if err := s.markSynced(ctx, sk.ID, "pr", commit, syncDigest(remote)); err != nil {
 		return nil, err
 	}
 	return &PullRequestResult{
@@ -533,7 +554,7 @@ func (s *SkillService) pullRemote(ctx context.Context, sk *Skill, cfg remoteConf
 	if err := s.writeSkillFilesAndArchive(sk.ID, files); err != nil {
 		return nil, err
 	}
-	if err := s.markSynced(ctx, sk.ID, "pulled", rs.SHA); err != nil {
+	if err := s.markSynced(ctx, sk.ID, "pulled", rs.SHA, syncDigest(files)); err != nil {
 		return nil, err
 	}
 	return &SyncResult{
@@ -568,7 +589,7 @@ func (s *SkillService) pushRemote(ctx context.Context, sk *Skill, cfg remoteConf
 	if err != nil {
 		return nil, fmt.Errorf("push to remote: %w", err)
 	}
-	if err := s.markSynced(ctx, sk.ID, "pushed", commit); err != nil {
+	if err := s.markSynced(ctx, sk.ID, "pushed", commit, syncDigest(local)); err != nil {
 		return nil, err
 	}
 	return &SyncResult{
@@ -581,11 +602,15 @@ func (s *SkillService) pushRemote(ctx context.Context, sk *Skill, cfg remoteConf
 	}, nil
 }
 
-// markSynced records the outcome of a sync/PR on the skill row.
-func (s *SkillService) markSynced(ctx context.Context, id, action, sha string) error {
+// markSynced records the outcome of a sync/PR on the skill row. baseline is
+// the content fingerprint of the last-known COMMON state of the two sides:
+// the synced file set for pull/push (both sides hold it afterwards), or the
+// pre-PR remote base for a PR (the common ancestor the request diverges
+// from). Compare attributes later diffs against this baseline.
+func (s *SkillService) markSynced(ctx context.Context, id, action, sha, baseline string) error {
 	if _, err := s.st.DB().ExecContext(ctx,
-		`UPDATE skill SET last_synced_at=?,last_sync_action=?,last_remote_sha=? WHERE id=?`,
-		now(), action, sha, id); err != nil {
+		`UPDATE skill SET last_synced_at=?,last_sync_action=?,last_remote_sha=?,last_sync_digest=? WHERE id=?`,
+		now(), action, sha, baseline, id); err != nil {
 		return fmt.Errorf("update skill sync state: %w", err)
 	}
 	return nil
@@ -712,11 +737,76 @@ func diffSkillFiles(local, remote map[string]string) ([]SyncEntry, SyncCounts) {
 	return entries, counts
 }
 
-// syncState applies the contract heuristic from the pull viewpoint: `removed`
-// (local-only) + `modified` are local changes, `added` (remote-only) are
-// remote changes. Only local changes → local_ahead; only remote changes →
-// remote_ahead; both → diverged; none → in_sync.
-func syncState(counts SyncCounts) string {
+// syncStateInput is the evidence syncState attributes a content diff from.
+type syncStateInput struct {
+	counts SyncCounts
+	// localMissing: the skill's local files are gone (compare shows the
+	// remote diff so the UI can offer a restoring pull).
+	localMissing bool
+	// lastDigest fingerprints the file set both sides agreed on at the last
+	// sync. Empty when the skill was never synced — or was last synced by a
+	// daemon predating the digest column.
+	lastDigest string
+	// localDigest / remoteDigest fingerprint the two sides as of THIS
+	// compare (over the same cleaned file maps the entries come from).
+	localDigest, remoteDigest string
+	// lastRemoteSHA is the remote branch head recorded at the last sync;
+	// remoteSHA is the branch head as of this compare. The legacy fallback
+	// uses them when no content digest exists.
+	lastRemoteSHA, remoteSHA string
+}
+
+// syncState decides the badge state — the panel's "pull or push" verdict.
+// A content diff alone cannot say WHO changed (a `modified`-only diff is
+// equally "local edited" and "remote merged a PR"), so the state is
+// attributed against the last-sync baseline, strongest evidence first:
+//
+//  1. in_sync      — no content diff; nothing to do.
+//  2. local_missing— the local copy is gone; only a pull can restore it.
+//  3. Digest baseline (lastDigest): each side is compared against the
+//     last-synced snapshot. Only-remote-moved → remote_ahead (pull),
+//     only-local-moved → local_ahead (push), both → diverged (human). This
+//     is exact: a local copy pulled and left untouched shows remote_ahead
+//     even when the remote change is all `modified` files.
+//  4. SHA-only baseline (rows synced before the digest column existed):
+//     lastRemoteSHA == remoteSHA means the remote tree is still the synced
+//     snapshot, so every diff is local edits → local_ahead; a MOVED remote
+//     head cannot be attributed (no local-side evidence survives) →
+//     diverged — honest, and the panel shows both SHAs for the human.
+//  5. No baseline at all (never synced): fall back to the diff-shape
+//     heuristic — a guess, but the only signal a fresh binding has.
+func syncState(in syncStateInput) string {
+	if in.counts.Added+in.counts.Modified+in.counts.Removed == 0 {
+		return "in_sync"
+	}
+	if in.localMissing {
+		return "remote_ahead"
+	}
+	if in.lastDigest != "" {
+		localChanged := in.localDigest != in.lastDigest
+		remoteChanged := in.remoteDigest != in.lastDigest
+		switch {
+		case localChanged && remoteChanged:
+			return "diverged"
+		case localChanged:
+			return "local_ahead"
+		default:
+			return "remote_ahead"
+		}
+	}
+	if in.lastRemoteSHA != "" {
+		if in.lastRemoteSHA == in.remoteSHA {
+			return "local_ahead"
+		}
+		return "diverged"
+	}
+	return syncCountsHeuristic(in.counts)
+}
+
+// syncCountsHeuristic is the baseline-less fallback: it guesses direction
+// from the shape of the diff — `removed` (local-only) + `modified` are
+// counted as local changes, `added` (remote-only) as remote changes.
+func syncCountsHeuristic(counts SyncCounts) string {
 	localChanges := counts.Removed + counts.Modified
 	remoteChanges := counts.Added
 	switch {
@@ -729,6 +819,26 @@ func syncState(counts SyncCounts) string {
 	default:
 		return "diverged"
 	}
+}
+
+// syncDigest fingerprints a skill file set: sorted "path + content hash"
+// pairs hashed together — order-independent, cheap to store in a column,
+// and stable across processes. Compare uses it to tell which side moved
+// since the last sync without keeping full snapshots around.
+func syncDigest(files map[string]string) string {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, p := range paths {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(sha256Hex(files[p])))
+		_, _ = h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func sha256Hex(content string) string {
