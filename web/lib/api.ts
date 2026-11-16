@@ -452,3 +452,56 @@ export const applySquadTemplate = (id: string, body: ApplySquadOverrides) =>
 export const applyProjectTemplate = (id: string, body: ApplyProjectOverrides) =>
   api<ApplyProjectResult>(`/templates/projects/${id}/apply`, { method: "POST", body: JSON.stringify(body) });
 
+// ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
+
+export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");
+export const listHookEvents = () =>
+  api<{ events: import("./types").HookEvent[] }>("/hooks/events");
+export const createHook = (body: {
+  name: string;
+  description?: string;
+  content: string;
+  interpreter?: string;
+  timeout_sec?: number;
+  params?: Record<string, string>;
+}) => api<import("./types").Hook>("/hooks", { method: "POST", body: JSON.stringify(body) });
+export const getHook = (id: string) => api<import("./types").Hook>(`/hooks/${id}`);
+// meta 更新走指针语义：不传的字段保持原值；params 传了即整体替换（传 {} 清空）。
+export const updateHook = (
+  id: string,
+  body: {
+    name?: string;
+    description?: string;
+    interpreter?: string;
+    timeout_sec?: number;
+    enabled?: boolean;
+    params?: Record<string, string>;
+  }
+) => api<import("./types").Hook>(`/hooks/${id}`, { method: "PUT", body: JSON.stringify(body) });
+// 更新脚本内容（会更新 content_hash —— tripwire 徽标由此点亮）。
+export const updateHookContent = (id: string, body: { content: string }) =>
+  api<import("./types").Hook>(`/hooks/${id}/content`, { method: "PUT", body: JSON.stringify(body) });
+// 试跑：合成样例 payload 真实执行一次，返回 hook_run 记录。
+export const testHook = (id: string, body?: { event?: import("./types").HookEvent }) =>
+  api<import("./types").HookRun>(`/hooks/${id}/test`, { method: "POST", body: JSON.stringify(body ?? {}) });
+export const deleteHook = (id: string) =>
+  api<{ deleted: string }>(`/hooks/${id}`, { method: "DELETE" });
+export const listHookRuns = (id: string, limit?: number) =>
+  api<import("./types").HookRun[]>(`/hooks/${id}/runs${limit ? `?limit=${limit}` : ""}`);
+
+// 绑定（goal 级 / domain 级）。seq 是同事件内的执行顺序（升序）；
+// params 是绑定级参数，浅合并覆盖 hook 默认参数。
+export const bindGoalHook = (goalId: string, body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> }) =>
+  api<import("./types").HookBinding>(`/goals/${goalId}/hooks`, { method: "POST", body: JSON.stringify(body) });
+// 生效集：domain 继承 + goal 级（goal 覆盖 domain 同 hook+event）。
+export const listGoalHooks = (goalId: string) =>
+  api<import("./types").HookBinding[]>(`/goals/${goalId}/hooks`);
+export const unbindGoalHook = (goalId: string, bindingId: string) =>
+  api<{ deleted: string }>(`/goals/${goalId}/hooks/${bindingId}`, { method: "DELETE" });
+export const bindDomainHook = (domainId: string, body: { hook_id: string; event: import("./types").HookEvent; seq?: number; params?: Record<string, string> }) =>
+  api<import("./types").HookBinding>(`/domains/${domainId}/hooks`, { method: "POST", body: JSON.stringify(body) });
+export const listDomainHooks = (domainId: string) =>
+  api<import("./types").HookBinding[]>(`/domains/${domainId}/hooks`);
+export const unbindDomainHook = (domainId: string, bindingId: string) =>
+  api<{ deleted: string }>(`/domains/${domainId}/hooks/${bindingId}`, { method: "DELETE" });
+

@@ -119,6 +119,12 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE skill ADD COLUMN last_synced_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE skill ADD COLUMN last_sync_action TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE skill ADD COLUMN last_remote_sha TEXT NOT NULL DEFAULT ''`,
+		// Hook params (flat {string:string}). schema.sql carries the columns
+		// for fresh DBs; these ALTERs retrofit DBs whose hook tables were
+		// created before params existed. hook_binding.params is the
+		// binding-level override; hook.params holds the defaults.
+		`ALTER TABLE hook ADD COLUMN params TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE hook_binding ADD COLUMN params TEXT NOT NULL DEFAULT '{}'`,
 		`DROP INDEX IF EXISTS uq_goal_source_ref`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS uq_goal_source_ref_conn ON goal(source_ref, connection_id) WHERE source_ref != ''`,
 	} {

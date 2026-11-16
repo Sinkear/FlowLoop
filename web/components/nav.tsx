@@ -13,6 +13,7 @@ import {
   Sparkles,
   Boxes,
   LayoutTemplate,
+  Webhook,
   Clock,
   ScrollText,
   Settings,
@@ -64,6 +65,7 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/domains", label: "项目仓库", icon: Boxes },
       { href: "/templates", label: "模板", icon: LayoutTemplate },
       { href: "/skills", label: "技能", icon: Sparkles },
+      { href: "/hooks", label: "Hooks", icon: Webhook },
     ],
   },
 ];

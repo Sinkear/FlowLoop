@@ -53,6 +53,8 @@ type Server struct {
 	// nil = the endpoints report "not configured").
 	templates     *service.TemplateService
 	templateApply *service.TemplateApplyService
+	// hookSvc: the lifecycle-hooks registry + executor (optional in tests).
+	hookSvc *service.HookService
 }
 
 func New(st *store.Store, bus *events.Bus, d *daemon.Daemon, goalSvc *service.GoalService, runSvc *service.RunService, commentSvc *service.CommentService, squadSvc *service.SquadService, schedSvc *service.ScheduleService, domainSvc *service.DomainService, imConn *notify.Connector, teamImportSvc *service.TeamImportService, skillSvc *service.SkillService, intakeSvc *notify.IntakeService) *Server {
@@ -64,6 +66,12 @@ func New(st *store.Store, bus *events.Bus, d *daemon.Daemon, goalSvc *service.Go
 func (s *Server) SetTemplates(templates *service.TemplateService, templateApply *service.TemplateApplyService) {
 	s.templates = templates
 	s.templateApply = templateApply
+}
+
+// SetHooks wires the lifecycle-hooks service (setter style like SetTemplates:
+// New's parameter list stays stable; nil = hook endpoints 500 + no firing).
+func (s *Server) SetHooks(hookSvc *service.HookService) {
+	s.hookSvc = hookSvc
 }
 
 // ListenAndServe mounts routes and serves until ctx is cancelled.
@@ -121,6 +129,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		TeamImport: s.teamImportSvc,
 		Intake:     s.intakeSvc,
 		Connection: service.NewConnectionService(s.st, s.bus),
+		Hooks:      s.hookSvc,
 		// M4-B: the real-time issue triggers (github + gitcode) share the
 		// poller's create path (source_ref idempotency makes webhook + poll
 		// racing safe). A repo's own webhook_secret wins over the
