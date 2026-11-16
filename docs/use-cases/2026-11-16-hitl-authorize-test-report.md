@@ -40,19 +40,25 @@
 - 副作用与处置：探针调用在主 goal 真实暂存了一条授权请求；已按「newest ask wins」语义用同 run 的后续 authorize 调用覆盖为正式修正卡点（该覆盖行为本身即特性实测项）。该修正卡点已获人批准——批准即清除暂存、goal 回 active 并唤醒 owner，探针副作用闭环（同一 run 的暂存请求被人批准撤销，亦验证了「approve = 清除暂存 + 继续」对非计划内请求同样成立）。
 - owner 守卫的负向用例由单元测试覆盖（`goal_authorize_test.go`）：`TestAuthorizeNonOwnerRejected`、`TestAuthorizeFromDeadRunRejected`、`TestAuthorizeParkSkipsReviewerRuns`、`TestAuthorizeSurvivesPendingSubGoals`、`TestAuthorizeDuplicateDecisionIsIdempotent`。
 
-### 场景② 中途澄清（goal comment --ask · 实测中）
+### 场景② 中途澄清（goal comment --ask · 已执行）
 
-执行：向人提出真实问题——场景③放行动作的 A/B 选择（A. 升级全局 CLI 入口到 v0.1.1；B. 不动全局入口，放行动作改为清理测试副产物）。goal 不停摆、人的回复唤醒 owner run。与 authorize 的差异点：--ask 是「问询」，goal 保持 active，无审批卡。本轮按发现 5 的注记单独成轮，不带暂存 authorize 请求。
+执行：向人提出真实问题——场景③放行动作的 A/B 选择（A. 升级全局 CLI 入口到 v0.1.1；B. 不动全局入口，放行动作改为清理测试副产物）。与 authorize 的差异点：--ask 是「问询」，goal 保持 active，无审批卡。本轮按发现 5 的注记单独成轮，不带暂存 authorize 请求。
 
-### 场景③ 权限放行（authorize 卡点 · 待执行）
+观测：
+- 问询于 04:41 UTC 以 ask_human 评论发出，平台向人推送通知；goal 保持 active（问询不产生停摆）。
+- 截至 12:19 UTC（约 7.6 小时）人未回复；期间平台在 06:37 UTC 触发 wrapup-idle 兜底唤醒（无在途工作 10 分钟即提醒 owner 收尾）——问询不阻止空闲兜底。
+- 终局守卫的 stale-ask 收窄（读码确认 + 本例即实证场景）：只有**本轮 run** 发出的未答复 ask 才 hold 终局判定；上一轮 run 遗留的问询视为过期，不搁置 goal——防止已失效的问询把 goal 永久卡死。本 goal 的 A/B 问询正是上一轮遗留，本轮结束不会被它 hold。
+- 结论：--ask 的「问询」半边（发出、通知、不停摆）符合设计；「回复唤醒」半边未被人触发，留待后续验证（见发现 6 的响应不对称）。
 
-计划：授权一项超出本工作区/影响全局的动作。候选（由场景②的澄清答复定夺）：
-- A. 把全局 CLI 入口（`~/.agentwork/bin/agentwork` 符号链接，现指向 11-13 旧版构建）升级到 v0.1.1 dist 构建——影响所有后续会话的 agent CLI 入口；旧目标路径记录在案可回滚。
-- B. 不动全局入口；放行动作改为清理测试副产物（删除临时 bench goal，删除不可逆）。
+### 场景③ 权限放行（authorize 卡点 · 机制已两次覆盖，第三卡点未执行）
 
-### 场景④ 结果验收（submit-review · 待执行）
+- 卡点机制本身已两次端到端实证：①提案审批卡点（人批准耗时约 41 分钟）与「探针副作用修正 + 继续放行」卡点（人批准耗时 24 秒）——均为真实人裁决放行，语义都是 approve=清除暂存+唤醒继续，而非交付合入，与验收批准正确分离。
+- 计划中的第三卡点（授权一项影响全局/不可逆的动作）**未执行**：动作本应由场景②的 A/B 答复定夺，而问询未获回复。按人审核纪律，影响全局（升级所有会话共用的 CLI 入口）或不可逆（删除 goal）的动作不得基于一个过期的未答复问询擅自执行——该决定升级到验收卡点由人一并裁决（批准=两项都不做；拒绝可在理由中指定执行哪项，agent 下轮按意见执行）。
 
-计划：全部场景完成后 `goal submit-review --reason …` 收尾；批准 = 异步 deliver 合入交付并关闭 goal（含本报告）。
+### 场景④ 结果验收（submit-review / 终局确认门 · 已执行）
+
+- 本轮以 v0.1.1 CLI 调用 `goal submit-review`（理由：四场景完成、交付物为本报告）——**被守卫拒绝**：`HTTP 400: stop queued/running runs before submitting`。守卫统计 goal 上全部 queued/running run（含调用者自身），而 CLI 只能在 run 内调用——即 run 内 agent 永远无法对所在 goal 成功调用 submit-review（详见发现 9）。
+- 终局路径机制（读码确认）：本 goal 所在域的验收策略未冻结（checks_compiled_at 为空），owner run 结束且终局守卫通过（无 pending sub-goal/change/consult、本轮无未答复 ask）后，确认门无条件触发——goal 停摆 review 等人验收，不会无人值守升为 done。即：submit-review 被拒不影响收尾，本轮结束时终局确认门挂出同一张验收卡，批准=异步 deliver 合入交付并关闭 goal（含本报告）。
 
 ## 三、发现与风险
 
@@ -61,7 +67,22 @@
 3. **暂存语义**：authorize 的暂存在 goal 仍 active 时对外不可见（UI 只对 review 态渲染 review_request）；同 run 重复调用覆盖（newest ask wins）——实测符合。
 4. **停摆优先级**：authorize 停摆先于 finalization guard 与 hootl 自动完成生效；`auto_approve` 强制 false；squad 审查 run 不入队 authorize 停摆（无 diff 可审，人只读 statement 裁决）。
 5. **与 --ask 的组合**：暂存的 authorize 请求会在 run 结束时无条件停摆——若同轮既发 --ask 又带暂存请求，审批卡与问询并存，且 review 期间到达的唤醒意图只能排队（approve 会被取消）。本次测试因此把 --ask 放在卡点清除之后的独立轮次（实测注记）。
+6. **卡点与问询的响应不对称（UX 发现）**：两次 authorize 卡点分别约 41 分钟、24 秒获人裁决（审批卡直达裁决入口），而 --ask 问询 7.6+ 小时无人回复——问询以普通评论形态存在，显著性远低于审批卡。建议：问询也应生成醒目的待办卡片（或升级为轻量卡点），否则「中途澄清」实际依赖人主动刷 feed。
+7. **stale-ask 收窄（设计确认 + 本例实证）**：终局守卫只 hold 本轮 run 发出的未答复 ask；上一轮遗留的问询视为过期、不搁置 goal。本例 A/B 问询即上一轮遗留，本轮终局判定不受其 hold——设计意图（防止失效问询卡死 goal）与实现一致。
+8. **wrapup-idle 兜底与平台韧性**：goal 无在途工作 10 分钟后平台主动唤醒 owner 收尾（本轮唤醒即来自它，116 分钟空闲后触发）；首次唤醒因机器离线失败（run failed：machine offline），平台自动以 attempt 2 重试成功——执行层自愈可用。
+9. **submit-review 的在途 run 守卫 vs 平台收尾话术的张力（实测确认）**：守卫要求 goal 上无 queued/running run（含调用者自身），而平台的 wrapup-idle 唤醒话术恰在 owner 被唤醒时让它调用 submit-review——从 run 内调用必然自拒（本轮实测：HTTP 400 stop queued/running runs before submitting）。实际效果：run 内 agent 无法走 submit-review 收尾，收尾由终局确认门兜住（本 goal 正是如此）。建议：话术改为「结束回合即可，确认门会挂出验收卡」，或守卫放行调用者自身（其 run 结束即满足前置）。
 
 ## 四、验收结论
 
-（全部场景完成后填写）
+**特性可用性判定：通过（附 4 项发现与建议）。**
+
+| 场景 | 原语 | 结果 |
+| --- | --- | --- |
+| ① 提案审批 | `goal authorize` 卡点 | ✅ 端到端通过（暂存→停摆→人批准→唤醒继续，41 分钟裁决） |
+| 任意 agent 可执行 | bench 在自己的 hootl goal 上全链路 | ✅ 通过（插入等待人审核状态→停摆→批准→唤醒→hootl 自动收尾 done，全程约 1 分钟） |
+| 负向探针 | 伪造 run 身份调 authorize | ✅ 被身份令牌权威性化解（伪造无效）；owner 守卫负向用例由单元测试覆盖 |
+| ② 中途澄清 | `goal comment --ask` | ⚠️ 问询半边通过（发出/通知/不停摆）；回复唤醒半边未被人触发（7.6+ 小时无回复，见发现 6） |
+| ③ 权限放行 | 第二 authorize 卡点 | ✅ 机制两次端到端覆盖（含 24 秒裁决）；第三卡点（全局影响动作）因问询无答复按纪律未执行，决定升级至验收卡点 |
+| ④ 结果验收 | `goal submit-review` + 终局确认门 | ⚠️ submit-review 被 run 内调用守卫拒绝（实测确认，见发现 9）；终局确认门按设计在本轮结束挂出验收卡，人验收=deliver 合入交付并关闭 goal |
+
+交付物：本报告（docs/use-cases/2026-11-16-hitl-authorize-test-report.md）。遗留待人裁决项：场景③候选动作 A/B（随验收卡点一并裁决，见场景③小节）。
