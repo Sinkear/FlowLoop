@@ -16,6 +16,7 @@ import {
   SectionCard, Skeleton, StatStrip,
 } from "@/components/ui";
 import { WebhookPanel } from "@/components/webhook-panel";
+import { DomainHooksPanel } from "@/components/domain-hooks-panel";
 import type { Domain, DomainGitTestResult, Checks, Guard, GateRule, Run } from "@/lib/types";
 import { groupMessages, StreamCards } from "@/lib/run-messages";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
@@ -1013,6 +1014,9 @@ function EditDomainDialog({ domain, onClose }: { domain: Domain; onClose: () => 
         {domain.type === "repo" && !connectionsManaged && (
           <WebhookPanel domainId={domain.id} provider={issueProvider} repo={issueRepo} />
         )}
+        {/* 项目级默认 Hook 绑定：对本项目所有任务生效（v0.2 §5.3），直接
+            独立 mutation，不走表单保存 */}
+        <DomainHooksPanel domainId={domain.id} />
         {update.isError && <p className="text-sm text-red-400">{String(update.error)}</p>}
       </form>
     </Dialog>

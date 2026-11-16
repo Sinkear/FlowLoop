@@ -112,12 +112,18 @@ export function GoalActions({ goal }: { goal: Goal }) {
 // + push) or reject (back to the agent with the reason as the next scope).
 // The evidence bundle from the last run is shown so the decision is made on
 // facts, not trust.
+//
+// F1: an "authorize:" park is a MID-PIPELINE gate, not acceptance — its
+// approve means "continue" (no merge, no close). Every outcome label below
+// branches on authorizePark so the human sees what the button actually does.
 function ReviewPanel({ goal }: { goal: Goal }) {
   const resolve = useResolveGoalReview();
   const { data: domains } = useDomains();
   // A scratch domain has nothing to merge — approval closes the loop
   // directly (the deliverable is the project directory's contents).
   const scratch = domains?.find((d) => d.id === goal.domain_id)?.type === "scratch";
+  // An authorization gate (goal authorize): approve = release to continue.
+  const authorizePark = goal.review_request?.startsWith("authorize:") ?? false;
   const { data: runs } = useGoalRuns(goal.id);
   const { data: comments } = useGoalComments(goal.id);
   const { data: agents } = useAgents();
@@ -259,7 +265,11 @@ function ReviewPanel({ goal }: { goal: Goal }) {
 
       {resolveOutcome === "approved" && (
         <p className="text-sm text-emerald-300 font-medium">
-          {scratch ? "已批准——按汇报验收，任务完成。" : "已批准——平台正在合入（merge + 复验 + push），完成后此卡自动关闭。"}
+          {authorizePark
+            ? "已批准——agent 将继续执行下一步。"
+            : scratch
+              ? "已批准——按汇报验收，任务完成。"
+              : "已批准——平台正在合入（merge + 复验 + push），完成后此卡自动关闭。"}
         </p>
       )}
       {resolveOutcome === "rejected" && (
@@ -295,8 +305,8 @@ function ReviewPanel({ goal }: { goal: Goal }) {
             {resolve.isPending
               ? "处理中…"
               : resolveOutcome === "approved"
-                ? (scratch ? "已批准，完成" : "已批准，合入中…")
-                : (scratch ? "批准（按汇报验收）" : "批准并自动合入")}
+                ? (authorizePark ? "已批准，继续中…" : scratch ? "已批准，完成" : "已批准，合入中…")
+                : (authorizePark ? "批准并继续" : scratch ? "批准（按汇报验收）" : "批准并自动合入")}
           </Button>
           <Button variant="outline" onClick={() => setRejectForm("reject")} disabled={resolveOutcome === "approved"}>
             驳回

@@ -659,3 +659,52 @@ CREATE TABLE IF NOT EXISTS rsi_round (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rsi_round_session ON rsi_round(session_id, round_no);
 CREATE INDEX IF NOT EXISTS idx_rsi_round_goal ON rsi_round(goal_id, created_at);
+
+-- Hooks (spec: tmp/hooks-spec.md v0.2). A hook is an owner-uploaded script in
+-- the registry; hook_binding attaches it to a lifecycle event at goal or
+-- domain scope; hook_run records every execution. Script content lives IN
+-- SQLite (content BLOB) — the DB is the truth; execution stages it to a temp
+-- file. No trust-state columns: V1 has a single owner write path and a single
+-- trust plane, so pre-execution confirmation gates nothing (spec §4.1);
+-- content_hash is audit-only provenance, copied into each hook_run.
+CREATE TABLE IF NOT EXISTS hook (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,          -- ^[a-z][a-z0-9-]{0,63}$
+    description  TEXT NOT NULL DEFAULT '',
+    content      BLOB NOT NULL,                 -- script text, ≤256KiB, UTF-8
+    content_hash TEXT NOT NULL,                 -- sha256(content) hex, audit only
+    interpreter  TEXT NOT NULL DEFAULT '',      -- ''=honor shebang | bash|python3|node|sh
+    timeout_sec  INTEGER NOT NULL DEFAULT 60,   -- 1..600
+    params       TEXT NOT NULL DEFAULT '{}',    -- flat JSON {string:string}, hook-level defaults
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hook_binding (
+    id         TEXT PRIMARY KEY,
+    hook_id    TEXT NOT NULL REFERENCES hook(id) ON DELETE CASCADE,
+    scope      TEXT NOT NULL,                   -- goal|domain
+    scope_id   TEXT NOT NULL,                   -- goal id or domain id
+    event      TEXT NOT NULL,                   -- hook event registry name (spec §2)
+    seq        INTEGER NOT NULL DEFAULT 0,      -- execution order within (scope_id,event)
+    params     TEXT NOT NULL DEFAULT '{}',      -- flat JSON, shallow-overrides hook.params at run time
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hook_binding_scope ON hook_binding(scope, scope_id, event);
+
+CREATE TABLE IF NOT EXISTS hook_run (
+    id           TEXT PRIMARY KEY,
+    hook_id      TEXT NOT NULL,                 -- no FK: history survives hook deletion
+    binding_id   TEXT NOT NULL DEFAULT '',
+    goal_id      TEXT NOT NULL DEFAULT '',
+    event        TEXT NOT NULL,
+    content_hash TEXT NOT NULL DEFAULT '',       -- script version that actually ran (provenance)
+    status       TEXT NOT NULL,                  -- running|completed|failed|timeout|skipped
+    exit_code    INTEGER,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT NOT NULL DEFAULT '',
+    output       TEXT NOT NULL DEFAULT ''       -- stdout+stderr tail, ≤8KiB
+);
+CREATE INDEX IF NOT EXISTS idx_hook_run_goal ON hook_run(goal_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_hook_run_hook ON hook_run(hook_id, started_at);

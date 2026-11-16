@@ -1736,12 +1736,12 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	}
 	var title, desc, handoff, domainID, gitURL, defaultBranch, domainType, domainName, systemPrompt, argsJSON, rtEnvJSON, sourceRef, gitCredentials, gitIdentity, runtimeMachineID string
 	var agentName, triggerAuthorName string
-	var triggerAuthor, triggerCommentID, triggerCommentContent, runRole, subGoalID, wakeNote, wakeAnchorID string
+	var triggerAuthor, triggerCommentID, triggerCommentContent, runRole, subGoalID, wakeNote, wakeAnchorID, reviewRequest string
 	var maxConcurrent, maxRunDuration int
 	err := d.st.DB().QueryRowContext(ctx,
 		`SELECT g.title, g.description, g.handoff_note, d.id, d.git_url, d.default_branch, COALESCE(d.type,''), COALESCE(d.name,''), a.system_prompt, a.name, d.git_identity,
 		        r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent, d.max_run_duration,
-		        g.source_ref, d.git_credentials,
+		        g.source_ref, d.git_credentials, COALESCE(g.review_request,''),
 		        r2.trigger_comment_id, COALESCE(c.author_type, ''), COALESCE(c.content, ''), COALESCE(ca.name,''), r2.role, r2.sub_goal_id, r2.wake_note, COALESCE(r2.wake_anchor,'')
 		 FROM run r2
 		 JOIN goal g ON g.id = r2.goal_id
@@ -1751,7 +1751,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		 LEFT JOIN comment c ON c.id = r2.trigger_comment_id
 		 LEFT JOIN agent ca ON ca.id = c.author_id
 		 WHERE r2.id = ?`, q.RunID).
-		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
+		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
 	// Claim visibility: which run, which agent, which role — the panel's
 	// answer to "who is doing what right now". The TITLE travels with the
 	// id: ids are for the system, humans read titles.
@@ -1909,8 +1909,9 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			triggerCommentID: triggerCommentID, triggerAuthor: triggerAuthor, triggerAuthorName: triggerAuthorName,
 			triggerCommentContent: triggerCommentContent, title: title, desc: desc, handoff: handoff,
 			wakeNote: wakeNote, wakeAnchorID: wakeAnchorID, subGoalID: subGoalID,
-			assigneeName: assigneeName,
-			consultRun:   consultRun, reviewRun: reviewRun, verifyRun: verifyRun, subGoalRun: subGoalRun,
+			assigneeName:  assigneeName,
+			reviewRequest: reviewRequest,
+			consultRun:    consultRun, reviewRun: reviewRun, verifyRun: verifyRun, subGoalRun: subGoalRun,
 		})
 		// The stored prompt is the TASK message only — the fixed block and
 		// the team ride the workdir's AGENTS.md (buildRunProfile).
@@ -2932,6 +2933,7 @@ type promptInputs struct {
 	triggerCommentID, triggerAuthor, triggerAuthorName, triggerCommentContent       string
 	title, desc, handoff, wakeNote, wakeAnchorID, subGoalID                         string
 	assigneeName                                                                    string
+	reviewRequest                                                                   string
 	consultRun, reviewRun, verifyRun, subGoalRun                                    bool
 }
 
@@ -2992,7 +2994,22 @@ func (d *Daemon) assemblePrompt(ctx context.Context, q *service.ClaimedRow, in p
 	case in.reviewRun:
 		wakeWho = "the platform"
 		wakeAnchor = in.triggerCommentID
-		wakeContent = "Review the goal's outcome — inspect the diff and the feed."
+		// R3 fix: the brief must match WHY the goal parked — the old
+		// hardcoded acceptance line mis-framed non-acceptance parks (live:
+		// a verify_no_verdict park got "review the outcome", and the
+		// reviewer opined "the upgrade was never executed" — which was
+		// exactly what the gate had frozen). The park reason rides the
+		// goal's review_request.
+		if strings.HasPrefix(in.reviewRequest, "verify_no_verdict:") {
+			item := strings.TrimSpace(strings.TrimPrefix(in.reviewRequest, "verify_no_verdict:"))
+			wakeContent = "A work item's verifier never issued a verdict: " + item + "\n" +
+				"Judge that work item from the feed's evidence yourself — your opinion is what the human approver reads.\n" +
+				"Say whether the item was fulfilled, not merely whether the verdict is missing."
+		} else {
+			// Acceptance park (gate hit / submit-for-review). authorize parks
+			// never reach here — enqueueSquadReviewTx skips them.
+			wakeContent = "Review the goal's outcome — inspect the diff and the feed."
+		}
 	case in.verifyRun:
 		wakeWho = "the platform"
 		// 指令归属 (F2): the verifier READS the work item — it is addressed

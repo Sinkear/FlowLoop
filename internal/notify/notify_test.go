@@ -92,6 +92,9 @@ func (f *fakeQS) AgentName(ctx context.Context, agentID string) (string, error) 
 func (f *fakeQS) GoalDomainType(ctx context.Context, goalID string) (string, error) {
 	return "repo", nil
 }
+func (f *fakeQS) GoalParkReason(ctx context.Context, goalID string) (string, error) {
+	return "", nil
+}
 func (f *fakeQS) GoalStatus(ctx context.Context, idPrefix string) (*GoalStatusView, error) {
 	return nil, nil
 }

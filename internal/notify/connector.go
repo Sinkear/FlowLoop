@@ -642,6 +642,15 @@ func (c *Connector) onCardAction(ctx context.Context, event *callback.CardAction
 			Type: "error", Content: "平台未就绪（goalSvc 未接线）",
 		}}, nil
 	}
+	// F1: the toast must state what the button DID — for an authorization
+	// park approve means "continue", not "merge". The reason is read BEFORE
+	// ResolveReview clears review_request.
+	authorizePark := false
+	if c.qs != nil {
+		if reason, err := c.qs.GoalParkReason(ctx, goalID); err == nil {
+			authorizePark = strings.HasPrefix(reason, "authorize:")
+		}
+	}
 	if _, err := c.goalSvc.ResolveReview(ctx, goalID, runID, decision, "", "human"); err != nil {
 		// The validator's message is developer-oriented; the toast must be
 		// human-oriented (the most common case: a duplicate click while the
@@ -665,6 +674,8 @@ func (c *Connector) onCardAction(ctx context.Context, event *callback.CardAction
 	toast := "已批准，平台开始合入"
 	if decision == "reject" {
 		toast = "已驳回，goal 将带决策意见重跑"
+	} else if authorizePark {
+		toast = "已批准，agent 将继续执行"
 	}
 	return &callback.CardActionTriggerResponse{Toast: &callback.Toast{
 		Type: "success", Content: toast,
@@ -682,12 +693,20 @@ func (c *Connector) updateCardProcessed(messageID, goalID, decision string) {
 		return
 	}
 	scratch := false
+	authorizePark := false
 	if c.qs != nil {
 		if t, err := c.qs.GoalDomainType(context.Background(), goalID); err == nil {
 			scratch = t == "scratch"
 		}
+		// The park reason is read from the activity trail — the decision
+		// has already cleared goal.review_request by the time this patch
+		// runs (F1: an authorize park's approve must stamp "继续执行",
+		// not the acceptance "自动合入").
+		if reason, err := c.qs.GoalParkReason(context.Background(), goalID); err == nil {
+			authorizePark = strings.HasPrefix(reason, "authorize:")
+		}
 	}
-	content, err := buildProcessedCard(goalID, decision, scratch)
+	content, err := buildProcessedCard(goalID, decision, scratch, authorizePark)
 	if err != nil {
 		return
 	}

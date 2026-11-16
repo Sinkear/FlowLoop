@@ -293,6 +293,13 @@ func roleContract(runRole string, isLeader bool, squadID string) string {
 			"platform notifies them; their reply wakes you (NOT a consult), so\n" +
 			"your session and worktree persist across the round-trip. Use --ask\n" +
 			"only when you genuinely need the user's input to proceed.\n" +
+			"Park the goal at a HUMAN-AUTHORIZATION gate (mid-pipeline, when\n" +
+			"the plan says a human must approve before a risky next step):\n" +
+			"`agentwork goal authorize --statement \"<what the human is\n" +
+			"authorizing + what happens next>\"` — approve = CONTINUE (no merge,\n" +
+			"no close), reject = back to the drawing board. Use authorize for\n" +
+			"gates and submit-review ONLY for final close-out — their approve\n" +
+			"buttons mean different things.\n" +
 			"Transfer ownership with `agentwork goal assign <agent-id>`. Members\n" +
 			"are NOT auto-dispatched — you delegate explicitly. To communicate\n" +
 			"results or conclusions to the team, use `agentwork goal comment` —\n" +

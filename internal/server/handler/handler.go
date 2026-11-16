@@ -63,6 +63,10 @@ type Handlers struct {
 	Connection *service.ConnectionService
 	// RSI is the training-session / trace-analysis service (训练分析).
 	RSI *service.RSIService
+	// Hooks is the lifecycle-hooks registry + bus-subscribed executor
+	// (spec: tmp/hooks-spec.md v0.2). nil-safe: absent = hook endpoints
+	// return 500s and no lifecycle firing (tests may omit it).
+	Hooks *service.HookService
 }
 
 func (h *Handlers) Mount(mux *http.ServeMux) {
@@ -147,6 +151,23 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /skills/{id}/sync", h.compareSkillSync)
 	mux.HandleFunc("POST /skills/{id}/sync", h.syncSkill)
 	mux.HandleFunc("POST /skills/{id}/pull-request", h.pullRequestSkill)
+
+	// Hooks: registry CRUD + bindings + run history (spec §5.1).
+	mux.HandleFunc("GET /hooks", h.listHooks)
+	mux.HandleFunc("GET /hooks/events", h.listHookEvents)
+	mux.HandleFunc("POST /hooks", h.createHook)
+	mux.HandleFunc("GET /hooks/{id}", h.getHook)
+	mux.HandleFunc("PUT /hooks/{id}", h.updateHook)
+	mux.HandleFunc("PUT /hooks/{id}/content", h.updateHookContent)
+	mux.HandleFunc("POST /hooks/{id}/test", h.testHook)
+	mux.HandleFunc("DELETE /hooks/{id}", h.deleteHook)
+	mux.HandleFunc("GET /hooks/{id}/runs", h.listHookRuns)
+	mux.HandleFunc("POST /goals/{goalID}/hooks", h.bindGoalHook)
+	mux.HandleFunc("GET /goals/{goalID}/hooks", h.listGoalHooks)
+	mux.HandleFunc("DELETE /goals/{goalID}/hooks/{bindingID}", h.unbindGoalHook)
+	mux.HandleFunc("POST /domains/{domainID}/hooks", h.bindDomainHook)
+	mux.HandleFunc("GET /domains/{domainID}/hooks", h.listDomainHooks)
+	mux.HandleFunc("DELETE /domains/{domainID}/hooks/{bindingID}", h.unbindDomainHook)
 	mux.HandleFunc("POST /teams/import", h.importTeam)
 	mux.HandleFunc("GET /teams/import", h.listTeamImports)
 	mux.HandleFunc("GET /teams/import/{runId}", h.getTeamImport)
@@ -1488,7 +1509,8 @@ func (h *Handlers) testGitAndRespond(w http.ResponseWriter, r *http.Request, git
 }
 
 // writeJSON writes v as JSON, or an error response if err is non-nil. err is
-// mapped: ErrNotFound→404, ErrValidation→400, ErrForbidden→403, else 500.
+// mapped: ErrNotFound→404, ErrValidation→400, ErrForbidden→403, ErrConflict→409,
+// else 500.
 func writeJSON(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		code := http.StatusInternalServerError
@@ -1498,6 +1520,8 @@ func writeJSON(w http.ResponseWriter, v any, err error) {
 			code = http.StatusBadRequest
 		} else if errors.Is(err, service.ErrForbidden) {
 			code = http.StatusForbidden
+		} else if errors.Is(err, service.ErrConflict) {
+			code = http.StatusConflict
 		}
 		writeErr(w, code, err)
 		return
@@ -1522,6 +1546,8 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 	} else if errors.Is(err, service.ErrNotFound) {
 		body["code"] = service.CodeNotFound
 	} else if errors.Is(err, service.ErrValidation) {
+		body["code"] = service.CodeValidation
+	} else if errors.Is(err, service.ErrConflict) {
 		body["code"] = service.CodeValidation
 	}
 	// Surface structured detail parameters so the frontend can interpolate

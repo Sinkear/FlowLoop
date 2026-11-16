@@ -143,6 +143,14 @@ func BinDir() string { return filepath.Join(Home(), "bin") }
 // its own copy under Runs/repos; a remote machine has this one.
 func RepoDir(domainID string) string { return filepath.Join(Home(), "repos", domainID) }
 
+// HookRuns is the root for hook execution scratch dirs.
+func HookRuns() string { return filepath.Join(Runs(), "hooks") }
+
+// HookRunDir is the per-execution working directory of one hook run: the
+// script is staged here as `script` and runs with this as cwd. Kept after the
+// run for output forensics; safe to prune by age.
+func HookRunDir(runID string) string { return filepath.Join(HookRuns(), runID) }
+
 // Layout is a JSON-friendly snapshot of every top-level path, used by the
 // `paths` command and the operations docs.
 type Layout struct {
@@ -160,6 +168,7 @@ type Layout struct {
 	Skills         string `json:"skills"`
 	Chat           string `json:"chat"`
 	Bin            string `json:"bin"`
+	Hooks          string `json:"hooks"`
 }
 
 // Current returns the current layout snapshot.
@@ -179,6 +188,7 @@ func Current() Layout {
 		Skills:         filepath.Join(Home(), "skills"),
 		Chat:           filepath.Join(Home(), "chat"),
 		Bin:            BinDir(),
+		Hooks:          HookRuns(),
 	}
 }
 

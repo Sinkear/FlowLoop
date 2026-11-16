@@ -80,6 +80,86 @@ export interface SkillPullRequestResult {
   commit: string;
 }
 
+// ── Hooks（生命周期钩子，spec: tmp/hooks-spec.md v0.2） ──
+
+// Hook is the registry entity (script + meta). Content is only populated by
+// GET /hooks/{id}; the list omits it (scripts can be 256 KiB each).
+export interface Hook {
+  id: string;
+  name: string;
+  description: string;
+  content?: string;
+  content_hash: string;
+  interpreter: string; // '' = 遵循脚本 shebang，否则强制 bash|sh|python3|node
+  timeout_sec: number;
+  params?: Record<string, string>; // 默认参数（扁平 {string:string}）
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// HookListItem is one row of GET /hooks: the hook plus the list-page
+// decorations (binding count, last run, and the content-changed tripwire).
+export interface HookListItem {
+  hook: Hook;
+  binding_count: number;
+  last_run_status: string; // '' = 从未运行过
+  last_run_finished_at: string;
+  last_run_content_hash: string;
+  content_changed_since_last_run?: boolean;
+}
+
+// HookBinding attaches a hook to an event at a scope (goal | domain).
+// GET /goals/{id}/hooks returns the EFFECTIVE set: domain-inherited
+// bindings carry scope="domain" (the goal-level ones say scope="goal").
+export interface HookBinding {
+  id: string;
+  hook_id: string;
+  hook_name?: string;
+  scope: string; // goal | domain
+  scope_id: string;
+  event: HookEvent;
+  seq: number;
+  params?: Record<string, string>; // 绑定级参数，浅合并覆盖 hook 默认
+  created_at: string;
+}
+
+// HookRun is one execution record (or a skip/timeout record).
+export interface HookRun {
+  id: string;
+  hook_id: string;
+  hook_name?: string;
+  binding_id: string;
+  goal_id: string;
+  event: HookEvent;
+  content_hash: string; // 执行那一刻的脚本 sha256（版本溯源）
+  status: "running" | "completed" | "failed" | "timeout" | "skipped";
+  exit_code?: number | null; // null = skipped/timeout
+  started_at: string;
+  finished_at: string;
+  output: string; // stdout+stderr 合并（尾部 8 KiB），skip 原因也写在这里
+}
+
+// V1 事件注册表（后端 hookEventTopics 的镜像）。
+export type HookEvent =
+  | "goal_finished"
+  | "goal_delivered"
+  | "goal_deliver_failed"
+  | "goal_reviewing"
+  | "goal_review_resolved";
+
+export const HOOK_EVENTS: { value: HookEvent; label: string; desc: string }[] = [
+  { value: "goal_finished", label: "任务完成", desc: "goal 进入终态（done / failed / cancelled）后触发" },
+  { value: "goal_delivered", label: "交付完成", desc: "变更已提交进仓库后触发" },
+  { value: "goal_deliver_failed", label: "交付失败", desc: "交付动作失败（进入 review）后触发" },
+  { value: "goal_reviewing", label: "进入审查", desc: "goal 停靠进 review 窗口时触发" },
+  { value: "goal_review_resolved", label: "审批决定", desc: "人审做出 approve / reject 后触发" },
+];
+
+export function hookEventLabel(event: string): string {
+  return HOOK_EVENTS.find((e) => e.value === event)?.label ?? event;
+}
+
 // Machine is a remote host registered via `agentwork connect`.
 export interface Machine {
   id: string;
@@ -644,6 +724,7 @@ export type WSTopic =
   | "squad:created" | "squad:deleted" | "squad:member_added" | "squad:member_removed"
   | "schedule:created" | "schedule:fired"
   | "domain:created" | "domain:deleted" | "domain:compiled" | "domain:compile_failed"
+  | "hook:started" | "hook:completed"
   | "team:import_enqueued" | "team:imported" | "team:import_failed";
 
 export interface WSEvent {

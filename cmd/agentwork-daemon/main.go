@@ -137,6 +137,17 @@ func main() {
 	teamImportSvc := service.NewTeamImportService(st, bus)
 	teamImportSvc.SetDependencies(runSvc, goalSvc, domainSvc, agentSvc, skillSvc, squadSvc)
 
+	// Hooks (spec: tmp/hooks-spec.md v0.2): the lifecycle executor. Startup
+	// order matters — sweep orphan runs from a previous process BEFORE
+	// attaching to the bus; after Subscribe, running rows belong to us.
+	hookSvc := service.NewHookService(st, bus)
+	if n, err := hookSvc.SweepOrphanRuns(ctx); err != nil {
+		logging.Warnf("hook orphan sweep: %v", err)
+	} else if n > 0 {
+		logging.Infof("hook sweep: marked %d orphaned run(s) failed (daemon restart)", n)
+	}
+	hookSvc.Subscribe()
+
 	// Seed the built-in digest schedule (每日AI知识精选): fires daily at 09:00
 	// Asia/Shanghai on the steward (AI SHELL), collects AI news into
 	// ~/.agentwork/digest/.
@@ -201,6 +212,7 @@ func main() {
 	srv := server.New(st, bus, d, goalSvc, runSvc, commentSvc, squadSvc, schedSvc, domainSvc, imConn, teamImportSvc, skillSvc, intakeSvc)
 	srv.SetRSI(rsiSvc)
 	srv.SetTemplates(templateSvc, templateApplySvc)
+	srv.SetHooks(hookSvc)
 	if err := srv.ListenAndServe(ctx, *addr); err != nil && !errors.Is(err, context.Canceled) {
 		logging.Fatalf("server: %v", err)
 	}

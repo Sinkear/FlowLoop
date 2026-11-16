@@ -191,9 +191,11 @@ func TestRenderReviewComment(t *testing.T) {
 }
 
 // TestBuildProcessedCard: the post-decision card stamps the outcome and
-// carries no buttons. Schema 2.0 structure.
+// carries no buttons. Schema 2.0 structure. The authorizePark variant (F1)
+// stamps "继续执行" — approve at an authorization gate means continue, not
+// merge — and never claims a merge.
 func TestBuildProcessedCard(t *testing.T) {
-	raw, err := buildProcessedCard("abc123456789", "approve", false)
+	raw, err := buildProcessedCard("abc123456789", "approve", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +216,20 @@ func TestBuildProcessedCard(t *testing.T) {
 	}
 	if !strings.Contains(raw, "已批准") {
 		t.Fatalf("processed card must stamp the decision: %s", raw)
+	}
+	if !strings.Contains(raw, "自动合入") {
+		t.Fatalf("acceptance park must claim the merge flow: %s", raw)
+	}
+
+	auth, err := buildProcessedCard("abc123456789", "approve", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(auth, "继续执行") {
+		t.Fatalf("authorize park must stamp continue, not merge: %s", auth)
+	}
+	if strings.Contains(auth, "合入") {
+		t.Fatalf("authorize park must NEVER claim a merge: %s", auth)
 	}
 }
 

@@ -9,6 +9,7 @@ import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
 import { GoalSubGoals } from "@/components/goal-subgoals";
 import { GoalChanges } from "@/components/goal-changes";
+import { GoalHooksPanel } from "@/components/goal-hooks-panel";
 import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
 import { Badge, AttentionChip, PageBody, SectionCard } from "@/components/ui";
@@ -124,6 +125,9 @@ function GoalDetailPageInner() {
           }
         />
       </SectionCard>
+
+      {/* Hooks（v1：任务结束后的自定义脚本——生效绑定 = goal 级 + 项目继承） */}
+      <GoalHooksPanel goalId={id} goalStatus={goal.status} />
 
       {/* Runs */}
       <GoalRuns goalId={id} />

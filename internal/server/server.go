@@ -55,6 +55,8 @@ type Server struct {
 	templateApply *service.TemplateApplyService
 	// rsi: training sessions / trace analysis (optional — nil disables it).
 	rsiSvc *service.RSIService
+	// hookSvc: the lifecycle-hooks registry + executor (optional in tests).
+	hookSvc *service.HookService
 }
 
 func New(st *store.Store, bus *events.Bus, d *daemon.Daemon, goalSvc *service.GoalService, runSvc *service.RunService, commentSvc *service.CommentService, squadSvc *service.SquadService, schedSvc *service.ScheduleService, domainSvc *service.DomainService, imConn *notify.Connector, teamImportSvc *service.TeamImportService, skillSvc *service.SkillService, intakeSvc *notify.IntakeService) *Server {
@@ -70,6 +72,12 @@ func (s *Server) SetRSI(rsi *service.RSIService) { s.rsiSvc = rsi }
 func (s *Server) SetTemplates(templates *service.TemplateService, templateApply *service.TemplateApplyService) {
 	s.templates = templates
 	s.templateApply = templateApply
+}
+
+// SetHooks wires the lifecycle-hooks service (setter style like SetTemplates:
+// New's parameter list stays stable; nil = hook endpoints 500 + no firing).
+func (s *Server) SetHooks(hookSvc *service.HookService) {
+	s.hookSvc = hookSvc
 }
 
 // ListenAndServe mounts routes and serves until ctx is cancelled.
@@ -128,6 +136,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		Intake:     s.intakeSvc,
 		Connection: service.NewConnectionService(s.st, s.bus),
 		RSI:        s.rsiSvc,
+		Hooks:      s.hookSvc,
 		// M4-B: the real-time issue triggers (github + gitcode) share the
 		// poller's create path (source_ref idempotency makes webhook + poll
 		// racing safe). A repo's own webhook_secret wins over the
@@ -626,6 +635,26 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "assignee_id is required for agent/squad"}
 			}
 			out, err := s.goalSvc.Assign(ctx, id.GoalID, p.AssigneeType, p.AssigneeID, p.HandoffNote, "agent", id.AgentID)
+			if err != nil {
+				return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
+			}
+			return out, nil
+		})
+
+		// goal.authorize (F1/F3): the owner run parks the goal at a
+		// human-authorization gate with a human-readable statement of what
+		// approval means ("继续执行下一步"). The run token identifies the
+		// owner run — a non-owner agent cannot park someone else's goal.
+		peer.Handle(link.MethodGoalAuthorize, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+			id, rpcErr := resolve(raw)
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			var p link.GoalAuthorizeParams
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "invalid params"}
+			}
+			out, err := s.goalSvc.RequestAuthorization(ctx, id.GoalID, id.AgentID, id.RunID, p.Statement)
 			if err != nil {
 				return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
 			}
