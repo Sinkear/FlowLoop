@@ -27,6 +27,9 @@ type fakeRemoteGit struct {
 	pushedBranch  string
 	pushedMessage string
 	pushedToken   string
+	baseFiles     map[string]string
+	baseErr       error
+	baseFetches   int
 }
 
 func copyFiles(in map[string]string) map[string]string {
@@ -43,6 +46,17 @@ func (f *fakeRemoteGit) Fetch(_ context.Context, cfg remoteConfig) (*remoteState
 		return nil, f.fetchErr
 	}
 	return &remoteState{SHA: f.sha, Files: copyFiles(f.files)}, nil
+}
+
+// FetchBase simulates fetch-by-sha: it serves the configured baseFiles for
+// any sha, or baseErr when the test wants the "baseline unavailable"
+// fallback. baseFiles == nil means an empty baseline (also unusable).
+func (f *fakeRemoteGit) FetchBase(_ context.Context, _ remoteConfig, sha string) (*remoteState, error) {
+	f.baseFetches++
+	if f.baseErr != nil {
+		return nil, f.baseErr
+	}
+	return &remoteState{SHA: sha, Files: copyFiles(f.baseFiles)}, nil
 }
 
 func (f *fakeRemoteGit) Push(_ context.Context, cfg remoteConfig, files map[string]string, branch, message string) (string, error) {
@@ -837,6 +851,126 @@ func TestSkillCompareLegacySHARows(t *testing.T) {
 	}
 	if cmp.State != "diverged" {
 		t.Fatalf("legacy moved-SHA state = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+}
+
+// TestSkillCompareLegacyRowBaselineReconstruction pins the round-2 fix: a
+// row last synced by the pre-digest daemon (sha recorded, digest empty),
+// local files untouched since, remote head moved by a merge — the badge
+// must read remote_ahead (pull), never local_ahead (whose push would
+// clobber the merge) and not a lazy diverged. Compare reconstructs the
+// baseline by fetching the remote as of the recorded sha, attributes the
+// diff three-way, and heals the row with the digest so later compares
+// skip the extra fetch.
+func TestSkillCompareLegacyRowBaselineReconstruction(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nv1\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	prov.canPush = true
+	base := map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nv1\n"}
+	legacy := func(action string) {
+		t.Helper()
+		if _, err := svc.st.DB().ExecContext(ctx,
+			`UPDATE skill SET last_sync_action=?, last_remote_sha='base-sha-1', last_sync_digest='' WHERE id=?`,
+			action, sk.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	healedDigest := func() string {
+		t.Helper()
+		var digest string
+		if err := svc.st.DB().QueryRowContext(ctx,
+			`SELECT last_sync_digest FROM skill WHERE id=?`, sk.ID).Scan(&digest); err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+
+	legacy("pulled")
+	git.baseFiles = base
+	git.sha = "merged-sha-2"
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nmerged v2\n"}
+
+	// The reported scenario: local untouched, remote merged → pull.
+	cmp, err := svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "remote_ahead" {
+		t.Fatalf("state = %q, want remote_ahead (counts %+v)", cmp.State, cmp.Counts)
+	}
+	if git.baseFetches != 1 {
+		t.Fatalf("baseFetches = %d, want 1", git.baseFetches)
+	}
+	if d := healedDigest(); d == "" || d != syncDigest(base) {
+		t.Fatalf("healed digest = %q, want %q", d, syncDigest(base))
+	}
+
+	// Healed row: the next compare reuses the digest without re-fetching.
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "remote_ahead" {
+		t.Fatalf("state after heal = %q, want remote_ahead", cmp.State)
+	}
+	if git.baseFetches != 1 {
+		t.Fatalf("baseFetches after heal = %d, want 1 (digest reused)", git.baseFetches)
+	}
+
+	// Same legacy row but local edited since the pull, remote merged →
+	// both sides moved → diverged.
+	legacy("pulled")
+	if err := os.WriteFile(filepath.Join(skillDir(sk.ID), "SKILL.md"),
+		[]byte("---\nname: sync-skill\ndescription: demo\n---\nlocal edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("both-moved state = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// Remote head moved but the skill path is unchanged, local edited →
+	// local_ahead: the reconstruction proves the remote did not touch it.
+	legacy("pulled")
+	git.files = base
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "local_ahead" {
+		t.Fatalf("path-untouched state = %q, want local_ahead (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// Baseline unavailable (host without fetch-by-sha) → honest diverged.
+	legacy("pulled")
+	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\ndescription: demo\n---\nmerged v2\n"}
+	git.baseErr = errors.New("fetch-by-sha refused")
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("no-baseline state = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+
+	// A pr row is never reconstructed: its sha is the request head, not a
+	// state both sides held, so the sha comparison stays the final word.
+	legacy("pr")
+	git.baseErr = nil
+	fetchesBefore := git.baseFetches
+	cmp, err = svc.Compare(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmp.State != "diverged" {
+		t.Fatalf("pr-row state = %q, want diverged (counts %+v)", cmp.State, cmp.Counts)
+	}
+	if git.baseFetches != fetchesBefore {
+		t.Fatalf("pr row triggered %d baseline fetches, want 0", git.baseFetches-fetchesBefore)
 	}
 }
 

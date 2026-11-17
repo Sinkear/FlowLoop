@@ -65,7 +65,8 @@ export interface SyncResult {
   // DB restored without runs/). A pull restores them; push/PR stay blocked.
   local_missing?: boolean;
   // mutation extras
-  action?: string; // pulled | pushed
+  // 注意：是完成体 "pulled" | "pushed"，不是请求 direction 的 "pull"/"push"。
+  action?: "pulled" | "pushed";
   branch?: string;
   commit?: string;
 }

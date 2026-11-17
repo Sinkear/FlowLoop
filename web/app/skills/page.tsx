@@ -725,10 +725,12 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
 
             {runSync.isSuccess && runSync.data && (
               <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
-                {runSync.data.action === "pull"
+                {/* 后端 SyncResult.action 是 "pulled" | "pushed"（不是请求
+                    direction 的 "pull"/"push"）；对不齐会把拉取误报成推送。 */}
+                {runSync.data.action === "pulled"
                   ? "已拉取远端，本地文件与 package.zip 已更新。"
                   : "已推送本地改动到远端分支"}
-                {runSync.data.action !== "pull" && runSync.data.commit
+                {runSync.data.action === "pushed" && runSync.data.commit
                   ? `（commit ${runSync.data.commit.slice(0, 8)}）`
                   : ""}
               </p>

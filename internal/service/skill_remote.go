@@ -86,6 +86,16 @@ type remoteGit interface {
 	Push(ctx context.Context, cfg remoteConfig, files map[string]string, branch, message string) (commit string, err error)
 }
 
+// remoteBaseFetcher is the optional fetch-by-sha extension of remoteGit.
+// Reconstructing a legacy sync row's baseline (rows recorded by a daemon
+// predating the digest column) needs the repository as of an arbitrary
+// sha, which Fetch (a shallow clone of today's branch head) cannot serve.
+// Hosts that reject fetch-by-sha simply return an error and the caller
+// falls back to the coarser sha comparison.
+type remoteBaseFetcher interface {
+	FetchBase(ctx context.Context, cfg remoteConfig, sha string) (*remoteState, error)
+}
+
 // remoteState is one fetched remote branch.
 type remoteState struct {
 	SHA   string
@@ -425,10 +435,11 @@ func (s *SkillService) Compare(ctx context.Context, id string) (*SyncCompare, er
 	remote := cleanRemoteFiles(rs.Files)
 	entries, counts := diffSkillFiles(local, remote)
 	identity, canPush := s.probePush(ctx, cfg)
+	lastDigest := s.baselineDigest(ctx, sk, cfg, rs, localMissing, counts)
 	state := syncState(syncStateInput{
 		counts:        counts,
 		localMissing:  localMissing,
-		lastDigest:    sk.Source.LastSyncDigest,
+		lastDigest:    lastDigest,
 		localDigest:   syncDigest(local),
 		remoteDigest:  syncDigest(remote),
 		lastRemoteSHA: sk.Source.LastRemoteSHA,
@@ -446,6 +457,63 @@ func (s *SkillService) Compare(ctx context.Context, id string) (*SyncCompare, er
 		Counts:       counts,
 		CheckedAt:    now(),
 	}, nil
+}
+
+// baselineDigest resolves the content baseline that syncState attributes
+// the diff against. Rows synced by the current daemon already carry
+// last_sync_digest. Legacy rows (recorded before the column existed) get
+// theirs reconstructed by fetching the remote as of last_remote_sha —
+// that sha genuinely identifies the synced file set for a pull or a push.
+// A "pr" row cannot be reconstructed this way: its sha is the request
+// branch head, a state only the local side held, so those rows keep the
+// sha comparison inside syncState. On success the row is healed
+// (last_sync_digest backfilled, guarded so a concurrent sync wins), which
+// makes the extra fetch a one-time cost per legacy row. Any failure —
+// host without fetch-by-sha, pruned sha, network, empty path at the
+// baseline — falls back to the empty digest and the sha comparison.
+func (s *SkillService) baselineDigest(ctx context.Context, sk *Skill, cfg remoteConfig, rs *remoteState, localMissing bool, counts SyncCounts) string {
+	digest := sk.Source.LastSyncDigest
+	if digest != "" || localMissing {
+		return digest
+	}
+	if sk.Source.LastRemoteSHA == "" || sk.Source.LastRemoteSHA == rs.SHA {
+		return digest
+	}
+	if counts.Added+counts.Modified+counts.Removed == 0 {
+		return digest
+	}
+	switch sk.Source.LastSyncAction {
+	case "pulled", "pushed":
+	default:
+		return digest
+	}
+	bf, ok := s.git.(remoteBaseFetcher)
+	if !ok {
+		return digest
+	}
+	base, err := bf.FetchBase(ctx, cfg, sk.Source.LastRemoteSHA)
+	if err != nil || base == nil {
+		return digest
+	}
+	if base.Cleanup != nil {
+		defer base.Cleanup()
+	}
+	files := cleanRemoteFiles(base.Files)
+	if len(files) == 0 {
+		// A synced skill always had files on both sides, so an empty
+		// baseline means the fetch answered with something unusable
+		// (e.g. a stale sha after a path rebind). Trust nothing.
+		return digest
+	}
+	digest = syncDigest(files)
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE skill SET last_sync_digest=? WHERE id=? AND last_sync_digest=''`,
+		digest, sk.ID); err != nil {
+		// Healing only saves the next compare a fetch; this compare
+		// already holds the digest it needs.
+		_ = err
+	}
+	return digest
 }
 
 // Sync performs a pull (replace local files with remote) or push (commit
@@ -903,6 +971,47 @@ func (g *gitCLI) Fetch(ctx context.Context, cfg remoteConfig) (*remoteState, err
 	if err != nil {
 		cleanup()
 		return nil, err
+	}
+	root, err := repoSubdir(dir, cfg.Path)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	files, err := readRepoFiles(root)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	return &remoteState{SHA: sha, Files: files, Dir: dir, Cleanup: cleanup}, nil
+}
+
+// FetchBase fetches the repository as of an arbitrary sha — the recorded
+// baseline of a legacy sync row — and returns the skill files under the
+// configured repo path. Fetch-by-sha needs the full 40-char sha and host
+// support (GitCode serves it; GitHub rejects it by default); any error
+// means "baseline unavailable" and the caller falls back.
+func (g *gitCLI) FetchBase(ctx context.Context, cfg remoteConfig, sha string) (*remoteState, error) {
+	sha = strings.TrimSpace(sha)
+	if len(sha) != 40 {
+		return nil, fmt.Errorf("fetch base: sha %q is not a full commit id", sha)
+	}
+	dir, err := os.MkdirTemp("", "agentwork-skill-base-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	cloneURL := gitutil.CloneURL(cfg.RepoURL, cfg.Token)
+	steps := [][]string{
+		{"init", "--quiet"},
+		{"remote", "add", "origin", cloneURL},
+		{"fetch", "--quiet", "--depth", "1", "origin", sha},
+		{"checkout", "--quiet", "FETCH_HEAD"},
+	}
+	for _, args := range steps {
+		if _, err := g.git(ctx, dir, args...); err != nil {
+			cleanup()
+			return nil, err
+		}
 	}
 	root, err := repoSubdir(dir, cfg.Path)
 	if err != nil {
