@@ -188,6 +188,24 @@ CREATE TABLE IF NOT EXISTS squad_member (
     UNIQUE(squad_id, member_type, member_id)
 );
 
+-- squad_role: a squad's role vocabulary registry (BLUEPRINT-PROPOSAL §11.8).
+-- name is the capability slug (^[a-z][a-z0-9_-]*$ normalized form) that
+-- blueprint task.assignee "capability:<name>" resolves against;
+-- description is the job spec this role exists for — the alignment copy the
+-- squad owner, the blueprint author, and the spawn planner all read.
+-- Reserved words 'reviewer' (structural) and 'member' (legacy default) are
+-- always valid and never stored here. Squads with zero rows keep free-text
+-- roles (template apply / team import / legacy squads unchanged).
+CREATE TABLE IF NOT EXISTS squad_role (
+    id          TEXT PRIMARY KEY,
+    squad_id    TEXT NOT NULL REFERENCES squad(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    UNIQUE(squad_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name);
+
 -- goal: a work item (product plane). The sole holder of state authority.
 -- assignee is polymorphic (agent | squad | human).
 -- domain_id: agent-executed goals must belong to a domain — the domain owns
@@ -348,6 +366,7 @@ CREATE TABLE IF NOT EXISTS sub_goal (
     quality_iteration INTEGER NOT NULL DEFAULT 0,
     depends_on        TEXT NOT NULL DEFAULT '[]', -- JSON array of sub_goal ids declared by the leader; '' edges are inferred at read time (workflow_edge)
     dispatch_comment_id TEXT NOT NULL DEFAULT '', -- the leader's dispatch comment for THIS work item ('' on legacy rows): a run born LATER (wakeDependentsTx, after the deps verify) carries it as run.trigger_comment_id, so the assignee's report still threads to the dispatch even when the first run was gated
+    team_squad_id     TEXT NOT NULL DEFAULT '',  -- Phase B (§11.5): the squad whose roster/playbook this work item's runs are briefed with; '' = fall back to the goal's own squad (legacy/infer semantics unchanged)
     created_at        TEXT NOT NULL
 );
 
@@ -462,7 +481,7 @@ CREATE INDEX IF NOT EXISTS idx_gate_decision_goal ON gate_decision(goal_id, deci
 CREATE TABLE IF NOT EXISTS comment (
     id          TEXT PRIMARY KEY,
     goal_id     TEXT NOT NULL REFERENCES goal(id),
-    author_type TEXT NOT NULL CHECK (author_type IN ('human', 'agent', 'system')),
+    author_type TEXT NOT NULL CHECK (author_type IN ('human', 'agent', 'system')), -- system subsumes platform actors (blueprint spawn fan-out uses author_id = the spawn sub_goal id)
     author_id   TEXT NOT NULL DEFAULT '',   -- zero id for system rows
     parent_id   TEXT REFERENCES comment(id), -- one level of threading
     content     TEXT NOT NULL,

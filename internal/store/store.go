@@ -189,6 +189,9 @@ func Open(path string) (*Store, error) {
 		// three tables mirror schema.sql for old DBs (double-idempotent:
 		// schema.sql CREATE IF NOT EXISTS + this list).
 		`ALTER TABLE goal ADD COLUMN blueprint_version_id TEXT NOT NULL DEFAULT ''`,
+		// Phase B (proposal §11.5): the squad whose roster this work item's
+		// runs are briefed with ('' = fall back to the goal's own squad).
+		`ALTER TABLE sub_goal ADD COLUMN team_squad_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS blueprint (
 		    id              TEXT PRIMARY KEY,
 		    name            TEXT NOT NULL UNIQUE,
@@ -222,6 +225,19 @@ func Open(path string) (*Store, error) {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_blueprint_node_sub_goal ON blueprint_node(sub_goal_id)`,
+
+		// Phase B-2.1 (proposal §11.8): per-squad role vocabulary registry.
+		// Mirrors schema.sql for old DBs; zero rows = free-text roles kept
+		// (template apply / team import / legacy squads unchanged).
+		`CREATE TABLE IF NOT EXISTS squad_role (
+		    id          TEXT PRIMARY KEY,
+		    squad_id    TEXT NOT NULL REFERENCES squad(id) ON DELETE CASCADE,
+		    name        TEXT NOT NULL,
+		    description TEXT NOT NULL DEFAULT '',
+		    created_at  TEXT NOT NULL,
+		    UNIQUE(squad_id, name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name)`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

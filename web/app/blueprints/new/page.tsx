@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Check, Loader2, PlusCircle, Save } from "lucide-react";
 import { PageBody, PageHeader, SectionCard, Button, Field, inputCls } from "@/components/ui";
-import { useAgents, useCreateBlueprint } from "@/lib/queries";
+import { useAgents, useCreateBlueprint, useAllSquadRoles } from "@/lib/queries";
 import { BLUEPRINT_TEMPLATES } from "@/lib/blueprint-templates";
 import { cn } from "@/lib/utils";
 
@@ -106,7 +106,7 @@ export default function NewBlueprintPage() {
 
       <SectionCard
         title="1 · 从模板起步"
-        desc="三份合法预设，点一份进编辑器再改——不用从零手写 JSON；也可以跳过模板，直接在下面贴现成的规范 JSON。"
+        desc="五份合法预设（串行/并行/条件/拆解扇出/按角色派工），点一份进编辑器再改——不用从零手写 JSON；也可以跳过模板，直接在下面贴现成的规范 JSON。"
       >
         <div className="grid gap-3 p-4 sm:grid-cols-3">
           {BLUEPRINT_TEMPLATES.map((t) => (
@@ -133,7 +133,7 @@ export default function NewBlueprintPage() {
 
       <SectionCard
         title="2 · 蓝图内容"
-        desc="执行者下拉会替换 JSON 里的 __AGENT_ID__ 占位符；{{goal.title}}、{{node.<id>.output}} 这类模板留给平台在编译/释放时解析。"
+        desc="执行者下拉会替换 JSON 里的 __AGENT_ID__ 占位符；{{goal.title}}、{{node.<id>.output}} 这类模板留给平台在编译/释放时解析。capability:角色 派给任务小队里角色匹配的成员；spawn 节点在规划者完成后把子项清单物化成真实子任务。"
       >
         <div className="space-y-4 p-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -213,7 +213,9 @@ export default function NewBlueprintPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="3 · 保存之后" desc="草稿 → 发布 → 绑定任务，三步走完就能看编译效果">
+      <SquadRoleVocabulary />
+
+      <SectionCard title="4 · 保存之后" desc="草稿 → 发布 → 绑定任务，三步走完就能看编译效果">
         <ul className="space-y-2.5 p-4 text-xs leading-relaxed text-ink-2">
           <li className="flex gap-2">
             <PlusCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-3" />
@@ -230,5 +232,41 @@ export default function NewBlueprintPage() {
         </ul>
       </SectionCard>
     </PageBody>
+  );
+}
+
+// SquadRoleVocabulary: the cross-squad role word listing (proposal §11.8) —
+// the alignment surface for blueprint authors. capability:<word> references
+// resolve against per-squad registries; this panel shows every registered
+// word so the JSON you write and the squads' vocabulary stay in 口径对齐.
+function SquadRoleVocabulary() {
+  const { data: roles } = useAllSquadRoles();
+  return (
+    <SectionCard
+      title="小队角色词汇（capability: 用词对齐）"
+      count={roles?.length ?? 0}
+      desc="蓝图里 capability:<角色词> 按各小队注册的词解析成员。写 capability: 引用前先对照这里——用词和小队注册表对不上，任务激活时会失败并提示缺哪个词"
+    >
+      {!roles || roles.length === 0 ? (
+        <p className="p-4 text-sm text-ink-3">
+          还没有小队注册角色词汇。capability: 派工前，先去「小队」详情页的「角色词汇表」
+          注册岗位词（技能差异=不同的词，如 design-implementer / proprietary-implementer）。
+        </p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {roles.map((r) => (
+            <li key={`${r.squad_id}:${r.name}`} className="flex items-start gap-3 px-4 py-2.5">
+              <span className="mt-0.5 shrink-0 rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2">
+                {r.squad_name}
+              </span>
+              <span className="mt-0.5 inline-flex shrink-0 items-center rounded border border-teal-500/30 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-teal-300">
+                capability:{r.name}
+              </span>
+              <span className="min-w-0 flex-1 text-sm text-ink-2">{r.description || "（未写岗位说明）"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
   );
 }

@@ -151,6 +151,12 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /squads/{id}/members", h.addSquadMember)
 	mux.HandleFunc("GET /squads/{id}/members", h.listSquadMembers)
 	mux.HandleFunc("DELETE /squads/{id}/members/{memberId}", h.removeSquadMember)
+	// Role vocabulary registry (proposal §11.8): per-squad words + the
+	// cross-squad listing the blueprint author reads for alignment.
+	mux.HandleFunc("GET /squads/{id}/roles", h.listSquadRoles)
+	mux.HandleFunc("POST /squads/{id}/roles", h.registerSquadRole)
+	mux.HandleFunc("DELETE /squads/{id}/roles/{name}", h.removeSquadRole)
+	mux.HandleFunc("GET /squad-roles", h.listAllSquadRoles)
 
 	mux.HandleFunc("GET /schedules", h.listSchedules)
 	mux.HandleFunc("POST /schedules", h.createSchedule)
@@ -599,6 +605,36 @@ func (h *Handlers) addSquadMember(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) listSquadMembers(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Squad.ListMembers(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+// ── squad role vocabulary registry (proposal §11.8) ──
+
+func (h *Handlers) listSquadRoles(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Squad.ListRoles(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+func (h *Handlers) registerSquadRole(w http.ResponseWriter, r *http.Request) {
+	var role service.SquadRole
+	if err := json.NewDecoder(r.Body).Decode(&role); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	out, err := h.Squad.RegisterRole(r.Context(), r.PathValue("id"), role.Name, role.Description)
+	writeJSON(w, out, err)
+}
+
+func (h *Handlers) removeSquadRole(w http.ResponseWriter, r *http.Request) {
+	if err := h.Squad.RemoveRole(r.Context(), r.PathValue("id"), r.PathValue("name")); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) listAllSquadRoles(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Squad.ListAllRoles(r.Context())
 	writeJSON(w, out, err)
 }
 

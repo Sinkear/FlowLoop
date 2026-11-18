@@ -205,8 +205,9 @@ export const NODE_KIND_META: Record<
     ring: "border-rose-500/40",
     bar: "bg-rose-400",
   },
-  // ── 蓝本规范图节点（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.2）──
+  // ── 蓝本规范图节点（Phase A/B，docs/BLUEPRINT-PROPOSAL.md §4.2+§11）──
   // 规范图与执行图共用 WorkflowGraph 形状，这些 kind 只出现在规范图里。
+  // task/condition/spawn/end 已可发布；router/gate 属 Phase B-3。
   task: {
     label: "任务",
     desc: "蓝本任务节点；编译为 gated sub_goal",
@@ -236,8 +237,8 @@ export const NODE_KIND_META: Record<
     bar: "bg-orange-400",
   },
   spawn: {
-    label: "派生",
-    desc: "动态子任务拆分（Phase B 生效）",
+    label: "拆解",
+    desc: "规划者完成后把子项物化成真实子任务（Phase B 已生效）",
     badge: "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300",
     ring: "border-fuchsia-500/40",
     bar: "bg-fuchsia-400",

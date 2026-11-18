@@ -1979,7 +1979,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			ACPSpawn: args, Env: dispatchEnv,
 			ArtifactFiles:    artifactFiles,
 			ProjectSkillsDir: d.projectSkillsDirFor(ctx, runtimeMachineID, args),
-			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection),
+			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID),
 			PriorSessionID:   priorSession,
 			PriorWorkDir:     priorWorkdir,
 			McpServers:       d.extraMcpServers(ctx, q.AgentID),

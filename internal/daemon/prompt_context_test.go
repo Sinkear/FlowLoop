@@ -129,7 +129,7 @@ func TestTeamProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leader := d.buildTeamProfile(ctx, goalID, agentID)
+	leader := d.buildTeamProfile(ctx, goalID, agentID, "")
 	for _, want := range []string{"Squad Operating Protocol", "agentwork subgoal create --title T --assignee <agent-id>", "REVIEWER-ONLY", "playbook says X", "skills: frontend"} {
 		if !strings.Contains(leader, want) {
 			t.Fatalf("the leader profile must carry %q, got:\n%s", want, leader)

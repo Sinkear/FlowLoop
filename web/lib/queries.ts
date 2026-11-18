@@ -56,6 +56,10 @@ import {
   deleteSquad,
   addSquadMember,
   listSquadMembers,
+  listSquadRoles,
+  registerSquadRole,
+  removeSquadRole,
+  listAllSquadRoles,
   updateSquad,
   removeSquadMember,
   listSchedules,
@@ -149,6 +153,8 @@ export const qk = {
   squads: ["squads"] as const,
   squad: (id: string) => ["squads", id] as const,
   squadMembers: (squadId: string) => ["squads", squadId, "members"] as const,
+  squadRoles: (squadId: string) => ["squads", squadId, "roles"] as const,
+  allSquadRoles: ["squad-roles"] as const,
   schedules: ["schedules"] as const,
   domains: ["domains"] as const,
   domain: (id: string) => ["domains", id] as const,
@@ -679,6 +685,43 @@ export function useAddSquadMember() {
       addSquadMember(squadId, body),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: qk.squadMembers(vars.squadId) });
+    },
+  });
+}
+
+// ── Squad role vocabulary registry (proposal §11.8) ──
+
+export function useSquadRoles(squadId: string) {
+  return useQuery({
+    queryKey: qk.squadRoles(squadId),
+    queryFn: () => listSquadRoles(squadId),
+  });
+}
+export function useAllSquadRoles() {
+  return useQuery({
+    queryKey: qk.allSquadRoles,
+    queryFn: () => listAllSquadRoles(),
+  });
+}
+export function useRegisterSquadRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ squadId, ...body }: { squadId: string; name: string; description?: string }) =>
+      registerSquadRole(squadId, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.squadRoles(vars.squadId) });
+      qc.invalidateQueries({ queryKey: qk.allSquadRoles });
+    },
+  });
+}
+export function useRemoveSquadRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ squadId, name }: { squadId: string; name: string }) =>
+      removeSquadRole(squadId, name),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.squadRoles(vars.squadId) });
+      qc.invalidateQueries({ queryKey: qk.allSquadRoles });
     },
   });
 }

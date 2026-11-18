@@ -10,6 +10,9 @@ import {
   useAddSquadMember,
   useUpdateSquad,
   useRemoveSquadMember,
+  useSquadRoles,
+  useRegisterSquadRole,
+  useRemoveSquadRole,
   useGoalEvents,
   useDomains,
   useConnections,
@@ -27,7 +30,7 @@ import {
   Field,
   inputCls,
 } from "@/components/ui";
-import { Users, Trash2 } from "lucide-react";
+import { Users, Trash2, BookA } from "lucide-react";
 import { cn, relTime } from "@/lib/utils";
 import type { SquadMember } from "@/lib/types";
 import { SquadConnections } from "@/components/squad-connections";
@@ -275,6 +278,12 @@ export default function SquadDetailPage() {
         <p className="text-sm text-red-400">{String(removeMember.error)}</p>
       )}
 
+      {/* 角色词汇表（BLUEPRINT-PROPOSAL §11.8）：能力词注册表。
+          蓝图 capability:<name> 按这里注册的词解析成员；技能差异要编码成
+          不同的词（如 design-implementer / proprietary-implementer）。
+          注册过任何一个词后，成员角色就只能从词表（或保留词 reviewer/member）里选。 */}
+      <SquadRoleRegistry squadId={id} />
+
       {/* 仓库接入：每条连接是独立 webhook（契约 3.3c / §5），同一仓库可被多个 squad 接入 */}
       <SquadConnections squadId={id} />
 
@@ -340,6 +349,121 @@ export default function SquadDetailPage() {
   );
 }
 
+// SquadRoleRegistry: the squad's role vocabulary (proposal §11.8).
+// Words registered here are the ONLY capability:<name> references blueprint
+// nodes can resolve against this squad; the description is the job spec the
+// blueprint author and the spawn planner read. Empty registry = free-text
+// roles (legacy / template-apply squads); registering the first word turns
+// on the vocabulary gate (AddMember refuses unregistered words).
+function SquadRoleRegistry({ squadId }: { squadId: string }) {
+  const { data: roles, isLoading } = useSquadRoles(squadId);
+  const registerRole = useRegisterSquadRole();
+  const removeRole = useRemoveSquadRole();
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    registerRole.mutate(
+      { squadId, name, description: desc },
+      {
+        onSuccess: () => {
+          setName("");
+          setDesc("");
+          setShowForm(false);
+        },
+      }
+    );
+  };
+
+  return (
+    <SectionCard
+      title="角色词汇表"
+      count={roles?.length ?? 0}
+      desc="蓝图 capability:<角色词> 按这里的词解析成员。技能差异请编码成不同的词（如 design-implementer / proprietary-implementer）；注册过词后成员角色只能从词表里选"
+      action={
+        <Button onClick={() => setShowForm((v) => !v)} className="h-7 px-2.5 text-xs">
+          + 注册角色
+        </Button>
+      }
+    >
+      {isLoading ? (
+        <div className="space-y-2">
+          {[0, 1].map((i) => (
+            <Skeleton key={i} className="h-8 w-full" />
+          ))}
+        </div>
+      ) : !roles || roles.length === 0 ? (
+        <Empty icon={<BookA className="h-4 w-4" />}>
+          还没注册角色词——成员角色仍是自由文本。
+          注册第一个词后，本小队进入「词表制」：成员角色只能从词表（或保留词 reviewer/member）里选，
+          蓝图按角色词派工才有确定性保证。
+        </Empty>
+      ) : (
+        <ul className="divide-y divide-line">
+          {roles.map((r) => (
+            <li key={r.id} className="flex items-start gap-3 px-4 py-2.5">
+              <span className="mt-0.5 inline-flex shrink-0 items-center rounded border border-teal-500/30 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-teal-300">
+                capability:{r.name}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-ink-2">{r.description || "（未写岗位说明）"}</p>
+                <p className="mt-0.5 text-[10px] text-ink-3" title={r.created_at}>
+                  {relTime(r.created_at)}注册
+                </p>
+              </div>
+              <button
+                onClick={() => removeRole.mutate({ squadId, name: r.name })}
+                disabled={removeRole.isPending && removeRole.variables?.name === r.name}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-red-400 disabled:opacity-40"
+                title="删除该角色词（仍有成员使用时会被拒绝）"
+                aria-label={`删除角色词 ${r.name}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {registerRole.isError && (
+        <p className="mt-2 text-sm text-red-400">{String(registerRole.error)}</p>
+      )}
+      {removeRole.isError && (
+        <p className="mt-2 text-sm text-red-400">{String(removeRole.error)}</p>
+      )}
+      {showForm && (
+        <form onSubmit={handleSubmit} className="mt-3 space-y-3 border-t border-line pt-3">
+          <Field label="角色词" hint="小写词，可用数字、-、_（就是蓝图里 capability: 后面那一段）">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={inputCls}
+              placeholder="design-implementer"
+              required
+              pattern="[a-z][a-z0-9_-]*"
+            />
+          </Field>
+          <Field label="岗位说明" hint="这个角色干什么、隐含什么专有技能——蓝图作者和拆解规划者都会读它">
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              className={`${inputCls} min-h-20`}
+              placeholder="负责 UI/视觉实现，持有设计技能…"
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowForm(false)}>取消</Button>
+            <Button type="submit" disabled={registerRole.isPending || !name.trim()}>
+              {registerRole.isPending ? "…" : "注册"}
+            </Button>
+          </div>
+        </form>
+      )}
+    </SectionCard>
+  );
+}
+
 function AddMemberDialog({
   squadId,
   agents,
@@ -350,9 +474,28 @@ function AddMemberDialog({
   onClose: () => void;
 }) {
   const addMember = useAddSquadMember();
+  const { data: roles } = useSquadRoles(squadId);
   const [memberType, setMemberType] = useState("agent");
   const [memberId, setMemberId] = useState("");
   const [role, setRole] = useState("member");
+
+  // §11.8 vocabulary gate: once the squad registers ANY role word, the picker
+  // lists registry words + reserved words only; unregistered squads keep the
+  // legacy two options (free text still allowed server-side).
+  const registryActive = (roles?.length ?? 0) > 0;
+  const roleOptions = registryActive
+    ? [
+        { value: "member", label: "member（执行者）" },
+        { value: "reviewer", label: "reviewer（审核者，进审批时被平台拉去审查）" },
+        ...roles!.map((r) => ({
+          value: r.name,
+          label: `${r.name}（${r.description ? r.description.slice(0, 20) : "见角色词汇表"}）`,
+        })),
+      ]
+    : [
+        { value: "member", label: "执行者（被 leader 分派干活）" },
+        { value: "reviewer", label: "审核者（进审批时被平台自动拉去审查）" },
+      ];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -397,10 +540,11 @@ function AddMemberDialog({
             <input value={memberId} onChange={(e) => setMemberId(e.target.value)} className={inputCls} required placeholder="human id…" />
           </Field>
         )}
-        <Field label="角色">
+        <Field label="角色" hint={registryActive ? "角色词已注册：只能从词表选择（BLUEPRINT-PROPOSAL §11.8）" : "本小队未注册角色词汇表，暂用自由文本；想让蓝图按角色派工，请先在上方「角色词汇表」注册"}>
           <select value={role} onChange={(e) => setRole(e.target.value)} className={inputCls}>
-            <option value="member">执行者（被 leader 分派干活）</option>
-            <option value="reviewer">审核者（进审批时被平台自动拉去审查）</option>
+            {roleOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
           </select>
         </Field>
         {addMember.isError && (

@@ -286,10 +286,15 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, cr
 - 表 + 校验器（V1–V6，纯代码可单测）+ 两拍编译（先支持 task/condition/end 三种节点）+ goal.blueprint_version_id 绑定 + **全节点终态完成判据** + 前端规范图只读渲染 + `CreateSubGoal` 结构拒绝。
 - **验收**：绑蓝图 goal 无法在有未 settle 节点时进 done；同一蓝图版本编译两次产生相同 sub_goal 拓扑与 depends_on；infer 模式回归零差异；执行引擎零改动。
 
-### Phase B — 权责隔离 + 全节点类型（治：篡位）
+### Phase B — 项目-小队-蓝本三层串联（治：篡位残留 + 小队内扇出无结构化替代）
 
-- steward/leader 角色契约代码化（§4.8 表全项落地）；router（枚举约束结构化输出 + fallback）/ gate（复用 review 机制，映射定稿）/ spawn（登记式拆分）三种节点；双图叠加 diff 视图。
-- **验收**：blueprint goal 上 steward 无法创建图外 sub_goal（API 层拒绝）；router 决策全部落在注册类集合内；漏跑/越权/乱序在前端一眼可见。
+用户 2026-11-18 认可并批准执行（详细设计见 §11）。三步：
+
+- **B-1 队内扇出结构化**：spawn 节点放行（受上限的动态子任务，引擎物化）；节点级团队简报（`sub_goal.team_squad_id`——修多小队 goal 下非 goal 小队成员拿到空白简报的 bug）。
+- **B-2 小队能力化**：`capability:<role-slug>` 第三种 assignee 语法；能力=小队成员 role 的规范枚举（`LOWER(TRIM(role))`，先例 REVIEWER-only 规则 subgoal.go:109）；确定性解析规则表（见 §11.3）；蓝本与具体人档解耦（人换了流程不烂、A/B 证据可迁移）。
+- **B-3 节点类型补全**：router（枚举约束选路+fallback）/ gate（复用 goal 级 review 态，Q1 定稿）随本阶段余项推进；发布门错误信息同步。
+- **角色换岗**：steward/leader 从「编舞师」改为「集成者+异常处理器」（监控/集成/汇报/异常处理），infer 模式永久保留为新颖任务探索口袋。
+- **验收**：capability 解析确定性（同输入必同输出，歧义 fail-closed）；spawn 子任务数 ≤ max_children、成员越界拒绝、非法 JSON spawn 失败可重试；多小队 goal 下每个节点 run 拿到自己小队的名册；router 决策全落在注册类集合内；漏跑/越权/乱序前端一眼可见。
 
 ### Phase C — 优化闭环（自迭代落地）
 
@@ -472,3 +477,102 @@ AFlow 式 MCTS 在补丁空间搜索，A/B 门控，预算（goal.budget_usd）�
 ```
 
 编译效果：`CompileBlueprint` 建 7 行 blueprint_node；n_repro 释放时 leader 填充 brief 成具体 sub_goal；n_route 在 n_repro settle 后跑一次路由 run（只能选 local_fix/spec_first 之一，异常走 fallback）；n_split 拆的每个测试任务登记为 `n_split#1..k`；goal 只有在全部节点 settled/skipped 且 n_end_ok 可达时才能 done。同一蓝图再跑同一 goal：相同拓扑、相同 depends_on、相同判据——**可序列化 = 可重放 = 可度量 = 可优化**。
+
+---
+
+## 11. Phase B 设计定稿：项目-小队-蓝本三层串联（2026-11-18，用户已认可）
+
+> 背景：用户提出「小队本身也要结构化——小队提供的是什么能力？怎么和蓝图结合定义真实的工作流？要把项目-小队-蓝图串起来。训练后的蓝图就是真实的工作流」。以下是对该想法的批判性定稿：三条采纳、两个前提修正（见各小节「陷阱」标注）、一个提法澄清（双簿记）。
+
+### 11.1 三层各归其位：goal 是唯一 join point
+
+```
+项目(domain) ──提供──> 软关联：推荐小队/推荐蓝本（新建任务下拉过滤，不硬绑定）
+小队(squad)  ──声明──> 能力词汇表：member.role 规范枚举（reviewer/go-dev/…）
+蓝本(blueprint) ──引用──> 节点写 {"assignee": "capability:go-dev"}
+                          Activate 时确定性解析（§11.3 规则表）
+                          解析结果快照进 blueprint_node.resolved_config
+三个概念只在 goal 创建时相交（项目 × 小队 × 蓝本），不构成硬层级。
+```
+
+- **蓝本故意不绑定项目**：蓝本是流程模板（「调研→方案→实现」这个形状），同一份可在任何项目下复用；项目归属发生在任务层（新建任务时同时选 domain 和 blueprint）。这是设计决策不是遗漏。
+- **三层串联靠 capability**：goal 选定小队 → 蓝本节点的 `capability:` 引用在该小队名册内解析 → 项目提供验收策略与仓库。任何一层换人都只影响解析结果，不影响蓝本结构。
+
+### 11.2 双簿记原则（对「训练后的蓝图就是真实的工作流」的定稿）
+
+- ✅ **对的理解**：训练收敛后的蓝本版本 = 组织对这类任务的**最佳已知流程**——每版被同题 A/B 实证过，越来越接近现实。
+- ❌ **危险的理解**：训练后蓝本变成可变的「实际流程」实体，计划与记录合并。会一次性毁掉：A/B 复测（没有 v1/v2 就没有对照）、回滚（没有 before_hash）、审计（说不清哪个版本产出了哪个结果）、guard 判据（完成度对照钉住的版本算，版本漂移守卫失效）。
+- **定稿**：蓝本版本 = 计划（不可变、可版本化、可 diff）；执行图 = 记录（从 runs 读时装配、永不可编辑）；训练是连接两者的**桥**（finding → 结构化补丁 → 新版本 → 同题 A/B → 双图 diff）。计划收敛于现实，但永远不**变成**记录——菜谱越改越准，但菜谱和做菜日志不能合并成一张纸。
+
+### 11.3 capability 解析规则表（确定性 = 同输入必同输出，歧义 fail-closed）
+
+| 规则 | 内容 |
+|---|---|
+| 语法 | `capability:<role-slug>`，slug 匹配 `^[a-z][a-z0-9_-]*$`；与 `agent:`/`squad:` 并列第三种 assignee |
+| 词汇表 | 即 `squad_member.role` 的 `LOWER(TRIM(role))` 规范形（先例：REVIEWER-only 规则 subgoal.go:109 已硬匹配该形式，本设计把它形式化为全平台能力词汇表，不新造表） |
+| 检索范围 | goal 自己的小队（`goal.assignee_type='squad'` 且成员含该 role）；agent-assigned goal 上 `capability:` 编译报错（无处检索，fail-closed） |
+| 过滤 | 排除 reviewer（REVIEWER-ONLY RULE 沿用：reviewer 只评审不执行） |
+| 多命中 | 确定性选择：非终态 sub_goal 数最少者优先（负载感知），并列取 squad_member.created_at 最早——结果快照进 resolved_config，同输入必同输出 |
+| 零命中 | 编译失败（goal 留 backlog，错误信息列出小队实际拥有的 role 词汇） |
+| 快照 | resolved_config = `{"assignee_spec":"capability:go-dev","resolved_agent":"<id>","team_squad_id":"<squad>"}`——审计可回放「这个节点当时解析给了谁」 |
+
+### 11.4 spawn 节点语义（队内扇出的结构化替代，登记式拆分）
+
+- **动机**：Phase A 后 blueprint goal 内 `CreateSubGoal` 对所有人结构拒绝——队长无法把节点工作再拆给队员。这是 leader 认领制与规范图的真实残留冲突：要改的不是认领制（认领只是派发方式），而是队内扇出缺结构化通道。
+- **规范**：`spawn{assignee, brief, child_type:"task", max_children}`，端口 done|failed；`max_children` 上限 8（引擎级常量）。
+- **编译拍 1**：spawn 节点编译为一个 sub_goal（assignee 按上表解析，`squad:` → 队长），`team_squad_id` 记为该节点小队——队长 run 的简报带全名册。
+- **运行拍（spawn 完成）**：引擎在 spawn sub_goal 的 verified 事务内解析其 run result_summary 的 JSON 数组（brief 指令要求最后一行输出 ```json [{title,brief,assignee}]```），确定性物化子任务：
+  - 每项 assignee 必须是 spawn 小队的非 reviewer 成员（越界 → spawn 失败可重试）；
+  - 数量 > max_children → spawn 失败可重试（fail-closed，不静默截断）；
+  - 子任务 depends_on=[spawn sub_goal]，created_by_type='blueprint'（引擎物化非 agent 创建）；
+  - **下游门控**：spawn 的每个规范图直接后继的 depends_on 追加全部子任务 id——下游等所有子任务 verified 才释放（复用 wakeDependentsTx 既有语义，引擎零新机制）；
+  - 非法 JSON / 空数组但格式合法 → 空数组允许（队长判定无需扇出，在受控自由内）；非法 JSON → spawn 失败（重试走引擎既有 attempt 上限）。
+- **计划 vs 现实**：子任务不是 blueprint_node（不在规范图）——它们出现在执行图里。规范图显示 spawn 一个节点、执行图显示实际 N 个子任务，这正是双簿记想要的可视对照。
+- **guard**：子任务是普通 sub_goal，非终态即守卫挂起——引擎既有 pendingSG 计数覆盖，零新机制。
+
+### 11.5 节点级团队简报（修多小队空白简报 bug）
+
+- **现状 bug**：`buildTeamProfile`（team_context.go:185）只查 goal 自己的小队——多小队蓝图里 B 队成员跑节点时拿到空白简报（goal 的 squad 不是他的队）。
+- **定稿**：`sub_goal.team_squad_id TEXT NOT NULL DEFAULT ''`（编译时写入：`squad:`/`capability:` 节点=该小队，`agent:` 节点与 infer goal=''）；run 的团队简报优先取 sub_goal.team_squad_id，空则回退 goal 小队（现状语义保持）。
+- spawn 子任务继承 spawn 的小队——队员 run 全部看得到名册。
+
+### 11.6 leader 换岗与 infer 永久保留
+
+- leader/steward 从「编舞师」（自由拆解）换岗为「集成者+异常处理器」：监控（subgoal list）、集成（change integrate）、评论汇报、--ask 问用户、异常处理（spawn 计划本身也是一种受控的创作）。
+- **infer 模式永久保留**：新颖任务的探索口袋；同构信号（3 次同构，Q4 定稿）是 leader 发现的顺序变成结构化蓝本的通道——**别删 leader，给 leader 换岗**。
+
+### 11.7 分期与验收
+
+| 步 | 内容 | 验收 |
+|---|---|---|
+| B-1 | spawn 节点 + team_squad_id 简报 | spawn 物化 ≤ max_children、成员越界拒、非法 JSON 失败可重试、下游等全部子任务；多小队 goal 每节点拿到自己队名册（回归测试锁定） |
+| B-2 | capability assignee + role 词汇表形式化 | §11.3 规则表逐条可单测；蓝本换人不动结构 |
+| B-2.1 | 角色词汇表注册表（本节 §11.8） | 注册过词汇表的小队成员 role 必须来自注册表；未注册小队自由文本兼容；蓝本新建页可见各队词汇（口径对齐） |
+| B-3 | router / gate 节点 | router 决策全落在注册类集合内 + fallback；gate 复用 goal review 态（Q1 定稿） |
+
+**风险**：spawn JSON 是新的自然语言边界——缓解：成员/上限/依赖全引擎校验，LLM 只决定「拆几件、谁干、干什么」三件事；capability 负载感知选择依赖 mutable 状态，但快照进 resolved_config 保证同次编译可回放。
+
+### 11.8 角色词汇表注册表：技能入词、口径对齐、role 即岗位（2026-11-18 定稿，用户认可）
+
+**背景（用户指出的问题）**：A、B 两位成员 role 同为 implementer，但 A 挂专有技能 skill-a、B 挂设计技能 skill-b——蓝本要专有功能时 capability 解析只看 role+负载，会「谁空闲选谁」，意图没有任何通道表达。而 `agent.skills`（schema agent 表 :132）数据明明就在表里，匹配时被无视。
+
+**定稿：技能差异编码进角色词（词汇表单轴封闭）**——不引入第二个匹配轴（不做 `capability:implementer+skill-a` 语法）：
+
+- 小队的意义就是角色差异化：差异间协同、各自擅长。**技能差异大到影响派工 = 它们是不同岗位**，必须在词汇表里分成不同的词（如 `proprietary-implementer` vs `design-implementer`）；技能差异不影响派工的，不该进蓝本。角色词即岗位，skill 收窄为「这个人身上的工具箱配置」（挂在该 agent 上，不再参与编译期匹配）。
+- 为什么拒绝双轴：role 是 squad_member 的静态声明，skill 是 agent 上的动态配置（随时挂/摘）——两轴交集会漂移（今天 skill-a 只有 A 挂着，明天 B 也挂上，同一份蓝本解析结果默默变了），resolved_config 的 A/B 对比失去控制变量；半命中态（role 中但技能不中）让 fail-closed 的「缺什么」说不清。**词汇表的价值在封闭、可枚举、无歧义——单轴是底线。**
+
+**角色注册表（参考 skill 的管理方式：命名 + description）**：
+
+- 新表 `squad_role`（id, squad_id, name, description, created_at, UNIQUE(squad_id,name)）——**每小队一份词汇表**（capability 检索域本来就是 goal 自己的小队，§11.3）。
+- name 即 capability 引用的 slug（`^[a-z][a-z0-9_-]*$` 规范形）；description 是岗位说明书：这个角色干什么、隐含什么技能/经验、适合被派什么活——给蓝本作者和小队 owner 看的**口径对齐文案**，也喂 spawn 规划者。
+- 保留词：`reviewer`（REVIEWER-ONLY RULE 结构性保留，始终合法）、`member`（legacy 缺省词）。注册过词汇表的小队，成员 role 必须是保留词或注册词（**AddMember fail-closed**）；从未注册词汇表的小队保持自由文本（模板 apply / team import / 既有小队零破坏——迁移路径：想强一致就先注册词汇表）。
+- 口径对齐的强制面：小队详情页可维护注册表；蓝本新建页展示各小队已注册的词汇（作者写 `capability:` 时有词可查，不再靠脑内对齐）。§11.3 的「零命中错误列出小队实际拥有的 role 词汇」与此同一动机：错误信息即对齐界面。
+
+**system prompt 与迭代故事（用户定稿方向）**：两层分离——
+
+| 层 | 放哪 | 内容 | 迭代通道 |
+|---|---|---|---|
+| 岗位 | squad_role.description | 这个角色在本小队干什么、隐含什么技能 | W-RSI 提案可产 role 描述补丁（提案→人工批准→版本） |
+| 人设 | agent.system_prompt | agent 全局行为风格 | W-RSI 提案已含 prompt_version 回滚目标——system prompt 在迭代中可修改，走同一提案闸门 |
+
+岗位描述**不替代** system prompt（一个是岗位说明书，一个是人格底座）；两者都可被 RSI 提案修改，但都必须过人工批准——这正是 §11.2 双簿记+人在环的既有闸门，不新增直通道。

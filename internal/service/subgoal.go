@@ -29,6 +29,7 @@ type SubGoal struct {
 	VerifierID        string   `json:"verifier_id"`         // '' = machine (domain verify commands)
 	DependsOn         []string `json:"depends_on"`          // first run waits until ALL are verified (W-RSI gating)
 	DispatchCommentID string   `json:"dispatch_comment_id"` // the leader's dispatch comment for this work item ('' = legacy row): the run released LATER by wakeDependentsTx carries it as run.trigger_comment_id, so a gated work item's report still threads to its dispatch
+	TeamSquadID       string   `json:"team_squad_id"`        // Phase B (§11.5): the squad whose roster/playbook this item's runs are briefed with; '' = fall back to the goal's own squad
 	Status            string   `json:"status"`              // running|verifying|verified|rejected|cancelled|failed（pending/done 无写入路径，见 schema.sql）
 	ExecutionAttempt  int      `json:"execution_attempt"`
 	QualityIteration  int      `json:"quality_iteration"`
@@ -207,9 +208,9 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 func (s *GoalService) insertSubGoalTx(ctx context.Context, tx *sql.Tx, sg SubGoal, deps []string, createdByType, createdByID string) (*SubGoal, *events.Event, error) {
 	ts := sg.CreatedAt
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sub_goal (id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,depends_on)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		sg.ID, sg.GoalID, sg.Title, sg.Description, sg.AssigneeID, sg.VerifierID, sg.Status, sg.ExecutionAttempt, sg.QualityIteration, sg.CreatedAt, encodeDeps(deps)); err != nil {
+		`INSERT INTO sub_goal (id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,depends_on,team_squad_id)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		sg.ID, sg.GoalID, sg.Title, sg.Description, sg.AssigneeID, sg.VerifierID, sg.Status, sg.ExecutionAttempt, sg.QualityIteration, sg.CreatedAt, encodeDeps(deps), sg.TeamSquadID); err != nil {
 		return nil, nil, fmt.Errorf("insert sub_goal: %w", err)
 	}
 	// P2-1 (决策 6-15⑩): the dispatch comment is born WITH the sub-goal and
@@ -293,9 +294,9 @@ func (s *GoalService) GetSubGoal(ctx context.Context, id string) (*SubGoal, erro
 	var sg SubGoal
 	var depsRaw string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,'')
+		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,''),COALESCE(team_squad_id,'')
 		 FROM sub_goal WHERE id=?`, id).
-		Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID)
+		Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID, &sg.TeamSquadID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -309,7 +310,7 @@ func (s *GoalService) GetSubGoal(ctx context.Context, id string) (*SubGoal, erro
 // ListSubGoals lists a goal's sub-goals (oldest first).
 func (s *GoalService) ListSubGoals(ctx context.Context, goalID string) ([]SubGoal, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,'')
+		`SELECT id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,COALESCE(depends_on,'[]'),COALESCE(dispatch_comment_id,''),COALESCE(team_squad_id,'')
 		 FROM sub_goal WHERE goal_id=? ORDER BY created_at`, goalID)
 	if err != nil {
 		return nil, err
@@ -319,7 +320,7 @@ func (s *GoalService) ListSubGoals(ctx context.Context, goalID string) ([]SubGoa
 	for rows.Next() {
 		var sg SubGoal
 		var depsRaw string
-		if err := rows.Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID); err != nil {
+		if err := rows.Scan(&sg.ID, &sg.GoalID, &sg.Title, &sg.Description, &sg.AssigneeID, &sg.VerifierID, &sg.Status, &sg.ExecutionAttempt, &sg.QualityIteration, &sg.CreatedAt, &depsRaw, &sg.DispatchCommentID, &sg.TeamSquadID); err != nil {
 			return nil, err
 		}
 		sg.DependsOn = decodeDeps(depsRaw)
@@ -398,6 +399,23 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 				evs = append(evs, *runEv)
 			}
 			break
+		}
+		// Phase B (§11.4): a spawn node's "completed" is PROVISIONAL — the
+		// planner contract (a fenced JSON child plan in result_summary) is
+		// enforced BEFORE the verified promotion. A violation is a bounded
+		// retry (same semantics as the failed path below), never a silent
+		// skip; a valid plan materializes the children and re-gates this
+		// node's direct successors on ALL of them (they replace the spawn
+		// as the blocking dependency).
+		if spawnNode, _ := isBlueprintNodeTypeTx(ctx, tx, sg.ID, "spawn"); spawnNode {
+			spawnEvs, promoted, err := s.resolveSpawnTx(ctx, tx, &sg, rc)
+			if err != nil {
+				return err
+			}
+			evs = append(evs, spawnEvs...)
+			if !promoted {
+				break // contract violated → the helper already ran the bounded retry/fail
+			}
 		}
 		// Conditional transition: done → verified. (The daemon's verification
 		// gate guarantees a completed run passed machine checks.)

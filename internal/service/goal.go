@@ -1600,7 +1600,12 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 		if err != nil {
 			return err
 		}
-		if pendingBP == 0 {
+		if pendingBP == 0 && pendingSG == 0 {
+			// Phase B: ends flip only when the spec ledger is closed AND no
+			// sub_goal is still open — spawn-materialized children are not
+			// blueprint_node rows (they live in the execution plane only,
+			// §11.4 double bookkeeping), so pendingSG is the second half of
+			// the end's own settle condition.
 			if err := s.settleBlueprintEndsTx(ctx, tx, rc.GoalID); err != nil {
 				return err
 			}

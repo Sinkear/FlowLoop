@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/eushing/agentwork/internal/events"
@@ -167,7 +168,8 @@ type BlueprintNode struct {
 // ── validation ──
 
 var specNodeIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-var specAssigneeRe = regexp.MustCompile(`^(agent|squad):[a-z0-9_.-]+$`)
+var specAssigneeRe = regexp.MustCompile(`^(agent|squad|capability):[a-z0-9_.-]+$`)
+var capabilitySlugRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 // templateGoalRefRe matches {{goal.<field>}}; templateNodeRefRe matches
 // {{node.<id>.output}} — the two brief placeholder forms (V5).
@@ -181,10 +183,11 @@ var goalTemplateFields = map[string]bool{
 	"execution_mode": true, "created_by_type": true,
 }
 
-// phaseANodeTypes are the node types a PUBLISHED graph may use in Phase A.
-// router/gate/spawn validate structurally (so drafts carry them legibly) but
-// publish refuses them until Phase B wires their execution paths.
-var phaseANodeTypes = map[string]bool{"task": true, "condition": true, "end": true}
+// phaseANodeTypes are the node types a PUBLISHED graph may use as of Phase
+// B-1/B-2 (task|condition|spawn|end). router/gate validate structurally (so
+// drafts carry them legibly) but publish refuses them until B-3 wires their
+// execution paths.
+var phaseANodeTypes = map[string]bool{"task": true, "condition": true, "spawn": true, "end": true}
 
 // declaredPorts returns the outbound port ids a node type declares (V1/V3).
 // task: done|failed (implicit; failed is optional — a leaf task may only
@@ -302,7 +305,7 @@ func ValidateSpec(g *SpecGraph) []string {
 				break
 			}
 			if !specAssigneeRe.MatchString(n.Task.Assignee) {
-				add("node %q: task.assignee must be agent:<id> or squad:<id>", n.ID)
+				add("node %q: task.assignee must be agent:<id>, squad:<id> or capability:<role-slug>", n.ID)
 			}
 			if strings.TrimSpace(n.Task.Brief) == "" {
 				add("node %q: task.brief is required", n.ID)
@@ -343,6 +346,23 @@ func ValidateSpec(g *SpecGraph) []string {
 				if _, err := ParseCondTest(c.Test); err != nil {
 					add("node %q: case %q: %v", n.ID, c.ID, err)
 				}
+			}
+		case "spawn":
+			if n.Spawn == nil {
+				add("node %q: spawn body is required", n.ID)
+				break
+			}
+			if !specAssigneeRe.MatchString(n.Spawn.Assignee) {
+				add("node %q: spawn.assignee must be agent:<id>, squad:<id> or capability:<role-slug>", n.ID)
+			}
+			if strings.TrimSpace(n.Spawn.Brief) == "" {
+				add("node %q: spawn.brief is required", n.ID)
+			}
+			if n.Spawn.ChildType != "" && n.Spawn.ChildType != "task" {
+				add("node %q: spawn.child_type must be \"task\" (the only compiled child form)", n.ID)
+			}
+			if n.Spawn.MaxChildren < 0 || n.Spawn.MaxChildren > maxSpawnChildren {
+				add("node %q: spawn.max_children must be 1–%d (0 = default %d)", n.ID, maxSpawnChildren, defaultSpawnChildren)
 			}
 		case "end":
 			if n.End != nil && n.End.Outcome != "" && n.End.Outcome != "success" && n.End.Outcome != "failure" {
@@ -457,8 +477,11 @@ func ValidateSpec(g *SpecGraph) []string {
 			add("graph has no root node (all nodes have inbound edges)")
 		}
 		for _, r := range roots {
-			if t := byID[r].Type; t != "task" {
-				add("root node %q must be a task (got %s — a %s needs an upstream context)", r, t, t)
+			// A root must start executable work. Spawn is allowed as a root
+			// since Phase B: the planner runs first and fans the team out —
+			// that IS an upstream context (the goal itself feeds it).
+			if t := byID[r].Type; t != "task" && t != "spawn" {
+				add("root node %q must be a task or spawn (got %s — a %s needs an upstream context)", r, t, t)
 			}
 		}
 		reachFwd := bfsFrom(roots, adj)
@@ -635,6 +658,20 @@ func NewBlueprintService(st *store.Store, bus *events.Bus) *BlueprintService {
 // publish, not at goal activation.
 const maxSpecNodes = 64
 
+// Spawn fan-out bounds (§11.4): max_children is validated 1–8 (0 = the
+// default); the bound is enforced again at materialization time — the
+// planner's JSON is untrusted output, the compile-time cap is the law.
+const (
+	maxSpawnChildren     = 8
+	defaultSpawnChildren = 4
+)
+
+// reviewerRole is the reserved squad_member role that never executes work
+// (the REVIEWER-ONLY RULE). Capability matching must never hand it an
+// assignment — it is excluded from resolution and rejected as an explicit
+// capability slug.
+const reviewerRole = "reviewer"
+
 // validateContent is the full publish gate: parse, V1–V5, V4 assignee
 // resolution against the registry, Phase A type set.
 func (s *BlueprintService) validateContent(ctx context.Context, content string, enforcePhaseA bool) (*SpecGraph, error) {
@@ -648,15 +685,32 @@ func (s *BlueprintService) validateContent(ctx context.Context, content string, 
 	if problems := ValidateSpec(&g); len(problems) > 0 {
 		return nil, NewValidationError("blueprint validation failed:\n  - " + strings.Join(problems, "\n  - "))
 	}
-	// V4: every task assignee resolves to a registered agent/squad.
+	// V4: every task/spawn assignee resolves — with the Phase B capability
+	// caveat: capability:<slug> names a ROLE, and roles live in
+	// squad_member.role, so whether it resolves can only be answered
+	// against the goal's own squad. Publish checks the slug shape only;
+	// compile resolves it fail-closed (§11.3: zero matches = the goal
+	// stays in backlog with a diagnostic, never a silently dropped node).
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Type != "task" || n.Task == nil {
+		var assignee string
+		switch {
+		case n.Type == "task" && n.Task != nil:
+			assignee = n.Task.Assignee
+		case n.Type == "spawn" && n.Spawn != nil:
+			assignee = n.Spawn.Assignee
+		default:
 			continue
 		}
-		kind, id, ok := strings.Cut(n.Task.Assignee, ":")
+		kind, id, ok := strings.Cut(assignee, ":")
 		if !ok {
 			continue // V1 already reported the malformed shape
+		}
+		if kind == "capability" {
+			if !capabilitySlugRe.MatchString(id) {
+				return nil, NewValidationError(fmt.Sprintf("node %q: capability slug %q must match ^[a-z][a-z0-9_-]*$ and must not be %q (the reviewer role never executes)", n.ID, id, reviewerRole))
+			}
+			continue // resolution is goal-scoped (§11.3) — deferred to compile
 		}
 		var count int
 		table := "agent"
@@ -665,12 +719,12 @@ func (s *BlueprintService) validateContent(ctx context.Context, content string, 
 		}
 		if err := s.st.DB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM `+table+` WHERE id=?`, id).Scan(&count); err != nil {
-			return nil, fmt.Errorf("resolve assignee %s: %w", n.Task.Assignee, err)
+			return nil, fmt.Errorf("resolve assignee %s: %w", assignee, err)
 		}
 		if count == 0 {
-			return nil, NewValidationError(fmt.Sprintf("node %q: assignee %s does not resolve to a registered %s (expected %s id, e.g. %s:<32-hex-id>)", n.ID, n.Task.Assignee, kind, kind, kind))
+			return nil, NewValidationError(fmt.Sprintf("node %q: assignee %s does not resolve to a registered %s (expected %s id, e.g. %s:<32-hex-id>)", n.ID, assignee, kind, kind, kind))
 		}
-		if n.Task.Verify != nil && n.Task.Verify.Mode == "agent" && n.Task.Verify.Verifier != "" {
+		if n.Type == "task" && n.Task.Verify != nil && n.Task.Verify.Mode == "agent" && n.Task.Verify.Verifier != "" {
 			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, n.Task.Verify.Verifier, "verify.verifier agent"); err != nil {
 				return nil, err
 			}
@@ -680,7 +734,7 @@ func (s *BlueprintService) validateContent(ctx context.Context, content string, 
 		for i := range g.Nodes {
 			n := &g.Nodes[i]
 			if !phaseANodeTypes[n.Type] {
-				return nil, NewValidationError(fmt.Sprintf("node %q: type %q is not supported until Phase B (Phase A allows task|condition|end)", n.ID, n.Type))
+				return nil, NewValidationError(fmt.Sprintf("node %q: type %q is not supported yet (publishable now: task|condition|spawn|end; router/gate land in Phase B-3)", n.ID, n.Type))
 			}
 		}
 	}
@@ -1045,6 +1099,14 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		"category": category, "domain_id": domainID, "connection_id": connID,
 		"execution_mode": "", "created_by_type": createdByType,
 	}
+	// The goal's own squad — the vocabulary a capability:<slug> resolves
+	// against (§11.3) and the briefing fallback for agent: nodes (§11.5).
+	goalSquadID := ""
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(assignee_id,'') FROM goal WHERE id=? AND assignee_type='squad'`,
+		goalID).Scan(&goalSquadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load goal squad: %w", err)
+	}
 
 	byID := map[string]*SpecNode{}
 	for i := range g.Nodes {
@@ -1146,14 +1208,14 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 				continue
 			}
 			seen[id] = true
-			if byID[id].Type == "task" {
-				continue // stop closure expansion at tasks — their deps cover the rest
+			if isExecutableNode(byID[id].Type) {
+				continue // stop closure expansion at executables — their deps cover the rest
 			}
 			queue = append(queue, rev[id]...)
 		}
 		var out []string
 		for id := range seen {
-			if byID[id].Type == "task" {
+			if isExecutableNode(byID[id].Type) {
 				out = append(out, id)
 			}
 		}
@@ -1163,19 +1225,20 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 	}
 
 	ts := now()
-	// Register every spec node's ledger row + create the task sub-goals.
-	// Two passes so depends_on references exist before any ungated enqueue.
+	// Register every spec node's ledger row + create the executable
+	// sub-goals (task|spawn both compile to a sub_goal). Two passes so
+	// depends_on references exist before any ungated enqueue.
 	//
 	// CRITICAL: depends_on stores SUB_GOAL ids (the executor's gate looks
-	// up sub_goal rows by id), not spec node keys — so every live task's
-	// sub_goal id is PRE-ALLOCATED here, and ancestorTasks' keys are mapped
-	// through sgByKey at insert time. (An early version stored raw keys:
-	// the gate treated them as missing dependencies and cascaded the
-	// dependents to failed on first wake.)
+	// up sub_goal rows by id), not spec node keys — so every live
+	// executable node's sub_goal id is PRE-ALLOCATED here, and
+	// ancestorTasks' keys are mapped through sgByKey at insert time. (An
+	// early version stored raw keys: the gate treated them as missing
+	// dependencies and cascaded the dependents to failed on first wake.)
 	sgByKey := map[string]string{}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Type == "task" && live[n.ID] {
+		if isExecutableNode(n.Type) && live[n.ID] {
 			sgByKey[n.ID] = newID()
 		}
 	}
@@ -1190,10 +1253,10 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		case n.Type == "condition":
 			state = "settled"
 			resolved = `{"chosen":"` + choice[n.ID] + `"}`
-		case n.Type == "task":
+		case isExecutableNode(n.Type):
 			state = "pending" // running stamped after enqueue below
 		}
-		if n.Type != "task" {
+		if !isExecutableNode(n.Type) {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,state,resolved_config,created_at) VALUES (?,?,?,?,?,?,?)`,
 				newID(), goalID, n.ID, n.Type, state, resolved, ts); err != nil {
@@ -1202,7 +1265,7 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			continue
 		}
 		if !live[n.ID] {
-			// Skipped task: ledger row only, no sub_goal (it must never run).
+			// Skipped executable: ledger row only, no sub_goal (it must never run).
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,state,resolved_config,created_at) VALUES (?,?,?,?,?,?,?)`,
 				newID(), goalID, n.ID, n.Type, state, resolved, ts); err != nil {
@@ -1210,18 +1273,25 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			}
 			continue
 		}
-		kind, id, _ := strings.Cut(n.Task.Assignee, ":")
-		if kind != "agent" && kind != "squad" {
-			return NewValidationError(fmt.Sprintf("node %q: assignee %q not resolvable at compile time", n.ID, n.Task.Assignee))
+		var assigneeSpec string
+		if n.Type == "task" {
+			assigneeSpec = n.Task.Assignee
+		} else {
+			assigneeSpec = n.Spawn.Assignee
 		}
-		// A squad assignee compiles to its LEADER agent — runs are claimed
-		// per agent (Claim JOINs the agent table), so a squad id in
-		// run.agent_id would queue forever (found while answering the
-		// multi-squad question; same semantics as the goal-level
-		// resolveLeaderTx). The leader's run carries the squad's
-		// roster/playbook only when the goal itself is squad-assigned —
-		// cross-squad briefings are Phase B.
-		if kind == "squad" {
+		kind, id, _ := strings.Cut(assigneeSpec, ":")
+		if kind != "agent" && kind != "squad" && kind != "capability" {
+			return NewValidationError(fmt.Sprintf("node %q: assignee %q not resolvable at compile time", n.ID, assigneeSpec))
+		}
+		teamSquad := ""
+		resolvedAgent := id
+		switch kind {
+		case "squad":
+			// A squad assignee compiles to its LEADER agent — runs are
+			// claimed per agent (Claim JOINs the agent table), so a squad
+			// id in run.agent_id would queue forever (same semantics as
+			// the goal-level resolveLeaderTx). §11.5: the node's runs are
+			// briefed with THIS squad's roster/playbook via team_squad_id.
 			var leader string
 			if err := tx.QueryRowContext(ctx, `SELECT leader_id FROM squad WHERE id=?`, id).Scan(&leader); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -1229,10 +1299,28 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 				}
 				return fmt.Errorf("resolve squad %s leader: %w", id, err)
 			}
-			id = leader
+			resolvedAgent = leader
+			teamSquad = id
+		case "capability":
+			// §11.3: capability:<role-slug> resolves against the goal's
+			// OWN squad vocabulary (squad_member.role, LOWER(TRIM)
+			// normalized), reviewers excluded, least-loaded first. V4
+			// checked the slug shape at publish; resolution is
+			// goal-scoped so it can only happen here — fail-closed: a
+			// capability that matches nobody blocks activation with a
+			// diagnostic, never a silently dropped node.
+			if goalSquadID == "" {
+				return NewValidationError(fmt.Sprintf("node %q: assignee %q requires a squad-assigned goal — capability is resolved against the goal's own squad", n.ID, assigneeSpec))
+			}
+			member, err := resolveCapabilityTx(ctx, tx, goalSquadID, id)
+			if err != nil {
+				return err
+			}
+			resolvedAgent = member
+			teamSquad = goalSquadID
 		}
 		verifier := ""
-		if n.Task.Verify != nil && n.Task.Verify.Mode == "agent" {
+		if n.Type == "task" && n.Task.Verify != nil && n.Task.Verify.Mode == "agent" {
 			verifier = n.Task.Verify.Verifier
 		}
 		// Map ancestor spec keys → compiled sub_goal ids (see the pre-alloc
@@ -1244,15 +1332,27 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			}
 		}
 		ts0 := now()
+		brief := ""
+		if n.Type == "task" {
+			brief = interpolateGoal(n.Task.Brief, goalFields)
+		} else {
+			// §11.4: the spawn sub_goal is the PLANNER item — the spec
+			// brief plus the platform-fixed output contract. The
+			// materializer parses the run's result_summary for the fenced
+			// JSON child plan; everything outside the contract is the
+			// planner's freedom (Phase B's elastic pocket).
+			brief = interpolateGoal(n.Spawn.Brief, goalFields) + spawnPlannerInstruction(n, teamSquad)
+		}
 		sg := SubGoal{
 			ID:          sgByKey[n.ID],
 			GoalID:      goalID,
 			Title:       n.Title,
-			Description: interpolateGoal(n.Task.Brief, goalFields),
-			AssigneeID:  id,
+			Description: brief,
+			AssigneeID:  resolvedAgent,
 			VerifierID:  verifier,
 			DependsOn:   depIDs,
 			Status:      "running",
+			TeamSquadID: teamSquad, // §11.5: '' = fall back to the goal's own squad
 			CreatedAt:   ts0,
 		}
 		sgOut, _, err := s.insertSubGoalTx(ctx, tx, sg, sg.DependsOn, "agent", "")
@@ -1260,19 +1360,33 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			return fmt.Errorf("compile node %q: %w", n.ID, err)
 		}
 		sgByKey[n.ID] = sgOut.ID
+		nodeResolved, err := marshalResolved(assigneeSpec, resolvedAgent, teamSquad)
+		if err != nil {
+			return fmt.Errorf("encode resolved config %s: %w", n.ID, err)
+		}
+		if n.Type == "spawn" {
+			// The materializer enforces the cap at verified time (§11.4):
+			// the plan JSON is untrusted LLM output, the cap here is law.
+			if extra, err := mergeResolved(nodeResolved, map[string]string{
+				"max_children": strconv.Itoa(maxSpawnChildrenCap(n)),
+			}); err == nil {
+				nodeResolved = extra
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,sub_goal_id,state,resolved_config,created_at) VALUES (?,?,?,?,?,?,?,?)`,
-			newID(), goalID, n.ID, n.Type, sg.ID, "pending", "", ts); err != nil {
+			newID(), goalID, n.ID, n.Type, sg.ID, "pending", nodeResolved, ts); err != nil {
 			return fmt.Errorf("insert blueprint_node %s: %w", n.ID, err)
 		}
 	}
 
-	// Ungated tasks (no deps) start immediately; gated ones have no run and
-	// wait for wakeDependentsTx — beat 2 resolves their node refs at release.
+	// Ungated executables (no deps) start immediately; gated ones have no
+	// run and wait for wakeDependentsTx — beat 2 resolves their node refs
+	// at release.
 	var runEvs []events.Event
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Type != "task" || !live[n.ID] || len(ancestorTasks(n.ID)) > 0 {
+		if !isExecutableNode(n.Type) || !live[n.ID] || len(ancestorTasks(n.ID)) > 0 {
 			continue
 		}
 		sgID := sgByKey[n.ID]
@@ -1433,10 +1547,17 @@ func (s *GoalService) resolveReleasedBriefTx(ctx context.Context, tx *sql.Tx, go
 		`UPDATE sub_goal SET description=? WHERE id=?`, resolved, subGoalID); err != nil {
 		return fmt.Errorf("write resolved brief: %w", err)
 	}
-	snapshot, _ := json.Marshal(map[string]string{"brief": resolved})
+	snapshot := map[string]string{}
+	var prev string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(resolved_config,'') FROM blueprint_node WHERE sub_goal_id=?`, subGoalID).Scan(&prev); err == nil && prev != "" {
+		_ = json.Unmarshal([]byte(prev), &snapshot) // best-effort merge; brief wins
+	}
+	snapshot["brief"] = resolved
+	snapJSON, _ := json.Marshal(snapshot)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`,
-		string(snapshot), subGoalID); err != nil {
+		string(snapJSON), subGoalID); err != nil {
 		return fmt.Errorf("snapshot resolved brief: %w", err)
 	}
 	if len(missing) > 0 {
@@ -1445,9 +1566,422 @@ func (s *GoalService) resolveReleasedBriefTx(ctx context.Context, tx *sql.Tx, go
 	return nil
 }
 
+// isBlueprintNodeTypeTx reports whether the sub_goal is a compiled node of
+// the given spec type ('' / no row = non-pinned goal or a plain task — no).
+func isBlueprintNodeTypeTx(ctx context.Context, tx *sql.Tx, subGoalID, nodeType string) (bool, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_node WHERE sub_goal_id=? AND node_type=?`,
+		subGoalID, nodeType).Scan(&n); err != nil {
+		return false, fmt.Errorf("check blueprint node type: %w", err)
+	}
+	return n > 0, nil
+}
+
+// spawnPlanItem is one parsed row of the planner's fenced JSON child plan.
+type spawnPlanItem struct {
+	Title    string `json:"title"`
+	Brief    string `json:"brief"`
+	Assignee string `json:"assignee"`
+}
+
+// parseSpawnPlan extracts the LAST fenced ```json block from the planner's
+// result_summary and unmarshals it as the child plan. The planner may write
+// freely before the fence; the fence is the machine boundary.
+func parseSpawnPlan(summary string) ([]spawnPlanItem, error) {
+	re := regexp.MustCompile("(?s)```json\\s*(\\[.*?\\])\\s*```")
+	matches := re.FindAllStringSubmatch(summary, -1)
+	if len(matches) == 0 {
+		return nil, NewValidationError("no ```json fenced block found — the planner must end with the child plan array")
+	}
+	var plan []spawnPlanItem
+	if err := json.Unmarshal([]byte(matches[len(matches)-1][1]), &plan); err != nil {
+		return nil, NewValidationError("the fenced json block is not a valid child plan array: " + err.Error())
+	}
+	return plan, nil
+}
+
+// resolveSpawnTx is the spawn verified-path gate (§11.4): a spawn sub_goal
+// reaching "done" must carry a parseable child plan. On success the children
+// are materialized as real sub_goal rows (depends_on=[spawn], created_by
+// 'blueprint', briefed with the spawn's own squad) and the spawn's DIRECT
+// successors get the child ids appended to their depends_on — so a
+// successor runs only after the whole fan-out verified, reusing the
+// executor's existing gate untouched (engine-zero-change rule). On a
+// contract violation the spawn follows the bounded retry chain (same
+// semantics as the failed path) and promoted=false — the caller must skip
+// the verified transition. Idempotent: an already-materialized spawn
+// promotes without touching anything (retry after a crash mid-chain).
+func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoal, rc goalRunContext) ([]events.Event, bool, error) {
+	goalID := sg.GoalID
+	// Ledger: node key + resolved config (max_children snapshot) + spec edges.
+	var nodeKey, resolvedCfg string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT node_key, COALESCE(resolved_config,'') FROM blueprint_node WHERE sub_goal_id=?`,
+		sg.ID).Scan(&nodeKey, &resolvedCfg); err != nil {
+		return nil, false, fmt.Errorf("load spawn ledger: %w", err)
+	}
+	maxKids := defaultSpawnChildren
+	// mergeResolved stores values as JSON STRINGS (map[string]string), so a
+	// typed *int unmarshal silently fails and the cap would stay at the
+	// default — accept both string and number forms.
+	var capCfg struct {
+		MaxChildren any `json:"max_children"`
+	}
+	if json.Unmarshal([]byte(resolvedCfg), &capCfg) == nil && capCfg.MaxChildren != nil {
+		switch v := capCfg.MaxChildren.(type) {
+		case string:
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				maxKids = n
+			}
+		case float64:
+			if v > 0 {
+				maxKids = int(v)
+			}
+		}
+	}
+
+	// Idempotency: any blueprint-born sub_goal already gated on this spawn
+	// means materialization happened (a crash after commit replays here).
+	// Provenance: insertSubGoalTx stamps createdByType/ID onto the dispatch
+	// comment's author_type/author_id — children are born author_type='system'
+	// with author_id = the spawn's sub_goal id (the CHECK on comment.author_type
+	// is frozen in existing databases, so no new author_type value may be added).
+	rows, err := tx.QueryContext(ctx,
+		`SELECT sg.id, sg.depends_on FROM sub_goal sg
+		 JOIN comment c ON c.id = sg.dispatch_comment_id
+		 WHERE sg.goal_id=? AND c.author_type='system' AND c.author_id=?`, goalID, sg.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("load blueprint-born rows: %w", err)
+	}
+	for rows.Next() {
+		var id, depsRaw string
+		if err := rows.Scan(&id, &depsRaw); err != nil {
+			rows.Close()
+			return nil, false, err
+		}
+		for _, d := range decodeDeps(depsRaw) {
+			if d == sg.ID {
+				rows.Close()
+				logging.Infof("blueprint: spawn %s already materialized — promoting idempotently", sg.ID)
+				return nil, true, nil
+			}
+		}
+	}
+	rows.Close()
+
+	// The planner's report is the run's result_summary.
+	var summary string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(result_summary,'') FROM run WHERE id=?`, rc.RunID).Scan(&summary); err != nil {
+		return nil, false, fmt.Errorf("load planner summary: %w", err)
+	}
+	plan, perr := parseSpawnPlan(summary)
+	if perr != nil {
+		return s.spawnContractFailedTx(ctx, tx, sg, "拆解契约不满足: "+perr.Error())
+	}
+	if len(plan) > maxKids {
+		return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %d 超过上限 %d", len(plan), maxKids))
+	}
+	// Validate members + materialize children.
+	evs := []events.Event{}
+	childIDs := make([]string, 0, len(plan))
+	for i, item := range plan {
+		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.Brief) == "" {
+			return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %d 缺 title 或 brief", i+1))
+		}
+		assignee := strings.TrimSpace(item.Assignee)
+		if assignee == "" {
+			return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %q 缺 assignee", item.Title))
+		}
+		if sg.TeamSquadID != "" {
+			var ok int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM squad_member WHERE squad_id=? AND member_type='agent' AND member_id=?`,
+				sg.TeamSquadID, assignee).Scan(&ok); err != nil {
+				return nil, false, fmt.Errorf("validate child assignee: %w", err)
+			}
+			if ok == 0 {
+				return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %q 的 assignee 不在拆解小队名册里（越界派工）", item.Title))
+			}
+		} else if assignee != sg.AssigneeID {
+			return s.spawnContractFailedTx(ctx, tx, sg, "拆解契约不满足: 无小队的拆解只能把子项派给规划者自己")
+		}
+		child := SubGoal{
+			ID:          newID(),
+			GoalID:      goalID,
+			Title:       strings.TrimSpace(item.Title),
+			Description: strings.TrimSpace(item.Brief),
+			AssigneeID:  assignee,
+			VerifierID:  "",
+			DependsOn:   []string{sg.ID},
+			Status:      "running",
+			TeamSquadID: sg.TeamSquadID, // children inherit the spawn's squad (§11.5)
+			CreatedAt:   now(),
+		}
+		// author_type='system' + author_id=<spawn sub_goal id> = the
+		// provenance pair that survives the frozen comment CHECK constraint
+		// (no new author_type value can be introduced post-hoc in SQLite).
+		sgOut, ev, err := s.insertSubGoalTx(ctx, tx, child, child.DependsOn, "system", sg.ID)
+		if err != nil {
+			return nil, false, fmt.Errorf("materialize spawn child %q: %w", child.Title, err)
+		}
+		childIDs = append(childIDs, sgOut.ID)
+		if ev != nil {
+			evs = append(evs, *ev)
+		}
+	}
+	// Re-gate the spawn's DIRECT successors (spec-node sub_goals whose
+	// depends_on contains the spawn) on the children: they wait for the
+	// whole fan-out to verify. The children themselves are excluded —
+	// siblings stay parallel.
+	if len(childIDs) > 0 {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, COALESCE(depends_on,'[]') FROM sub_goal WHERE goal_id=? AND id != ?`, goalID, sg.ID)
+		if err != nil {
+			return nil, false, fmt.Errorf("load successors: %w", err)
+		}
+		type succ struct {
+			id   string
+			deps []string
+		}
+		var successors []succ
+		for rows.Next() {
+			var id, depsRaw string
+			if err := rows.Scan(&id, &depsRaw); err != nil {
+				rows.Close()
+				return nil, false, err
+			}
+			deps := decodeDeps(depsRaw)
+			for _, d := range deps {
+				if d == sg.ID {
+					successors = append(successors, succ{id, deps})
+					break
+				}
+			}
+		}
+		rows.Close()
+		childSet := map[string]bool{}
+		for _, c := range childIDs {
+			childSet[c] = true
+		}
+		for _, su := range successors {
+			if childSet[su.id] {
+				continue
+			}
+			merged := append([]string(nil), su.deps...)
+			for _, c := range childIDs {
+				if !containsString(merged, c) {
+					merged = append(merged, c)
+				}
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE sub_goal SET depends_on=? WHERE id=?`, encodeDeps(merged), su.id); err != nil {
+				return nil, false, fmt.Errorf("re-gate successor %s: %w", su.id, err)
+			}
+		}
+	}
+	// Snapshot the materialized plan into the ledger (RSI digestibility).
+	snap, _ := mergeResolved(resolvedCfg, map[string]string{
+		"children": strings.Join(childIDs, ","),
+	})
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, snap, sg.ID); err != nil {
+		return nil, false, fmt.Errorf("snapshot spawn children: %w", err)
+	}
+	logging.Infof("blueprint: spawn %s materialized %d children for goal %s", sg.ID, len(childIDs), goalID)
+	return evs, true, nil
+}
+
+// spawnContractFailedTx runs the bounded retry chain for a spawn whose
+// planner output violated the contract — the SAME semantics as the
+// failed-path (attempt bump → retry run, or terminal fail + cascade) so
+// spawn retries behave exactly like execution retries.
+func (s *GoalService) spawnContractFailedTx(ctx context.Context, tx *sql.Tx, sg *SubGoal, reason string) ([]events.Event, bool, error) {
+	logging.Warnf("blueprint: spawn %s contract violation — %s", sg.ID, reason)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET execution_attempt=execution_attempt+1 WHERE id=? AND status IN ('running','done')`,
+		sg.ID); err != nil {
+		return nil, false, fmt.Errorf("bump spawn attempt: %w", err)
+	}
+	var status string
+	var attempt int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status, execution_attempt FROM sub_goal WHERE id=?`, sg.ID).Scan(&status, &attempt); err != nil {
+		return nil, false, fmt.Errorf("reload spawn after contract fail: %w", err)
+	}
+	if status != "running" && status != "done" {
+		return nil, false, nil // raced terminal (cancelled) — nothing to retry
+	}
+	var evs []events.Event
+	if attempt < maxExecutionAttempts {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE sub_goal SET status='running' WHERE id=?`, sg.ID); err != nil {
+			return nil, false, fmt.Errorf("revive spawn for retry: %w", err)
+		}
+		evs = append(evs, events.Event{Topic: "sub_goal.retrying", Payload: map[string]any{
+			"goal_id": sg.GoalID, "sub_goal_id": sg.ID, "execution_attempt": attempt, "reason": reason,
+		}})
+		_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, sg.ID, "")
+		if err != nil {
+			return nil, false, fmt.Errorf("enqueue spawn retry run: %w", err)
+		}
+		if runEv != nil {
+			evs = append(evs, *runEv)
+		}
+		return evs, false, nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET status='failed' WHERE id=? AND status IN ('running','done')`, sg.ID); err != nil {
+		return nil, false, fmt.Errorf("fail spawn: %w", err)
+	}
+	if err := markBlueprintNodeTx(ctx, tx, sg.ID, "failed"); err != nil {
+		return nil, false, err
+	}
+	evs = append(evs, events.Event{Topic: "sub_goal.failed", Payload: map[string]any{
+		"goal_id": sg.GoalID, "sub_goal_id": sg.ID, "execution_attempt": attempt, "reason": reason,
+	}})
+	cascadeEvs, err := s.failGatedDependentsTx(ctx, tx, sg.GoalID, sg.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	evs = append(evs, cascadeEvs...)
+	return evs, false, nil
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def
 	}
 	return v
+}
+
+// isExecutableNode reports whether a spec node type compiles to a sub_goal
+// (and therefore participates in depends_on gating): task and spawn. Other
+// types are settled at compile time (condition), plan-only ledger rows
+// (router/gate until B-3), or completion markers (end).
+func isExecutableNode(t string) bool { return t == "task" || t == "spawn" }
+
+// resolveCapabilityTx resolves capability:<role-slug> against a squad's
+// member vocabulary (§11.3): roles are LOWER(TRIM(role)) normalized, the
+// reviewer role is structurally excluded (it never executes), members must
+// be registered agents, and multiple hits pick the least-loaded (fewest
+// non-terminal sub_goals, counting both assignee and verifier hats), ties
+// broken by earliest squad_membership. Fail-closed: zero matches is an
+// error, never a dropped node.
+func resolveCapabilityTx(ctx context.Context, tx *sql.Tx, squadID, slug string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(slug))
+	var member string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT sm.member_id FROM squad_member sm
+		WHERE sm.squad_id=? AND sm.member_type='agent'
+		  AND LOWER(TRIM(sm.role))=?
+		  AND LOWER(TRIM(sm.role)) != ?
+		  AND EXISTS (SELECT 1 FROM agent a WHERE a.id=sm.member_id)
+		ORDER BY (
+		  SELECT COUNT(*) FROM sub_goal sg
+		  WHERE (sg.assignee_id=sm.member_id OR sg.verifier_id=sm.member_id)
+		    AND sg.status NOT IN ('verified','cancelled','failed')
+		), sm.created_at, sm.id
+		LIMIT 1`, squadID, norm, reviewerRole).Scan(&member); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// §11.8 alignment surface: the error lists the vocabulary the
+			// goal squad actually has, so the blueprint author can fix the
+			// reference (or the squad owner can register/assign the word).
+			have := []string{}
+			rows, qerr := tx.QueryContext(ctx, `
+				SELECT DISTINCT LOWER(TRIM(sm.role)) FROM squad_member sm
+				WHERE sm.squad_id=? AND sm.role!=''
+				  AND EXISTS (SELECT 1 FROM agent a WHERE a.id=sm.member_id)
+				ORDER BY 1`, squadID)
+			if qerr == nil {
+				for rows.Next() {
+					var r string
+					if rows.Scan(&r) == nil && r != reviewerRole {
+						have = append(have, r)
+					}
+				}
+				rows.Close()
+			}
+			return "", NewValidationError(fmt.Sprintf(
+				"no eligible member: goal squad has no agent with role %q (capability roles are squad_member.role values, normalized lowercase; reviewers never execute); roles present in this squad: [%s]",
+				norm, strings.Join(have, ", ")))
+		}
+		return "", fmt.Errorf("resolve capability %s: %w", slug, err)
+	}
+	return member, nil
+}
+
+// marshalResolved snapshots the assignee resolution into the node's
+// resolved_config — the per-node record RSI digests: what the spec asked
+// for, which agent actually got it, which squad briefs its runs.
+func marshalResolved(assigneeSpec, resolvedAgent, teamSquad string) (string, error) {
+	b, err := json.Marshal(map[string]string{
+		"assignee_spec": assigneeSpec,
+		"resolved_agent": resolvedAgent,
+		"team_squad_id":  teamSquad,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// mergeResolved adds extra keys into an existing resolved_config snapshot
+// (best-effort: unparseable input is replaced wholesale).
+func mergeResolved(resolved string, extra map[string]string) (string, error) {
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(resolved), &m); err != nil {
+		m = map[string]string{}
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// maxSpawnChildrenCap resolves a spawn node's effective fan-out cap (§11.4).
+func maxSpawnChildrenCap(n *SpecNode) int {
+	if n.Spawn != nil && n.Spawn.MaxChildren > 0 {
+		return n.Spawn.MaxChildren
+	}
+	return defaultSpawnChildren
+}
+
+// spawnPlannerInstruction is the platform-fixed output contract appended to
+// a spawn node's brief (§11.4): the planner plans, the executor executes,
+// and the fence is the machine-checkable boundary between them. The
+// materializer parses exactly one fenced json block from the run's
+// result_summary; children carry agent ids the materializer validates
+// against the spawn's own squad (the planner may only hand work inside its
+// lane — the anti-scope-creep rule).
+func spawnPlannerInstruction(n *SpecNode, teamSquadID string) string {
+	maxKids := n.Spawn.MaxChildren
+	if maxKids <= 0 {
+		maxKids = defaultSpawnChildren
+	}
+	rosterHint := "（这里没有小队名册——填你自己的智能体 id）"
+	if teamSquadID != "" {
+		rosterHint = "（该小队成员见你的团队简报名单）"
+	}
+	bt := "`"
+	fence := bt + bt + bt
+	return "\n\n[拆解输出契约] 你这一步是\"拆解规划\"，不是亲自执行。在回复的结尾，必须输出一个 " + fence + "json 代码块，内容是子工作项数组（0 项 = 判定无需拆解，也是合法输出），每项形如 {\"title\":\"...\",\"brief\":\"...\",\"assignee\":\"<agent-id>\"}：\n" +
+		"- title/brief 用执行者能直接行动的语言（brief 里可引用任务字段与你的结论，但不要使用 {{node.*}} 模板——子项在你之后执行，模板无法解析）；\n" +
+		"- assignee 填该小队成员的智能体 id（32 位十六进制），不要填名字" + rosterHint + "；\n" +
+		"- 按成员的角色词派工，角色词体现岗位与专有技能的差异（如 proprietary-implementer 与 design-implementer 是两个岗位）——把每一项分给擅长它的成员，而不是分给空闲的人；名册里成员名后括号内标注了各自的专有技能\n" +
+		"- 最多 " + strconv.Itoa(maxKids) + " 项，超出会被拒绝并重试"
 }

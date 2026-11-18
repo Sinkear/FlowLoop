@@ -1,4 +1,4 @@
-import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, Schedule, Domain, Checks, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
+import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, Checks, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
 
 // 默认走同源 /backend/*（Next rewrites 转发到本机 daemon 47813）——反代出
 // 去时浏览器无需直连 daemon。本地直连场景可显式设置 NEXT_PUBLIC_API_URL。
@@ -258,6 +258,20 @@ export const addSquadMember = (
 ) => api<SquadMember>(`/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(body) });
 export const listSquadMembers = (squadId: string) =>
   api<SquadMember[]>(`/squads/${squadId}/members`);
+
+// ── Squad role vocabulary registry (proposal §11.8) ──
+
+export const listSquadRoles = (squadId: string) =>
+  api<SquadRole[]>(`/squads/${squadId}/roles`);
+export const registerSquadRole = (
+  squadId: string,
+  body: { name: string; description?: string }
+) => api<SquadRole>(`/squads/${squadId}/roles`, { method: "POST", body: JSON.stringify(body) });
+export const removeSquadRole = (squadId: string, name: string) =>
+  api<void>(`/squads/${squadId}/roles/${name}`, { method: "DELETE" });
+// Cross-squad vocabulary — the blueprint author's alignment listing.
+export const listAllSquadRoles = () =>
+  api<SquadRoleView[]>(`/squad-roles`);
 
 // ── Domain ──
 export const listDomains = () => api<Domain[]>("/domains");

@@ -160,7 +160,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 // block (platform background, goal, role contract, tool surface) plus the
 // team profile. Shipped in the dispatch payload and merged into the
 // workdir's AGENTS.md at spawn — the user message carries the task only.
-func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection string) string {
+func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID string) string {
 	block := d.buildFixedBlock(ctx, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName)
 	// The public-issue contract + the remote conversation snapshot are
 	// CONTEXT (standing rules for this run), not the task — they ride
@@ -168,7 +168,7 @@ func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName
 	if issueSection != "" {
 		block += "\n\n" + issueSection
 	}
-	if team := d.buildTeamProfile(ctx, goalID, agentID); team != "" {
+	if team := d.buildTeamProfile(ctx, goalID, agentID, subGoalID); team != "" {
 		return block + "\n\n" + team
 	}
 	return block
@@ -179,11 +179,27 @@ func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName
 // workdir's AGENTS.md (shipped in the dispatch payload, merged by the
 // executor at spawn), NOT the prompt: team structure is persona material,
 // stable across a goal's turns. (empty) = solo run.
-func (d *Daemon) buildTeamProfile(ctx context.Context, goalID, agentID string) string {
-	var squadID string
-	if err := d.st.DB().QueryRowContext(ctx,
-		`SELECT COALESCE((SELECT assignee_id FROM goal WHERE id=? AND assignee_type='squad'), '')`, goalID).Scan(&squadID); err != nil || squadID == "" {
-		return ""
+//
+// Phase B (§11.5) node-level briefing: a compiled sub_goal may carry its
+// OWN squad (sub_goal.team_squad_id — set when the spec node's assignee is
+// squad:/capability:, and inherited by spawn-materialized children). The
+// briefing squad resolves sub_goal first, goal second: a cross-squad node
+// run must see THAT squad's roster/playbook, not the goal's. The goal-level
+// owner/leader runs pass subGoalID='' and keep today's behavior.
+func (d *Daemon) buildTeamProfile(ctx context.Context, goalID, agentID, subGoalID string) string {
+	squadID := ""
+	if subGoalID != "" {
+		// Node-scoped: the compiled item's squad, falling back to the goal's.
+		if err := d.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(team_squad_id,'') FROM sub_goal WHERE id=?`, subGoalID).Scan(&squadID); err != nil {
+			squadID = "" // vanished / legacy row — fall through to the goal squad
+		}
+	}
+	if squadID == "" {
+		if err := d.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE((SELECT assignee_id FROM goal WHERE id=? AND assignee_type='squad'), '')`, goalID).Scan(&squadID); err != nil || squadID == "" {
+			return ""
+		}
 	}
 	var leaderID string
 	_ = d.st.DB().QueryRowContext(ctx, `SELECT leader_id FROM squad WHERE id=?`, squadID).Scan(&leaderID)

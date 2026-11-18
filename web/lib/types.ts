@@ -488,6 +488,27 @@ export interface SquadMember {
   created_at: string;
 }
 
+// Role vocabulary registry word (BLUEPRINT-PROPOSAL §11.8): name is the
+// capability slug blueprint "capability:<name>" resolves against;
+// description is the job spec (岗位说明书).
+export interface SquadRole {
+  id: string;
+  squad_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+// Registry word joined with squad name — the cross-squad listing the
+// blueprint author reads so capability: references stay aligned.
+export interface SquadRoleView {
+  squad_id: string;
+  squad_name: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
 export interface Schedule {
   id: string;
   name: string;
