@@ -363,12 +363,15 @@ export function PageBody({
 // ── Stat strip ──
 // 列表页顶部的概览条：一行 2–4 个数字，等宽字体、不用彩色卡片、不用图标堆叠。
 // 作用是把“这一页现在什么状况”压成一眼可读的一行，而不是让页面只剩一个列表。
+// 统计数字是正文级文字（20px，非粗体），要走 4.5:1 而不是图形的 3:1。
+// 因此用 -300 槽位：暗色主题下是明亮的绿/琥珀，浅色主题会被重映射成
+// 深绿 #047857 / 深琥珀 #b45309（≈5:1）。-400 在浅色主题下只有 3.2–3.8:1。
 const STAT_TONE: Record<string, string> = {
   default: "text-ink",
-  ok: "text-emerald-400",
-  warn: "text-amber-400",
-  err: "text-red-400",
-  info: "text-sky-400",
+  ok: "text-emerald-300",
+  warn: "text-amber-300",
+  err: "text-red-300",
+  info: "text-sky-300",
   muted: "text-ink-3",
 };
 

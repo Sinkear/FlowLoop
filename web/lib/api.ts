@@ -527,6 +527,23 @@ export const createBlueprint = (body: {
     body: JSON.stringify(body),
   });
 
+// ── 蓝本人工门（B-3，§4.2）：goal 运行中等待人拍板的决策卡 ──
+// held gates = 蓝本节点 type=gate 且已持门（state=running）：只列 OPEN 的，
+// 已决策/被剪掉的不会出现。resolve 即拍板：落库 chosen action + 剪掉未选
+// 分支 + 释放选中分支。
+export const listHeldGates = (goalId: string) =>
+  api<{ gates: import("./types").HeldGate[] }>(`/goals/${goalId}/blueprint-gates`);
+
+export const resolveHeldGate = (
+  goalId: string,
+  nodeKey: string,
+  body: { action: string; reason?: string }
+) =>
+  api<{ resolved: boolean; node_key: string; action: string }>(
+    `/goals/${goalId}/blueprint-gates/${nodeKey}`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
+
 export const getBlueprint = (id: string) =>
   api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
 

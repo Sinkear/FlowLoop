@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow, useBlueprintGraph } from "@/lib/queries";
+import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -14,7 +14,7 @@ import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
 import { Badge, AttentionChip, PageBody, SectionCard } from "@/components/ui";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
-import type { Goal } from "@/lib/types";
+import type { Goal, HeldGate } from "@/lib/types";
 
 export default function GoalDetailPage() {
   // useSearchParams 要求 Suspense 边界。
@@ -22,6 +22,90 @@ export default function GoalDetailPage() {
     <Suspense fallback={<div className="p-8 text-sm text-ink-3">加载中…</div>}>
       <GoalDetailPageInner />
     </Suspense>
+  );
+}
+
+// ── 蓝本人工门决策卡（B-3，§4.2）──
+// 蓝本里的 gate 节点持门等待时（state=running，held_since 已盖戳），
+// 这张卡就是人拍板的入口。每个 action 是一个按钮；拍板后：
+// 服务端落 chosen action + 剪掉未选分支 + 释放选中分支（执行图立刻变化）。
+// 超时无人拍板时 sweeper 自动执行 timeout_action（decided_by=system）。
+function GateDecisionCard({ goalId }: { goalId: string }) {
+  const { data, isLoading } = useHeldGates(goalId);
+  const resolve = useResolveHeldGate(goalId);
+  const [reason, setReason] = useState("");
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const gates = data?.gates ?? [];
+  if (isLoading || gates.length === 0) return null;
+
+  const decide = (g: HeldGate, action: string) => {
+    setBusyKey(g.node_key + ":" + action);
+    setErr(null);
+    resolve.mutate(
+      { nodeKey: g.node_key, action, reason: reason.trim() || undefined },
+      {
+        onError: (e) => setErr(e instanceof Error ? e.message : String(e)),
+        onSettled: () => setBusyKey(null),
+      }
+    );
+  };
+
+  return (
+    <SectionCard
+      title="等待你的决策"
+      count={gates.length}
+      desc="蓝本人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；超时未决策将自动执行超时动作"
+    >
+      <div className="flex flex-col gap-4">
+        {gates.map((g) => (
+          <div key={g.node_key} className="p-4 rounded-lg bg-amber-500/5 border border-amber-500/30">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-ink">{g.title}</span>
+              <span className="font-mono text-xs text-ink-3">{g.node_key}</span>
+              {g.held_since && (
+                <span className="text-xs text-ink-3">
+                  等待中（自 {new Date(g.held_since).toLocaleString()}）
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-ink-2 whitespace-pre-wrap">{g.prompt}</p>
+            {g.timeout_after && (
+              <p className="mt-1 text-xs text-ink-3">
+                超过 {g.timeout_after} 无人决策 → 自动「{g.timeout_action}」
+              </p>
+            )}
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              {g.actions.map((a) => (
+                <button
+                  key={a.id}
+                  disabled={!!busyKey}
+                  onClick={() => decide(g, a.id)}
+                  className={`px-3 py-1.5 text-sm rounded-md border transition ${
+                    a.id === g.timeout_action
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                      : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                  } disabled:opacity-50`}
+                >
+                  {busyKey === g.node_key + ":" + a.id ? "提交中…" : a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="决策理由（可选，会记录进决策快照）"
+          className="w-full px-3 py-2 text-sm rounded-md bg-bg-2 border border-line text-ink placeholder:text-ink-4"
+        />
+        {err && (
+          <p className="text-sm text-rose-400 whitespace-pre-wrap">{err}</p>
+        )}
+        {resolve.isPending && <p className="text-xs text-ink-3">正在落库决策…</p>}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -110,6 +194,9 @@ function GoalDetailPageInner() {
         <GoalActions goal={goal} />
         <GoalTimeline goalId={id} goalStatus={goal.status} />
       </div>
+
+      {/* 蓝本人工门决策卡（B-3）：有持门的 gate 时出现，没有就不占地方 */}
+      <GateDecisionCard goalId={id} />
 
       {/* Comments */}
       <GoalComments goalId={id} />

@@ -425,6 +425,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// cadence: one re-dispatch, then a human park, plus the stale alarm.
 	d.sweepVerifyingSubGoals(ctx)
 	go d.runVerifySweeper(ctx)
+	// Blueprint gate timeouts (Phase B-3, §4.2): a held gate whose clock ran
+	// past its declared timeout auto-resolves with the timeout action. Sweep
+	// once at startup (a restart must not extend a gate's deadline), then on a
+	// 1-minute cadence.
+	d.sweepBlueprintGates(ctx)
+	go d.runGateSweeper(ctx)
 	// Option B recovery (Event≠Truth on the review window): the ready
 	// trigger, the fallback timers and the fired flags are all in-memory — a
 	// crash between a window's park and its ready publish leaves the human's

@@ -1001,7 +1001,10 @@ export interface Blueprint {
   name: string;
   description: string;
   created_at: string;
-  latest_version_id: string; // '' = 尚无版本
+  latest_version_id: string; // 最新「已发布」版本 id；'' = 尚未发布任何版本
+  version_count: number; // 版本总数（含草稿）
+  latest_version: number; // 最新版本号（含草稿）；0 = 还没有版本
+  latest_version_status: "" | "draft" | "published"; // 最新版本的状态
 }
 
 export type BlueprintVersionStatus = "draft" | "published";
@@ -1021,4 +1024,23 @@ export interface BlueprintVersion {
 export interface BlueprintDetail {
   blueprint: Blueprint;
   versions: BlueprintVersion[];
+}
+
+// ── 蓝本人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
+// 只列 OPEN 的门（已持门、等人拍板）；held_since 起超时
+// timeout_after 后 sweeper 自动执行 timeout_action（decided_by=system）。
+export interface HeldGateAction {
+  id: string;
+  label: string;
+}
+
+export interface HeldGate {
+  node_key: string;
+  title: string;
+  prompt: string; // {{node.*}} 已在持门时解析
+  actions: HeldGateAction[];
+  held_since?: string;
+  timeout_after?: string;
+  timeout_action?: string;
+  sub_goal_id: string;
 }

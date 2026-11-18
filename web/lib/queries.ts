@@ -117,6 +117,8 @@ import {
   newBlueprintDraft,
   updateBlueprintDraft,
   publishBlueprintVersion,
+  listHeldGates,
+  resolveHeldGate,
 } from "./api";
 import { useWSEvent } from "./ws";
 import type {
@@ -150,6 +152,7 @@ export const qk = {
   goalChanges: (goalId: string) => ["goals", goalId, "changes"] as const,
   subGoalVerifications: (goalId: string, subGoalId: string) =>
     ["goals", goalId, "sub-goals", subGoalId, "verifications"] as const,
+  heldGates: (goalId: string) => ["goals", goalId, "blueprint-gates"] as const,
   squads: ["squads"] as const,
   squad: (id: string) => ["squads", id] as const,
   squadMembers: (squadId: string) => ["squads", squadId, "members"] as const,
@@ -1308,5 +1311,31 @@ export function usePublishBlueprintVersion() {
     mutationFn: (p: { versionId: string; changelog: string }) =>
       publishBlueprintVersion(p.versionId, p.changelog),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// ── 蓝本人工门（B-3，§4.2）──
+// goal 详情页决策卡：listHeldGates 只列 OPEN 的门（held，等人拍板）；
+// 拍板后失效 goal 全家桶（goal 状态、编排图、子任务、决策卡本身都要刷新
+// —— 被拍板释放的分支会让执行图立刻变化）。
+export function useHeldGates(goalId: string | null) {
+  return useQuery({
+    queryKey: qk.heldGates(goalId!),
+    queryFn: () => listHeldGates(goalId!),
+    enabled: !!goalId,
+  });
+}
+
+export function useResolveHeldGate(goalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { nodeKey: string; action: string; reason?: string }) =>
+      resolveHeldGate(goalId, p.nodeKey, { action: p.action, reason: p.reason }),
+    onSuccess: () => {
+      // 全家桶：goal 状态、编排图、子任务、决策卡本身都要刷新
+      // ——被拍板释放的分支会让执行图立刻变化。
+      qc.invalidateQueries({ queryKey: qk.goal(goalId) });
+      qc.invalidateQueries({ queryKey: qk.workflowGoal(goalId) });
+    },
   });
 }

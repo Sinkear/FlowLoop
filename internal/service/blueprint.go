@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/eushing/agentwork/internal/events"
 	"github.com/eushing/agentwork/internal/logging"
@@ -92,6 +93,17 @@ type SpecGate struct { // Phase B
 	Actions []SpecGateAction `json:"actions"`
 	Timeout *SpecGateTimeout `json:"timeout,omitempty"`
 }
+
+// ActionIDs returns the gate's registered action ids in declaration order —
+// the port vocabulary both for V1 validation and for the resolve-time
+// "action %q is not one gate %q declares" rejection.
+func (g *SpecGate) ActionIDs() []string {
+	ids := make([]string, 0, len(g.Actions))
+	for _, a := range g.Actions {
+		ids = append(ids, a.ID)
+	}
+	return ids
+}
 type SpecGateAction struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -135,6 +147,14 @@ type Blueprint struct {
 	// the published/draft badge and the new-goal "bind blueprint" dropdown
 	// (only published versions are pinnable — Create refuses drafts).
 	LatestVersionID string `json:"latest_version_id"`
+	// VersionCount / LatestVersion / LatestVersionStatus describe the version
+	// history at a glance so the list page can be honest about state: a
+	// blueprint with published v1 and a newer draft v3 is NOT simply
+	// "published" — it has a pinnable version AND unfinished work.
+	// VersionCount is 0 while the blueprint has no versions yet.
+	VersionCount        int    `json:"version_count"`
+	LatestVersion       int    `json:"latest_version"`
+	LatestVersionStatus string `json:"latest_version_status"`
 }
 
 type BlueprintVersion struct {
@@ -183,11 +203,9 @@ var goalTemplateFields = map[string]bool{
 	"execution_mode": true, "created_by_type": true,
 }
 
-// phaseANodeTypes are the node types a PUBLISHED graph may use as of Phase
-// B-1/B-2 (task|condition|spawn|end). router/gate validate structurally (so
-// drafts carry them legibly) but publish refuses them until B-3 wires their
-// execution paths.
-var phaseANodeTypes = map[string]bool{"task": true, "condition": true, "spawn": true, "end": true}
+// B-3 (2026-11-18): all six node types — task, condition, router, gate,
+// spawn, end — are publishable. The publish gate is the STATIC validator
+// (V1–V6) alone; the phase set restriction is retired.
 
 // declaredPorts returns the outbound port ids a node type declares (V1/V3).
 // task: done|failed (implicit; failed is optional — a leaf task may only
@@ -364,6 +382,77 @@ func ValidateSpec(g *SpecGraph) []string {
 			if n.Spawn.MaxChildren < 0 || n.Spawn.MaxChildren > maxSpawnChildren {
 				add("node %q: spawn.max_children must be 1–%d (0 = default %d)", n.ID, maxSpawnChildren, defaultSpawnChildren)
 			}
+		case "router":
+			if n.Router == nil {
+				add("node %q: router body is required", n.ID)
+				break
+			}
+			// §4.4: classes ≥2 (a single class is a linear edge, not a
+			// decision), ids are ports (so they match the port pattern and
+			// are unique), and the mandatory fallback names a declared
+			// class — the port every miss resolves to.
+			if len(n.Router.Classes) < 2 {
+				add("node %q: router requires ≥2 classes (a single class is not a decision)", n.ID)
+			}
+			seenClass := map[string]bool{}
+			for _, c := range n.Router.Classes {
+				if !specNodeIDRe.MatchString(c.ID) {
+					add("node %q: class id %q must match the port pattern", n.ID, c.ID)
+				}
+				if seenClass[c.ID] {
+					add("node %q: duplicate class id %q", n.ID, c.ID)
+				}
+				seenClass[c.ID] = true
+				if strings.TrimSpace(c.Title) == "" {
+					add("node %q: class %q: title is required", n.ID, c.ID)
+				}
+			}
+			if n.Router.Fallback == "" {
+				add("node %q: router.fallback is required — every parse miss or unregistered choice lands there", n.ID)
+			} else if !seenClass[n.Router.Fallback] {
+				add("node %q: router.fallback %q must be a declared class id", n.ID, n.Router.Fallback)
+			}
+		case "gate":
+			if n.Gate == nil {
+				add("node %q: gate body is required", n.ID)
+				break
+			}
+			// §4.2/§8 Q1: a human checkpoint with a closed action set —
+			// actions are ports; the mandatory timeout names an action AND
+			// a parseable duration (the sweeper enforces it at runtime).
+			if strings.TrimSpace(n.Gate.Prompt) == "" {
+				add("node %q: gate.prompt is required", n.ID)
+			}
+			if len(n.Gate.Actions) == 0 {
+				add("node %q: gate requires ≥1 action", n.ID)
+			}
+			seenAction := map[string]bool{}
+			for _, a := range n.Gate.Actions {
+				if !specNodeIDRe.MatchString(a.ID) {
+					add("node %q: action id %q must match the port pattern", n.ID, a.ID)
+				}
+				if seenAction[a.ID] {
+					add("node %q: duplicate action id %q", n.ID, a.ID)
+				}
+				seenAction[a.ID] = true
+				if strings.TrimSpace(a.Label) == "" {
+					add("node %q: action %q: label is required", n.ID, a.ID)
+				}
+			}
+			if n.Gate.Timeout == nil {
+				add("node %q: gate.timeout is required (after + action — the unattended path)", n.ID)
+				break
+			}
+			if n.Gate.Timeout.After == "" {
+				add("node %q: gate.timeout.after is required (e.g. \"24h\")", n.ID)
+			} else if _, err := time.ParseDuration(n.Gate.Timeout.After); err != nil {
+				add("node %q: gate.timeout.after %q is not a parseable duration: %v", n.ID, n.Gate.Timeout.After, err)
+			}
+			if n.Gate.Timeout.Action == "" {
+				add("node %q: gate.timeout.action is required — where the flow goes when nobody decides", n.ID)
+			} else if !seenAction[n.Gate.Timeout.Action] {
+				add("node %q: gate.timeout.action %q must be a declared action id", n.ID, n.Gate.Timeout.Action)
+			}
 		case "end":
 			if n.End != nil && n.End.Outcome != "" && n.End.Outcome != "success" && n.End.Outcome != "failure" {
 				add("node %q: end.outcome must be success|failure", n.ID)
@@ -423,6 +512,30 @@ func ValidateSpec(g *SpecGraph) []string {
 		for _, p := range n.mandatoryPorts() {
 			if !edgeSeen[n.ID+"\x00"+p] {
 				add("node %q: mandatory port %q has no outbound edge", n.ID, p)
+			}
+		}
+	}
+
+	// B-3 consistency: a gate's "timeout" port is the structural declaration
+	// of the unattended path, and timeout.action is its behavioral encoding —
+	// the two must not drift. Pin them: every timeout-port edge must land on
+	// a node the timeout.action port also reaches (the timeout resolution
+	// prunes with the ACTION port, so a divergent timeout edge would point
+	// at a branch that never runs).
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Type != "gate" || n.Gate == nil || n.Gate.Timeout == nil || n.Gate.Timeout.Action == "" {
+			continue
+		}
+		actionTargets := map[string]bool{}
+		for _, e := range g.Edges {
+			if e.Source == n.ID && e.SourceHandle == n.Gate.Timeout.Action && byID[e.Target] != nil {
+				actionTargets[e.Target] = true
+			}
+		}
+		for _, e := range g.Edges {
+			if e.Source == n.ID && e.SourceHandle == "timeout" && byID[e.Target] != nil && !actionTargets[e.Target] {
+				add("node %q: gate.timeout port must lead where timeout.action (%q) leads — %q diverges", n.ID, n.Gate.Timeout.Action, e.Target)
 			}
 		}
 	}
@@ -513,17 +626,30 @@ func ValidateSpec(g *SpecGraph) []string {
 	// V5: template refs — {{goal.<field>}} allowlist, {{node.<id>.output}}
 	// references an existing node of type task (ancestor-ness is a compile-
 	// time property — the release-time resolver checks it per pruned graph).
+	// B-3: a gate's prompt is shown to the HUMAN deciding, so it may template
+	// upstream evidence too; router class descriptions are platform contract
+	// text (no {{…}} — the class list is rendered by the platform, and the
+	// classification run gets its evidence from the goal, not from here).
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Task == nil || n.Task.Brief == "" {
+		var text string
+		switch {
+		case n.Task != nil:
+			text = n.Task.Brief
+		case n.Gate != nil:
+			text = n.Gate.Prompt
+		default:
 			continue
 		}
-		for _, m := range templateGoalRefRe.FindAllStringSubmatch(n.Task.Brief, -1) {
+		if text == "" {
+			continue
+		}
+		for _, m := range templateGoalRefRe.FindAllStringSubmatch(text, -1) {
 			if !goalTemplateFields[m[1]] {
 				add("node %q: brief refers to unknown goal field %q", n.ID, m[1])
 			}
 		}
-		for _, m := range templateNodeRefRe.FindAllStringSubmatch(n.Task.Brief, -1) {
+		for _, m := range templateNodeRefRe.FindAllStringSubmatch(text, -1) {
 			target, ok := byID[m[1]]
 			if !ok {
 				add("node %q: brief refers to unknown node %q", n.ID, m[1])
@@ -673,8 +799,8 @@ const (
 const reviewerRole = "reviewer"
 
 // validateContent is the full publish gate: parse, V1–V5, V4 assignee
-// resolution against the registry, Phase A type set.
-func (s *BlueprintService) validateContent(ctx context.Context, content string, enforcePhaseA bool) (*SpecGraph, error) {
+// resolution against the registry. B-3: all six node types publishable.
+func (s *BlueprintService) validateContent(ctx context.Context, content string) (*SpecGraph, error) {
 	var g SpecGraph
 	if err := json.Unmarshal([]byte(content), &g); err != nil {
 		return nil, NewValidationError("blueprint content is not valid JSON: " + err.Error())
@@ -730,14 +856,6 @@ func (s *BlueprintService) validateContent(ctx context.Context, content string, 
 			}
 		}
 	}
-	if enforcePhaseA {
-		for i := range g.Nodes {
-			n := &g.Nodes[i]
-			if !phaseANodeTypes[n.Type] {
-				return nil, NewValidationError(fmt.Sprintf("node %q: type %q is not supported yet (publishable now: task|condition|spawn|end; router/gate land in Phase B-3)", n.ID, n.Type))
-			}
-		}
-	}
 	return &g, nil
 }
 
@@ -746,7 +864,7 @@ func (s *BlueprintService) Create(ctx context.Context, name, description, conten
 	if strings.TrimSpace(name) == "" {
 		return nil, NewFieldRequiredError("name")
 	}
-	g, err := s.validateContent(ctx, content, true)
+	g, err := s.validateContent(ctx, content)
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +922,7 @@ func (s *BlueprintService) UpdateDraft(ctx context.Context, versionID, content s
 	if v.Status != "draft" {
 		return nil, NewConflictError(fmt.Sprintf("version %d is %s — only drafts are editable (published versions are immutable; create a new draft instead)", v.Version, v.Status))
 	}
-	if _, err := s.validateContent(ctx, content, true); err != nil {
+	if _, err := s.validateContent(ctx, content); err != nil {
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
@@ -827,7 +945,7 @@ func (s *BlueprintService) Publish(ctx context.Context, versionID, changelog str
 	}
 	// The publish gate re-validates the STORED content (not the caller's
 	// memory of it): a drifted row fails the V6 hash check inside.
-	if _, err := s.validateContent(ctx, v.Content, true); err != nil {
+	if _, err := s.validateContent(ctx, v.Content); err != nil {
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
@@ -899,12 +1017,28 @@ func (s *BlueprintService) GetVersion(ctx context.Context, versionID string) (*B
 	return s.getVersion(ctx, versionID)
 }
 
+// blueprintSelect is the one projection every blueprint read path uses, so the
+// list and the detail page can never disagree about a blueprint's state.
+// Columns: id,name,description,created_by_type,created_by_id,created_at,
+// latest published id, version count, newest version number, newest status.
+const blueprintSelect = `SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
+	COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), ''),
+	(SELECT COUNT(*) FROM blueprint_version bv WHERE bv.blueprint_id=b.id),
+	COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.blueprint_id=b.id ORDER BY bv.version DESC LIMIT 1), 0),
+	COALESCE((SELECT bv.status FROM blueprint_version bv WHERE bv.blueprint_id=b.id ORDER BY bv.version DESC LIMIT 1), '')
+	FROM blueprint b`
+
+// scanBlueprint keeps the column order in blueprintSelect and this call in sync.
+func scanBlueprint(row interface{ Scan(dest ...any) error }, b *Blueprint) error {
+	return row.Scan(
+		&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt,
+		&b.LatestVersionID, &b.VersionCount, &b.LatestVersion, &b.LatestVersionStatus,
+	)
+}
+
 // List returns all blueprints with their version/发布 state summary.
 func (s *BlueprintService) List(ctx context.Context) ([]Blueprint, error) {
-	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
-			COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), '')
-		FROM blueprint b ORDER BY b.created_at DESC`)
+	rows, err := s.st.DB().QueryContext(ctx, blueprintSelect+` ORDER BY b.created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list blueprints: %w", err)
 	}
@@ -912,7 +1046,7 @@ func (s *BlueprintService) List(ctx context.Context) ([]Blueprint, error) {
 	var out []Blueprint
 	for rows.Next() {
 		var b Blueprint
-		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt, &b.LatestVersionID); err != nil {
+		if err := scanBlueprint(rows, &b); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -943,12 +1077,7 @@ func (s *BlueprintService) ListVersions(ctx context.Context, blueprintID string)
 // Get returns the blueprint with its versions.
 func (s *BlueprintService) Get(ctx context.Context, id string) (*Blueprint, []BlueprintVersion, error) {
 	var b Blueprint
-	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
-			COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), '')
-		FROM blueprint b WHERE b.id=?`,
-		id).
-		Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt, &b.LatestVersionID)
+	err := scanBlueprint(s.st.DB().QueryRowContext(ctx, blueprintSelect+` WHERE b.id=?`, id), &b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}
@@ -1106,6 +1235,29 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		`SELECT COALESCE(assignee_id,'') FROM goal WHERE id=? AND assignee_type='squad'`,
 		goalID).Scan(&goalSquadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("load goal squad: %w", err)
+	}
+	// B-3: holder nodes (router/gate) compile to the goal's owner agent —
+	// a squad goal routes decisions to its leader (resolveLeaderTx
+	// semantics, replayed here because the goal-level helper lives on the
+	// run service and the compiler is already inside its own transaction).
+	goalOwnerID := ""
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(assignee_id,'') FROM goal WHERE id=? AND assignee_type='agent'`,
+		goalID).Scan(&goalOwnerID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load goal owner: %w", err)
+	}
+	if goalOwnerID == "" {
+		if goalSquadID != "" {
+			if err := tx.QueryRowContext(ctx,
+				`SELECT leader_id FROM squad WHERE id=?`, goalSquadID).Scan(&goalOwnerID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return NewValidationError("the goal's squad no longer exists — cannot resolve the decision holder")
+				}
+				return fmt.Errorf("load goal squad leader: %w", err)
+			}
+		} else {
+			return NewValidationError("the goal has no owner agent — router/gate nodes need a decision holder")
+		}
 	}
 
 	byID := map[string]*SpecNode{}
@@ -1274,10 +1426,16 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			continue
 		}
 		var assigneeSpec string
-		if n.Type == "task" {
+		switch n.Type {
+		case "task":
 			assigneeSpec = n.Task.Assignee
-		} else {
+		case "spawn":
 			assigneeSpec = n.Spawn.Assignee
+		case "router", "gate":
+			// §4.7: the leader is the executor of routing and gate
+			// decisions — a holder node has no assignee of its own, it
+			// compiles to the GOAL's owner (squad → leader agent).
+			assigneeSpec = "agent:" + goalOwnerID
 		}
 		kind, id, _ := strings.Cut(assigneeSpec, ":")
 		if kind != "agent" && kind != "squad" && kind != "capability" {
@@ -1333,15 +1491,29 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		}
 		ts0 := now()
 		brief := ""
-		if n.Type == "task" {
+		switch n.Type {
+		case "task":
 			brief = interpolateGoal(n.Task.Brief, goalFields)
-		} else {
+		case "spawn":
 			// §11.4: the spawn sub_goal is the PLANNER item — the spec
 			// brief plus the platform-fixed output contract. The
 			// materializer parses the run's result_summary for the fenced
 			// JSON child plan; everything outside the contract is the
 			// planner's freedom (Phase B's elastic pocket).
 			brief = interpolateGoal(n.Spawn.Brief, goalFields) + spawnPlannerInstruction(n, teamSquad)
+		case "router":
+			// §4.4: the classification item — the class list rendered as
+			// the choice prompt, plus the fenced-JSON output contract. Any
+			// miss at resolve time lands on the declared fallback; the run
+			// itself is free-form reasoning before the fence.
+			brief = interpolateGoal(routerClassPrompt(n), goalFields)
+		case "gate":
+			// §4.2/§8 Q1: the gate sub_goal is a HOLDER — it never gets a
+			// run. The brief below is the decision card text the human
+			// sees (prompt + actions + timeout), resolved of goal refs;
+			// {{node.*}} refs resolve at release (beat 2) when the
+			// upstream evidence exists.
+			brief = interpolateGoal(gatePrompt(n), goalFields)
 		}
 		sg := SubGoal{
 			ID:          sgByKey[n.ID],
@@ -1373,6 +1545,37 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 				nodeResolved = extra
 			}
 		}
+		if n.Type == "gate" {
+			// B-3: snapshot the decision envelope into the ledger — the
+			// timeout the sweeper enforces, the actions the decision card
+			// renders, and (for an ungated gate) the hold timestamp from
+			// which the sweeper counts. A gated gate re-stamps held_since
+			// at release (wakeDependentsTx).
+			nodeState := "pending"
+			var extra map[string]string
+			if len(depIDs) == 0 {
+				nodeState = "running" // held from the start — no upstream to wait for
+				extra = map[string]string{
+					"held_since": ts,
+					"timeout_after": n.Gate.Timeout.After,
+					"timeout_action": n.Gate.Timeout.Action,
+				}
+			} else {
+				extra = map[string]string{
+					"timeout_after": n.Gate.Timeout.After,
+					"timeout_action": n.Gate.Timeout.Action,
+				}
+			}
+			if merged, err := mergeResolved(nodeResolved, extra); err == nil {
+				nodeResolved = merged
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,sub_goal_id,state,resolved_config,created_at) VALUES (?,?,?,?,?,?,?,?)`,
+				newID(), goalID, n.ID, n.Type, sg.ID, nodeState, nodeResolved, ts); err != nil {
+				return fmt.Errorf("insert blueprint_node %s: %w", n.ID, err)
+			}
+			continue
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,sub_goal_id,state,resolved_config,created_at) VALUES (?,?,?,?,?,?,?,?)`,
 			newID(), goalID, n.ID, n.Type, sg.ID, "pending", nodeResolved, ts); err != nil {
@@ -1382,10 +1585,16 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 
 	// Ungated executables (no deps) start immediately; gated ones have no
 	// run and wait for wakeDependentsTx — beat 2 resolves their node refs
-	// at release.
+	// at release. GATES are excluded from enqueue in every case: an
+	// ungated gate is held from compile (state=running, held_since
+	// stamped); a gated gate holds at release (wakeDependentsTx). The
+	// human decision — never a run — is the only thing that settles it.
 	var runEvs []events.Event
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
+		if n.Type == "gate" {
+			continue // never enqueued — the decision card + sweeper own it
+		}
 		if !isExecutableNode(n.Type) || !live[n.ID] || len(ancestorTasks(n.ID)) > 0 {
 			continue
 		}
@@ -1407,7 +1616,7 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			runEvs = append(runEvs, *ev)
 		}
 	}
-	logging.Infof("blueprint: compiled %d nodes for goal %s (%d live tasks, %d skipped)", len(g.Nodes), goalID, len(sgByKey), len(g.Nodes)-len(sgByKey))
+	logging.Infof("blueprint: compiled %d nodes for goal %s (%d executable holders, %d condition/end ledger rows)", len(g.Nodes), goalID, len(sgByKey), len(g.Nodes)-len(sgByKey))
 	// Run events fire only AFTER the caller commits (rollback must not
 	// launch runs) — compileBlueprintTx returns them for post-commit publish.
 	*out = runEvs
@@ -1467,6 +1676,38 @@ func markBlueprintNodeRunningTx(ctx context.Context, tx *sql.Tx, subGoalID strin
 		`UPDATE blueprint_node SET state='running' WHERE sub_goal_id=? AND state='pending'`,
 		subGoalID); err != nil {
 		return fmt.Errorf("mark blueprint node running: %w", err)
+	}
+	return nil
+}
+
+// markGateHeldTx is the gate's "release": flip pending → running and stamp
+// held_since into resolved_config. That timestamp is the sweeper's clock
+// (SweepBlueprintGates reads it against the gate's timeout.after) and the
+// guard counts the running gate as open work — the goal cannot finalize
+// past an undecided human gate. Idempotent: a gate already held (compile
+// stamped held_since, or a re-released ledger) just refreshes nothing.
+func markGateHeldTx(ctx context.Context, tx *sql.Tx, subGoalID string) error {
+	var cfg string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(resolved_config,'') FROM blueprint_node WHERE sub_goal_id=?`, subGoalID).
+		Scan(&cfg); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // not a compiled node — no-op
+		}
+		return fmt.Errorf("load gate ledger %s: %w", subGoalID, err)
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(cfg), &m) != nil {
+		m = map[string]any{}
+	}
+	if _, held := m["held_since"]; held {
+		return nil // already held — do not restart the clock
+	}
+	merged, _ := mergeResolved(cfg, map[string]string{"held_since": now()})
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_node SET state='running', resolved_config=? WHERE sub_goal_id=? AND state='pending'`,
+		merged, subGoalID); err != nil {
+		return fmt.Errorf("hold gate node: %w", err)
 	}
 	return nil
 }
@@ -1849,6 +2090,528 @@ func (s *GoalService) spawnContractFailedTx(ctx context.Context, tx *sql.Tx, sg 
 	return evs, false, nil
 }
 
+// ── B-3 runtime: router resolution + gate decision + dead-branch pruning ──
+
+// parseRouterChoice extracts the LAST fenced ```json block from the router
+// run's result_summary and reads {"class":"<id>"} from it. Mirrors
+// parseSpawnPlan's machine boundary: free reasoning before the fence, the
+// fence is the decision. Returns "" when no fence or no class key — the
+// caller maps that to the fallback (a router NEVER retries: fallback IS
+// its failure semantics, §4.4).
+func parseRouterChoice(summary string) string {
+	re := regexp.MustCompile("(?s)```json\\s*(\\{.*?\\})\\s*```")
+	matches := re.FindAllStringSubmatch(summary, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	var choice struct {
+		Class string `json:"class"`
+	}
+	if json.Unmarshal([]byte(matches[len(matches)-1][1]), &choice) != nil {
+		return ""
+	}
+	return strings.TrimSpace(choice.Class)
+}
+
+// pruneDeadBranchesTx cuts the branches a router/gate decision did NOT take.
+// From the deciding node, descendants = the full-port downstream closure;
+// chosenReachable = the closure following ONLY the chosen port (conditions
+// along the way keep their compile-time chosen ports — a dead branch is
+// dead at every level). Every descendant not chosen-reachable goes
+// cancelled (its sub_goal, if any) and skipped (its blueprint_node, if
+// still pending/running) — including end nodes on the dead path: only the
+// live path's ends settle. Cascade-safe: failGatedDependentsTx runs after
+// the cancellations in the callers, so dependents of cancelled rows die
+// with the standard reason instead of hanging on a verified-never dep.
+func (s *GoalService) pruneDeadBranchesTx(ctx context.Context, tx *sql.Tx, goalID, versionID, decideKey, chosenPort string) error {
+	var content string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content FROM blueprint_version WHERE id=?`, versionID).Scan(&content); err != nil {
+		return fmt.Errorf("load spec for pruning: %w", err)
+	}
+	var g SpecGraph
+	if err := json.Unmarshal([]byte(content), &g); err != nil {
+		return fmt.Errorf("parse spec for pruning: %w", err)
+	}
+	byID := map[string]*SpecNode{}
+	for i := range g.Nodes {
+		byID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	// Condition choices already recorded at compile time (beat 1).
+	condChoice := map[string]string{}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT node_key, COALESCE(resolved_config,'') FROM blueprint_node WHERE goal_id=? AND node_type='condition'`,
+		goalID)
+	if err != nil {
+		return fmt.Errorf("load condition choices: %w", err)
+	}
+	for rows.Next() {
+		var key, cfg string
+		if err := rows.Scan(&key, &cfg); err != nil {
+			rows.Close()
+			return err
+		}
+		var c struct {
+			Chosen string `json:"chosen"`
+		}
+		if json.Unmarshal([]byte(cfg), &c) == nil && c.Chosen != "" {
+			condChoice[key] = c.Chosen
+		}
+	}
+	rows.Close()
+
+	// Port filter: for a condition on its chosen port; for the deciding
+	// node, ONLY the chosen port; everything else passes all ports.
+	outbound := func(nodeKey, port string) bool {
+		if nodeKey == decideKey {
+			return port == chosenPort
+		}
+		if n := byID[nodeKey]; n != nil && n.Type == "condition" {
+			return port == condChoice[nodeKey]
+		}
+		return true
+	}
+	// Descendants: walk ALL ports (what COULD run downstream).
+	descAdj := map[string][]string{}
+	// Chosen-reachable: walk filtered ports (what WILL run).
+	liveAdj := map[string][]string{}
+	for _, e := range g.Edges {
+		if byID[e.Source] == nil || byID[e.Target] == nil {
+			continue
+		}
+		descAdj[e.Source] = append(descAdj[e.Source], e.Target)
+		if outbound(e.Source, e.SourceHandle) {
+			liveAdj[e.Source] = append(liveAdj[e.Source], e.Target)
+		}
+	}
+	descendants := bfsFrom([]string{decideKey}, descAdj)
+	chosenReach := bfsFrom([]string{decideKey}, liveAdj)
+	delete(descendants, decideKey)
+	delete(chosenReach, decideKey)
+
+	dead := map[string]bool{}
+	for id := range descendants {
+		if !chosenReach[id] {
+			dead[id] = true
+		}
+	}
+	if len(dead) == 0 {
+		return nil
+	}
+	// Cancel the dead branches' non-terminal sub_goals (holder included).
+	var deadKeys []string
+	for id := range dead {
+		deadKeys = append(deadKeys, id)
+	}
+	sort.Strings(deadKeys)
+	for _, key := range deadKeys {
+		sgKeyRow := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(sub_goal_id,'') FROM blueprint_node WHERE goal_id=? AND node_key=?`, goalID, key)
+		var sgID string
+		if err := sgKeyRow.Scan(&sgID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue // no ledger row (never compiled) — nothing to do
+			}
+			return fmt.Errorf("load dead node %s: %w", key, err)
+		}
+		if sgID != "" {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE sub_goal SET status='cancelled' WHERE id=? AND status NOT IN ('verified','cancelled','failed')`,
+				sgID)
+			if err != nil {
+				return fmt.Errorf("cancel dead branch %s: %w", key, err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE run SET status='cancelled' WHERE sub_goal_id=? AND status='queued'`, sgID); err != nil {
+					return fmt.Errorf("cancel dead-branch runs %s: %w", key, err)
+				}
+				logging.Infof("blueprint: dead branch %s cancelled (decision %s → %s)", key, decideKey, chosenPort)
+			}
+		}
+		// Ledger: skipped beats settled for the graph's completion math —
+		// settled/skipped/failed are all terminal for the guard.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE blueprint_node SET state='skipped', resolved_config=COALESCE(resolved_config,'') WHERE goal_id=? AND node_key=? AND state IN ('pending','running')`,
+			goalID, key); err != nil {
+			return fmt.Errorf("skip dead node %s: %w", key, err)
+		}
+	}
+	// Anything gated on a now-dead sub_goal must cascade (standard chain).
+	if err := s.cascadeDeadDepsTx(ctx, tx, goalID, deadKeys); err != nil {
+		return err
+	}
+	return nil
+}
+
+// cascadeDeadDepsTx is pruneDeadBranchesTx's belt: after cancelling dead
+// branches, any still-gated sub_goal whose deps are now dead rides the
+// EXISTING failGatedDependentsTx cascade — one call per trigger is enough
+// (the helper loops to a fixed point itself), but passing all dead keys
+// keeps the log attribution straight.
+func (s *GoalService) cascadeDeadDepsTx(ctx context.Context, tx *sql.Tx, goalID string, deadKeys []string) error {
+	for _, k := range deadKeys {
+		var sgID string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(sub_goal_id,'') FROM blueprint_node WHERE goal_id=? AND node_key=?`, goalID, k).
+			Scan(&sgID); err != nil || sgID == "" {
+			continue
+		}
+		if _, err := s.failGatedDependentsTx(ctx, tx, goalID, sgID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveRouterTx is the router's completed-path gate (§4.4), the exact
+// spawn hook shape: parse the fenced class choice; a REGISTERED class wins,
+// anything else lands on the declared fallback with fallback_used=true (a
+// router never retries — a bad classification IS the fallback branch).
+// Then: dead branches prune, the holder promotes verified, the decision
+// lands in resolved_config (auditable + RSI fallback-rate signal), and
+// wakeDependentsTx releases the chosen branch.
+func (s *GoalService) resolveRouterTx(ctx context.Context, tx *sql.Tx, sg *SubGoal, rc goalRunContext) ([]events.Event, bool, error) {
+	goalID := sg.GoalID
+	var nodeKey, resolvedCfg, versionID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT node_key, COALESCE(resolved_config,'') FROM blueprint_node WHERE sub_goal_id=?`, sg.ID).
+		Scan(&nodeKey, &resolvedCfg); err != nil {
+		return nil, false, fmt.Errorf("load router ledger: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT blueprint_version_id FROM goal WHERE id=?`, goalID).Scan(&versionID); err != nil {
+		return nil, false, fmt.Errorf("load pinned version: %w", err)
+	}
+	// Registered classes + fallback from the spec (the source of truth —
+	// resolved_config only carries assignee/holder data).
+	var content string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content FROM blueprint_version WHERE id=?`, versionID).Scan(&content); err != nil {
+		return nil, false, fmt.Errorf("load spec content: %w", err)
+	}
+	var g SpecGraph
+	if err := json.Unmarshal([]byte(content), &g); err != nil {
+		return nil, false, fmt.Errorf("parse spec content: %w", err)
+	}
+	var router *SpecNode
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == nodeKey {
+			router = &g.Nodes[i]
+			break
+		}
+	}
+	if router == nil || router.Router == nil {
+		return nil, false, fmt.Errorf("router node %q missing from the pinned spec", nodeKey)
+	}
+	registered := map[string]bool{}
+	for _, c := range router.Router.Classes {
+		registered[c.ID] = true
+	}
+
+	var summary string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(result_summary,'') FROM run WHERE id=?`, rc.RunID).Scan(&summary); err != nil {
+		return nil, false, fmt.Errorf("load router summary: %w", err)
+	}
+	raw := parseRouterChoice(summary)
+	chosen := ""
+	fallbackUsed := false
+	if registered[raw] {
+		chosen = raw
+	} else {
+		chosen = router.Router.Fallback
+		fallbackUsed = true
+		if raw == "" {
+			logging.Warnf("blueprint: router %s produced no fenced choice — falling back to %q", nodeKey, chosen)
+		} else {
+			logging.Warnf("blueprint: router %s chose unregistered class %q — falling back to %q", nodeKey, raw, chosen)
+		}
+	}
+	// Prune everything the decision did not take, then settle the holder.
+	if err := s.pruneDeadBranchesTx(ctx, tx, goalID, versionID, nodeKey, chosen); err != nil {
+		return nil, false, err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET status='verified' WHERE id=? AND status IN ('done','running')`, sg.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("verify router holder: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, false, nil // raced terminal — nothing to promote
+	}
+	if err := markBlueprintNodeTx(ctx, tx, sg.ID, "settled"); err != nil {
+		return nil, false, err
+	}
+	merged, _ := mergeResolved(resolvedCfg, map[string]string{
+		"chosen": chosen, "fallback_used": strconv.FormatBool(fallbackUsed), "raw_choice": raw,
+	})
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, merged, sg.ID); err != nil {
+		return nil, false, fmt.Errorf("snapshot router decision: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
+		newID(), goalID, sg.ID,
+		fmt.Sprintf("路由决策：选择类 %s", chosen),
+		fmt.Sprintf("router decision on run %s (raw=%q fallback=%t)", rc.RunID, raw, fallbackUsed),
+		now()); err != nil {
+		return nil, false, fmt.Errorf("insert router verification_result: %w", err)
+	}
+	logging.Infof("blueprint: router %s chose %q (fallback=%t) for goal %s", nodeKey, chosen, fallbackUsed, goalID)
+	wakeEvs, err := s.wakeDependentsTx(ctx, tx, goalID, sg.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	return wakeEvs, true, nil
+}
+
+// ResolveBlueprintGate is the gate's human decision (§4.2/§8 Q1) and the
+// sweeper's timeout landing: settle the holder verified, record the action
+// in resolved_config, prune the branches the action did not take, and wake
+// the chosen branch. decidedBy 'human' (API) or 'system' (timeout sweep).
+// No-op on a non-held gate (already decided) returns ErrValidation so a
+// double-click cannot re-decide.
+func (s *GoalService) ResolveBlueprintGate(ctx context.Context, goalID, nodeKey, action, reason, decidedBy string) error {
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var versionID, sgID, resolvedCfg string
+	var state string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT g.blueprint_version_id, bn.sub_goal_id, COALESCE(bn.resolved_config,''), bn.state
+		 FROM goal g JOIN blueprint_node bn ON bn.goal_id=g.id
+		 WHERE g.id=? AND bn.node_key=? AND bn.node_type='gate'`, goalID, nodeKey).
+		Scan(&versionID, &sgID, &resolvedCfg, &state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return NewValidationError(fmt.Sprintf("goal %s has no gate node %q", goalID, nodeKey))
+		}
+		return fmt.Errorf("load gate: %w", err)
+	}
+	if state != "running" && state != "pending" {
+		return NewConflictError(fmt.Sprintf("gate %q is already %s — a decision cannot be re-issued", nodeKey, state))
+	}
+	// The action must be one the gate declared (registered port).
+	var content string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content FROM blueprint_version WHERE id=?`, versionID).Scan(&content); err != nil {
+		return fmt.Errorf("load spec content: %w", err)
+	}
+	var g SpecGraph
+	if err := json.Unmarshal([]byte(content), &g); err != nil {
+		return fmt.Errorf("parse spec content: %w", err)
+	}
+	var gate *SpecNode
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == nodeKey {
+			gate = &g.Nodes[i]
+			break
+		}
+	}
+	if gate == nil || gate.Gate == nil {
+		return NewValidationError(fmt.Sprintf("node %q missing from the pinned spec", nodeKey))
+	}
+	registered := map[string]bool{}
+	for _, a := range gate.Gate.Actions {
+		registered[a.ID] = true
+	}
+	if !registered[action] {
+		return NewValidationError(fmt.Sprintf("action %q is not one gate %q declares (registered: %s)", action, nodeKey, strings.Join(gate.Gate.ActionIDs(), ", ")))
+	}
+	// Settle the holder + prune + wake, all in this transaction.
+	if err := s.pruneDeadBranchesTx(ctx, tx, goalID, versionID, nodeKey, action); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE sub_goal SET status='verified' WHERE id=? AND status NOT IN ('verified','cancelled','failed')`, sgID)
+	if err != nil {
+		return fmt.Errorf("verify gate holder: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return NewConflictError(fmt.Sprintf("gate %q's holder is already terminal", nodeKey))
+	}
+	if err := markBlueprintNodeTx(ctx, tx, sgID, "settled"); err != nil {
+		return err
+	}
+	merged, _ := mergeResolved(resolvedCfg, map[string]string{
+		"action": action, "decided_by": decidedBy, "decided_at": now(),
+	})
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, merged, sgID); err != nil {
+		return fmt.Errorf("snapshot gate decision: %w", err)
+	}
+	// A decision record the workflow graph can show as the gate's verify.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
+		newID(), goalID, sgID,
+		fmt.Sprintf("人工决策：%s（%s）", action, reason),
+		fmt.Sprintf("gate decision by %s (node %s, action %s)", decidedBy, nodeKey, action),
+		now()); err != nil {
+		return fmt.Errorf("insert gate verification_result: %w", err)
+	}
+	wakeEvs, err := s.wakeDependentsTx(ctx, tx, goalID, sgID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bus.Publish(ctx, events.Event{Topic: "sub_goal.verified", Payload: map[string]any{
+		"goal_id": goalID, "sub_goal_id": sgID, "gate_node": nodeKey, "action": action,
+	}})
+	for _, ev := range wakeEvs {
+		s.bus.Publish(ctx, ev)
+	}
+	logging.Infof("blueprint: gate %s resolved by %s → %s (goal %s)", nodeKey, decidedBy, action, goalID)
+	return nil
+}
+
+// SweepBlueprintGates times out held gates (the sweeper's ONE job): every
+// gate node in state running with a held_since older than timeout_after
+// resolves with timeout_action, decidedBy=system. Returns the number
+// resolved; errors are per-gate (logged, never fatal — the next tick
+// retries).
+func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT bn.goal_id, bn.node_key, COALESCE(bn.resolved_config,'') FROM blueprint_node bn
+		 WHERE bn.node_type='gate' AND bn.state='running'`)
+	if err != nil {
+		return 0, fmt.Errorf("scan held gates: %w", err)
+	}
+	type heldGate struct {
+		goalID, nodeKey, cfg string
+	}
+	var held []heldGate
+	for rows.Next() {
+		var h heldGate
+		if err := rows.Scan(&h.goalID, &h.nodeKey, &h.cfg); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		held = append(held, h)
+	}
+	rows.Close()
+	resolved := 0
+	for _, h := range held {
+		var cfg struct {
+			HeldSince     string `json:"held_since"`
+			TimeoutAfter  string `json:"timeout_after"`
+			TimeoutAction string `json:"timeout_action"`
+		}
+		if json.Unmarshal([]byte(h.cfg), &cfg) != nil || cfg.HeldSince == "" || cfg.TimeoutAfter == "" {
+			continue // never held (compile-stamped) or missing policy — skip
+		}
+		d, err := time.ParseDuration(cfg.TimeoutAfter)
+		if err != nil {
+			continue
+		}
+		heldAt, err := time.Parse(time.RFC3339Nano, cfg.HeldSince)
+		if err != nil {
+			continue
+		}
+		if time.Since(heldAt) < d {
+			continue
+		}
+		if err := s.ResolveBlueprintGate(ctx, h.goalID, h.nodeKey, cfg.TimeoutAction,
+			fmt.Sprintf("超时自动决策（held since %s, timeout %s）", cfg.HeldSince, cfg.TimeoutAfter), "system"); err != nil {
+			logging.Errorf("blueprint: gate sweep: %s/%s: %v", h.goalID, h.nodeKey, err)
+			continue
+		}
+		resolved++
+	}
+	if resolved > 0 {
+		logging.Infof("blueprint: gate sweep resolved %d held gate(s)", resolved)
+	}
+	return resolved, nil
+}
+
+// HeldGate is one open human decision: the gate's node key, the resolved
+// prompt ({{node.*}} already substituted at hold time), the registered
+// action buttons, the hold clock, and the timeout policy. Decided/skipped
+// gates are NOT listed — the card only exists while the decision is open.
+type HeldGate struct {
+	NodeKey       string          `json:"node_key"`
+	Title         string          `json:"title"`
+	Prompt        string          `json:"prompt"`
+	Actions       []SpecGateAction `json:"actions"`
+	HeldSince     string          `json:"held_since,omitempty"`
+	TimeoutAfter  string          `json:"timeout_after,omitempty"`
+	TimeoutAction string          `json:"timeout_action,omitempty"`
+	SubGoalID     string          `json:"sub_goal_id"`
+}
+
+// ListHeldGates returns a goal's open blueprint gates in node order — the
+// human decision cards. Only state='running' (held) gates qualify: a
+// pending gate is still waiting upstream (nothing to decide yet) and a
+// settled/skipped one is history.
+func (s *GoalService) ListHeldGates(ctx context.Context, goalID string) ([]HeldGate, error) {
+	// Goal → pinned version → spec (the actions/prompt vocabulary).
+	var versionID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT blueprint_version_id FROM goal WHERE id=?`, goalID).Scan(&versionID); err != nil {
+		return nil, fmt.Errorf("load goal: %w", err)
+	}
+	if versionID == "" {
+		return nil, NewValidationError("goal is not blueprint-driven")
+	}
+	var content string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT content FROM blueprint_version WHERE id=?`, versionID).Scan(&content); err != nil {
+		return nil, fmt.Errorf("load spec: %w", err)
+	}
+	var g SpecGraph
+	if err := json.Unmarshal([]byte(content), &g); err != nil {
+		return nil, fmt.Errorf("parse spec: %w", err)
+	}
+	specGates := map[string]*SpecNode{}
+	for i := range g.Nodes {
+		if g.Nodes[i].Type == "gate" {
+			specGates[g.Nodes[i].ID] = &g.Nodes[i]
+		}
+	}
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT bn.node_key, COALESCE(bn.resolved_config,''), COALESCE(sg.description,''), COALESCE(bn.sub_goal_id,'')
+		 FROM blueprint_node bn LEFT JOIN sub_goal sg ON sg.id=bn.sub_goal_id
+		 WHERE bn.goal_id=? AND bn.node_type='gate' AND bn.state='running'
+		 ORDER BY bn.created_at`, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("scan held gates: %w", err)
+	}
+	defer rows.Close()
+	out := []HeldGate{}
+	for rows.Next() {
+		var key, cfg, prompt, sgID string
+		if err := rows.Scan(&key, &cfg, &prompt, &sgID); err != nil {
+			return nil, err
+		}
+		n := specGates[key]
+		if n == nil {
+			continue // spec drifted — hide rather than guess
+		}
+		hg := HeldGate{
+			NodeKey:   key,
+			Title:     n.Title,
+			Prompt:    prompt,
+			Actions:   n.Gate.Actions,
+			SubGoalID: sgID,
+		}
+		var c struct {
+			HeldSince     string `json:"held_since"`
+			TimeoutAfter  string `json:"timeout_after"`
+			TimeoutAction string `json:"timeout_action"`
+		}
+		if json.Unmarshal([]byte(cfg), &c) == nil {
+			hg.HeldSince = c.HeldSince
+			hg.TimeoutAfter = c.TimeoutAfter
+			hg.TimeoutAction = c.TimeoutAction
+		}
+		out = append(out, hg)
+	}
+	return out, rows.Err()
+}
+
 func containsString(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {
@@ -1866,10 +2629,53 @@ func orDefault(v, def string) string {
 }
 
 // isExecutableNode reports whether a spec node type compiles to a sub_goal
-// (and therefore participates in depends_on gating): task and spawn. Other
-// types are settled at compile time (condition), plan-only ledger rows
-// (router/gate until B-3), or completion markers (end).
-func isExecutableNode(t string) bool { return t == "task" || t == "spawn" }
+// (the depends_on gate participants). B-3: router and gate compile to HOLDER
+// sub_goals — a router's sub_goal runs the classification; a gate's sub_goal
+// exists to hold the depends_on edge and the node's ledger link, but it is
+// NEVER enqueued (its run is the human decision, recorded on resolve).
+func isExecutableNode(t string) bool {
+	return t == "task" || t == "spawn" || t == "router" || t == "gate"
+}
+
+// routerClassPrompt renders the classification item's brief: the class list
+// (id + title + description each) plus the platform-fixed output contract.
+// §4.4: the LLM only ever names a REGISTERED class id inside the fence —
+// anything else (no fence, unknown id, garbage) resolves to the declared
+// fallback at resolve time, so a bad run degrades to the default path instead
+// of retrying (fallback IS the router's failure semantics).
+func routerClassPrompt(n *SpecNode) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s\n\n把目标分进恰好一个类。可选项（只能从中选一个，写 id）：\n", n.Title))
+	for _, c := range n.Router.Classes {
+		b.WriteString(fmt.Sprintf("- %s｜%s", c.ID, c.Title))
+		if strings.TrimSpace(c.Description) != "" {
+			b.WriteString("｜" + c.Description)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(fmt.Sprintf("- 默认类（拿不准/无法判断时选它）：%s\n", n.Router.Fallback))
+	bt := "```"
+	b.WriteString(fmt.Sprintf("\n输出契约：报告正文自由发挥，但必须以一个 %sjson 代码块结尾，内容只有 {\"class\":\"<上面某个 id>\"}。\n", bt))
+	b.WriteString("不要发明未列出的类。除该代码块外的任何内容都只是你的分析。\n")
+	return b.String()
+}
+
+// gatePrompt renders the gate holder's decision-card brief: the human-facing
+// prompt, the action buttons, and the timeout policy. {{node.*}} refs stay
+// raw here and resolve at release (beat 2) when upstream evidence exists —
+// same mechanism as task briefs.
+func gatePrompt(n *SpecNode) string {
+	var b strings.Builder
+	b.WriteString("【人工决策点】\n\n")
+	b.WriteString(n.Gate.Prompt)
+	b.WriteString("\n\n可选动作：\n")
+	for _, a := range n.Gate.Actions {
+		b.WriteString(fmt.Sprintf("- %s（%s）\n", a.ID, a.Label))
+	}
+	b.WriteString(fmt.Sprintf("\n若无人决策，超过 %s 后自动执行动作 %q。\n", n.Gate.Timeout.After, n.Gate.Timeout.Action))
+	b.WriteString("该工作项由人工决定推进，执行者请勿代答——等待决策即可。")
+	return b.String()
+}
 
 // resolveCapabilityTx resolves capability:<role-slug> against a squad's
 // member vocabulary (§11.3): roles are LOWER(TRIM(role)) normalized, the

@@ -417,6 +417,24 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 				break // contract violated → the helper already ran the bounded retry/fail
 			}
 		}
+		// Phase B-3 (§4.4): a router node's "completed" is likewise
+		// PROVISIONAL — the fenced class choice is parsed and enforced
+		// before promotion. A router never retries though: a bad/absent
+		// choice lands on the declared fallback (fallback IS the failure
+		// semantics), the unchosen branches prune, and promotion proceeds.
+		// The helper returns promoted=false only on races (holder already
+		// terminal) or genuine errors.
+		if routerNode, _ := isBlueprintNodeTypeTx(ctx, tx, sg.ID, "router"); routerNode {
+			routerEvs, promoted, err := s.resolveRouterTx(ctx, tx, &sg, rc)
+			if err != nil {
+				return err
+			}
+			evs = append(evs, routerEvs...)
+			if !promoted {
+				break // raced terminal — nothing left to do here
+			}
+			break // resolveRouterTx already ran the full verified chain
+		}
 		// Conditional transition: done → verified. (The daemon's verification
 		// gate guarantees a completed run passed machine checks.)
 		res, err := tx.ExecContext(ctx,
@@ -1592,6 +1610,23 @@ func (s *GoalService) wakeDependentsTx(ctx context.Context, tx *sql.Tx, goalID, 
 		// names the leader instead of degrading to "the platform". Legacy rows
 		// have '' — the run keeps no anchor, exactly the old behaviour.
 		//
+		// Phase B-3 (§4.2): a GATE holder releases into a HOLD, not a run —
+		// the gate's "execution" is the human decision. Resolve the prompt's
+		// {{node.*}} refs now (upstream evidence is complete), stamp
+		// held_since (the sweeper's clock starts), and keep the node
+		// state='running' (it counts as pending work in the finalization
+		// guard, so the goal cannot finalize past an open human gate). No
+		// run is enqueued; ResolveBlueprintGate/SweepBlueprintGates finish it.
+		if gateNode, _ := isBlueprintNodeTypeTx(ctx, tx, g.id, "gate"); gateNode {
+			if err := s.resolveReleasedBriefTx(ctx, tx, goalID, g.id); err != nil {
+				return nil, fmt.Errorf("resolve gate prompt %s: %w", g.id, err)
+			}
+			if err := markGateHeldTx(ctx, tx, g.id); err != nil {
+				return nil, err
+			}
+			logging.Infof("sub-goal: gate %s held for human decision (trigger %s)", g.id, justVerified)
+			continue
+		}
 		// Blueprint beat 2 (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.7): for a
 		// compiled task, resolve {{node.<id>.output}} placeholders against the
 		// upstream sub_goal's result_summary BEFORE the run is claimable (the

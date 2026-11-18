@@ -105,6 +105,8 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /goals/{id}/submit-review", h.submitGoalReview)
 	mux.HandleFunc("POST /goals/{id}/reopen", h.reopenGoal)
 	mux.HandleFunc("POST /goals/{id}/activate", h.activateGoal)
+	mux.HandleFunc("GET /goals/{id}/blueprint-gates", h.listBlueprintGates)
+	mux.HandleFunc("POST /goals/{id}/blueprint-gates/{nodeKey}", h.resolveBlueprintGate)
 	mux.HandleFunc("GET /goals/{id}/runs", h.listRuns)
 	mux.HandleFunc("GET /goals/{id}/runs/{runId}/messages", h.listRunMessages)
 	mux.HandleFunc("GET /runs/{runId}/messages", h.listRunMessagesByID)
@@ -470,6 +472,47 @@ func (h *Handlers) resolveGoalReview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, err)
 }
 
+// resolveBlueprintGate records the human decision on a held blueprint gate
+// (Phase B-3, §4.2): settle the holder verified, prune the unchosen
+// branches, release the chosen one. The action must be one the gate
+// declares (ValidationErrors → 400); re-deciding a settled gate is a
+// conflict (409).
+func (h *Handlers) resolveBlueprintGate(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	var body struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := h.Goal.ResolveBlueprintGate(r.Context(), r.PathValue("id"), r.PathValue("nodeKey"), body.Action, body.Reason, "human"); err != nil {
+		writeJSON(w, nil, err) // errors.Is classifies: validation→400, conflict→409, not found→404
+		return
+	}
+	writeJSON(w, map[string]any{"resolved": true, "node_key": r.PathValue("nodeKey"), "action": body.Action}, nil)
+}
+
+// listBlueprintGates returns the goal's open human decision cards (held
+// gates only — pending gates have no decision to make yet, settled ones
+// are history).
+func (h *Handlers) listBlueprintGates(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.ListHeldGates(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]any{"gates": out}, nil)
+}
+
 // submitGoalReview moves an ACTIVE goal into review at the owner's explicit
 // request (task 8.2) — the positive counterpart of the gate park. Returns the
 // updated goal wrapped in {"goal": ...}; an empty body is accepted (default
@@ -491,6 +534,7 @@ func (h *Handlers) submitGoalReview(w http.ResponseWriter, r *http.Request) {
 }
 
 // reopenGoal restarts a failed/cancelled goal (the human take-over path).
+
 func (h *Handlers) reopenGoal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`

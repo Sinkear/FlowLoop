@@ -106,7 +106,7 @@ export default function NewBlueprintPage() {
 
       <SectionCard
         title="1 · 从模板起步"
-        desc="五份合法预设（串行/并行/条件/拆解扇出/按角色派工），点一份进编辑器再改——不用从零手写 JSON；也可以跳过模板，直接在下面贴现成的规范 JSON。"
+        desc="七份合法预设（串行/并行/条件/拆解扇出/按角色派工/智能路由/人工门审批），点一份进编辑器再改——不用从零手写 JSON；也可以跳过模板，直接在下面贴现成的规范 JSON。"
       >
         <div className="grid gap-3 p-4 sm:grid-cols-3">
           {BLUEPRINT_TEMPLATES.map((t) => (
@@ -243,7 +243,7 @@ function SquadRoleVocabulary() {
   const { data: roles } = useAllSquadRoles();
   return (
     <SectionCard
-      title="小队角色词汇（capability: 用词对齐）"
+      title="3 · 小队角色词汇（capability: 用词对齐）"
       count={roles?.length ?? 0}
       desc="蓝图里 capability:<角色词> 按各小队注册的词解析成员。写 capability: 引用前先对照这里——用词和小队注册表对不上，任务激活时会失败并提示缺哪个词"
     >

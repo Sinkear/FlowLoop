@@ -104,6 +104,60 @@ const CAPABILITY = `{
   ]
 }`;
 
+const ROUTER = `{
+  "name": "智能路由",
+  "description": "先分析改动，再由路由节点从注册类里选一个（LLM 受限选择）：小改动走快速路径，大改动走周全路径。解析失败自动落 fallback（周全），永远不会死锁",
+  "nodes": [
+    {"id": "n_analyze", "type": "task", "title": "改动分析",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "分析目标「{{goal.title}}」的改动规模与风险，输出分析结论（路由节点会据此分类）"}},
+    {"id": "n_route", "type": "router", "title": "按规模路由",
+     "router": {"classes": [
+        {"id": "quick", "title": "小改动", "description": "改动小、风险低，可直接动手"},
+        {"id": "thorough", "title": "大改动", "description": "改动大或有风险，需要先出方案再动手"}
+      ], "fallback": "thorough"}},
+    {"id": "t_quick", "type": "task", "title": "快速执行",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "直接动手完成：{{goal.title}}\\n（分析结论：{{node.n_analyze.output}}）"}},
+    {"id": "t_thorough", "type": "task", "title": "周全执行",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "先写方案再执行：{{goal.title}}\\n（分析结论：{{node.n_analyze.output}}）"}},
+    {"id": "end_ok", "type": "end", "title": "完成", "end": {"outcome": "success"}}
+  ],
+  "edges": [
+    {"source": "n_analyze", "source_handle": "done", "target": "n_route"},
+    {"source": "n_route", "source_handle": "quick", "target": "t_quick"},
+    {"source": "n_route", "source_handle": "thorough", "target": "t_thorough"},
+    {"source": "t_quick", "source_handle": "done", "target": "end_ok"},
+    {"source": "t_thorough", "source_handle": "done", "target": "end_ok"}
+  ]
+}`;
+
+const GATE = `{
+  "name": "人工门审批",
+  "description": "执行到关键点停下来等人工拍板：放行走「执行」分支，驳回报废走「返工」分支。24 小时无人决策自动驳回",
+  "nodes": [
+    {"id": "n_proposal", "type": "task", "title": "产出方案",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "围绕目标「{{goal.title}}」产出供人工审查的方案"}},
+    {"id": "n_gate", "type": "gate", "title": "人工审查",
+     "gate": {"prompt": "审查以下方案后拍板：\\n{{node.n_proposal.output}}", "actions": [
+        {"id": "approve", "label": "放行"},
+        {"id": "reject", "label": "驳回"}
+      ], "timeout": {"after": "24h", "action": "reject"}}},
+    {"id": "t_ship", "type": "task", "title": "执行落地",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "方案已获人工放行，按方案执行：{{goal.title}}"}},
+    {"id": "t_rework", "type": "task", "title": "返工修改",
+     "task": {"assignee": "agent:__AGENT_ID__", "brief": "方案被驳回，按驳回意见返工：{{goal.title}}"}},
+    {"id": "end_ok", "type": "end", "title": "完成", "end": {"outcome": "success"}},
+    {"id": "end_no", "type": "end", "title": "返工完成", "end": {"outcome": "success"}}
+  ],
+  "edges": [
+    {"source": "n_proposal", "source_handle": "done", "target": "n_gate"},
+    {"source": "n_gate", "source_handle": "approve", "target": "t_ship"},
+    {"source": "n_gate", "source_handle": "reject", "target": "t_rework"},
+    {"source": "n_gate", "source_handle": "timeout", "target": "t_rework"},
+    {"source": "t_ship", "source_handle": "done", "target": "end_ok"},
+    {"source": "t_rework", "source_handle": "done", "target": "end_no"}
+  ]
+}`;
+
 export const BLUEPRINT_TEMPLATES: BlueprintTemplate[] = [
   {
     key: "serial",
@@ -144,5 +198,21 @@ export const BLUEPRINT_TEMPLATES: BlueprintTemplate[] = [
     name: "按角色派工",
     description: "节点派给小队里角色为 implementer 的成员（谁空闲给谁）。绑定此蓝图的任务必须是【小队任务】，且小队成员的 role 里有该角色词",
     content: CAPABILITY,
+  },
+  {
+    key: "router",
+    title: "智能路由",
+    desc: "LLM 从注册类里选一条路（可选小改动/大改动）。解析失败自动落 fallback，永不死锁。",
+    name: "智能路由",
+    description: "先分析改动，再由路由节点从注册类里选一个（LLM 受限选择）：小改动走快速路径，大改动走周全路径。解析失败自动落 fallback（周全），永远不会死锁",
+    content: ROUTER,
+  },
+  {
+    key: "gate",
+    title: "人工门审批",
+    desc: "关键点停下来等人工拍板：放行/驳回。超时（24h）自动驳回。",
+    name: "人工门审批",
+    description: "执行到关键点停下来等人工拍板：放行走「执行」分支，驳回报废走「返工」分支。24 小时无人决策自动驳回",
+    content: GATE,
   },
 ];
