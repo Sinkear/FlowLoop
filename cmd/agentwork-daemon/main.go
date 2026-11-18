@@ -134,6 +134,11 @@ func main() {
 	skillSvc := service.NewSkillService(st)
 	rsiSvc := service.NewRSIService(st, bus)
 	goalSvc.SetRSI(rsiSvc)
+	// Blueprint service (Phase A, docs/BLUEPRINT-PROPOSAL.md): versioned
+	// spec graphs — CRUD + publish gate. GoalService compiles a goal's
+	// pinned version inside Activate; the server exposes the blueprint
+	// CRUD + spec-graph endpoints.
+	blueprintSvc := service.NewBlueprintService(st, bus)
 	teamImportSvc := service.NewTeamImportService(st, bus)
 	teamImportSvc.SetDependencies(runSvc, goalSvc, domainSvc, agentSvc, skillSvc, squadSvc)
 
@@ -211,6 +216,7 @@ func main() {
 
 	srv := server.New(st, bus, d, goalSvc, runSvc, commentSvc, squadSvc, schedSvc, domainSvc, imConn, teamImportSvc, skillSvc, intakeSvc)
 	srv.SetRSI(rsiSvc)
+	srv.SetBlueprint(blueprintSvc)
 	srv.SetTemplates(templateSvc, templateApplySvc)
 	srv.SetHooks(hookSvc)
 	if err := srv.ListenAndServe(ctx, *addr); err != nil && !errors.Is(err, context.Canceled) {

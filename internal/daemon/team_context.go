@@ -43,6 +43,13 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 			isLeader = leaderID == agentID
 		}
 	}
+	// Blueprint pin (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8): a pinned
+	// goal's owner contract swaps the plan-and-dispatch mandate for the
+	// monitor-and-integrate contract — the spec graph, not the owner, is
+	// the order-of-execution authority.
+	var blueprintVersionID string
+	_ = d.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&blueprintVersionID)
 	var b strings.Builder
 	b.WriteString("# Background & Requirements\n")
 	b.WriteString("You are working on agentwork — a multi-agent collaboration platform.\n")
@@ -100,7 +107,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	// natively; the per-run role contract stays here.
 	b.WriteString(self)
 	b.WriteString("\n")
-	b.WriteString(roleContract(runRole, isLeader, squadID))
+	b.WriteString(roleContract(runRole, isLeader, squadID, blueprintVersionID != ""))
 
 	// Identity & instruction ownership (F1, 身份唯一性 + 指令归属): every
 	// run shares its workdir with other agents' runs (executor, verifier,
@@ -277,10 +284,39 @@ func (d *Daemon) agentSkillLine(ctx context.Context, agentID string) string {
 
 // roleContract renders the behavioral contract for the run's role — the
 // output rules that used to ride in AGENTWORK.md (决策 6-22).
-func roleContract(runRole string, isLeader bool, squadID string) string {
+func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven bool) string {
 	leader := isLeader || (squadID != "" && runRole == "owner")
 	switch runRole {
 	case "owner":
+		if blueprintDriven {
+			// Blueprint-driven owner (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8):
+			// the plan is already compiled — sub_goal create is REFUSED for
+			// this goal (structural refusal in the service layer). The owner
+			// is the goal-level heartbeat: monitor progress, integrate
+			// changes, report, answer questions.
+			s := "You are this goal's owner. The work plan is COMPILED from a\n" +
+				"blueprint: the work items and their execution order come from the\n" +
+				"platform, and `agentwork subgoal create` is REFUSED for this goal.\n" +
+				"Your job is the goal level: monitor progress\n" +
+				"(`agentwork subgoal list` shows the compiled work items and their\n" +
+				"verification state), INTEGRATE ready Changes\n" +
+				"(`agentwork change integrate <id>`), report progress and results\n" +
+				"to the user with `agentwork goal comment`, and answer the team's\n" +
+				"questions. Ask the user directly with --ask:\n" +
+				"`agentwork goal comment --text \"your question\" --ask`.\n" +
+				"Park the goal at a HUMAN-AUTHORIZATION gate when the plan says a\n" +
+				"human must approve before a risky next step:\n" +
+				"`agentwork goal authorize --statement \"<what>\"`. Do NOT do the\n" +
+				"work items yourself — each has a compiled assignee; never write\n" +
+				"ids in comments (the feed is read by the user). Completion is\n" +
+				"JUDGED, not declared: the platform counts the blueprint's nodes\n" +
+				"and the user's approval decides — never set the goal's status\n" +
+				"yourself.\n"
+			if leader {
+				s += "\nREVIEWER-ONLY RULE: members with role=\"reviewer\" REVIEW ONLY.\n"
+			}
+			return s
+		}
 		s := "You are this goal's owner. Break the goal into work items and\n" +
 			"dispatch them: `agentwork subgoal create --title T --assignee <agent-id>\n" +
 			"[--description D]` (a sub-goal runs on its own branch with machine\n" +

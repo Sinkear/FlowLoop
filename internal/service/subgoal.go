@@ -73,8 +73,8 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	// judgment), terminal goals have no execution left to split, and backlog
 	// is not dispatched yet. Only active allows new work — the state machine
 	// must not self-loop.
-	var gStatus string
-	err := s.st.DB().QueryRowContext(ctx, `SELECT status FROM goal WHERE id=?`, goalID).Scan(&gStatus)
+	var gStatus, gBlueprint string
+	err := s.st.DB().QueryRowContext(ctx, `SELECT status, blueprint_version_id FROM goal WHERE id=?`, goalID).Scan(&gStatus, &gBlueprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -83,6 +83,14 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	}
 	if gStatus != "active" {
 		return nil, NewValidationError(fmt.Sprintf("cannot create a sub-goal: the goal is %s (only active goals can be split)", gStatus))
+	}
+	// Blueprint structural refusal (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8):
+	// a pinned goal's work items come ONLY from the compiled spec graph —
+	// an ad-hoc create would inject a node the spec never declared, and the
+	// finalization guard would count a sub_goal the blueprint cannot explain.
+	// The order-of-execution authority must be exactly one thing.
+	if gBlueprint != "" {
+		return nil, NewValidationError("goal is blueprint-driven: sub-goals are compiled from the blueprint, not created ad hoc")
 	}
 	if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, assigneeID, "assignee agent"); err != nil {
 		return nil, err
@@ -172,11 +180,37 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 		return nil, err
 	}
 	defer tx.Rollback()
+	sgOut, runEv, err := s.insertSubGoalTx(ctx, tx, sg, deps, createdByType, createdByID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	logging.Infof("sub-goal: created %q (goal %s) → assignee=%s verifier=%s deps=%d gated=%v", sgOut.Title, sgOut.GoalID, sgOut.AssigneeID, sgOut.VerifierID, len(deps), runEv == nil)
+	s.bus.Publish(ctx, events.Event{Topic: "sub_goal.created", Payload: map[string]any{
+		"goal_id": goalID, "sub_goal_id": sgOut.ID,
+	}})
+	if runEv != nil {
+		s.bus.Publish(ctx, *runEv)
+	}
+	return sgOut, nil
+}
+
+// insertSubGoalTx is the shared beat-1 creation primitive: sub_goal row +
+// dispatch comment (pure materials: mention + title + one-line summary) +
+// dispatch anchor stamp + first-run enqueue when deps are already satisfied.
+// Used by CreateSubGoal (leader ad-hoc path) and by the blueprint compiler
+// (which supplies depends_on from the spec graph's ancestor closure).
+// The run event is RETURNED, never published here — the caller publishes
+// only after its commit (invariant 13).
+func (s *GoalService) insertSubGoalTx(ctx context.Context, tx *sql.Tx, sg SubGoal, deps []string, createdByType, createdByID string) (*SubGoal, *events.Event, error) {
+	ts := sg.CreatedAt
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO sub_goal (id,goal_id,title,description,assignee_id,verifier_id,status,execution_attempt,quality_iteration,created_at,depends_on)
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		sg.ID, sg.GoalID, sg.Title, sg.Description, sg.AssigneeID, sg.VerifierID, sg.Status, sg.ExecutionAttempt, sg.QualityIteration, sg.CreatedAt, encodeDeps(deps)); err != nil {
-		return nil, fmt.Errorf("insert sub_goal: %w", err)
+		return nil, nil, fmt.Errorf("insert sub_goal: %w", err)
 	}
 	// P2-1 (决策 6-15⑩): the dispatch comment is born WITH the sub-goal and
 	// its first run — the run carries it as trigger_comment_id, so the
@@ -185,7 +219,7 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	// run can claim (no dispatch-comment race).
 	label, err := s.assigneeLabel(ctx, tx, "agent", sg.AssigneeID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve assignee label: %w", err)
+		return nil, nil, fmt.Errorf("resolve assignee label: %w", err)
 	}
 	dispatchID := newID()
 	// The dispatch comment is PURE MATERIALS (决策 6-18, 2026-08 修订):
@@ -215,7 +249,7 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,?,?,NULL,?,?)`,
 		dispatchID, sg.GoalID, createdByType, createdByID, dispatchContent, ts); err != nil {
-		return nil, fmt.Errorf("insert dispatch comment: %w", err)
+		return nil, nil, fmt.Errorf("insert dispatch comment: %w", err)
 	}
 	// Anchor persistence (gating liveness, 2026-11-14): a GATED sub-goal gets
 	// NO run at creation, so the dispatch comment id has nowhere to live on a
@@ -226,7 +260,7 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	// context degrades to "the platform").
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE sub_goal SET dispatch_comment_id=? WHERE id=?`, dispatchID, sg.ID); err != nil {
-		return nil, fmt.Errorf("stamp dispatch comment id: %w", err)
+		return nil, nil, fmt.Errorf("stamp dispatch comment id: %w", err)
 	}
 	sg.DispatchCommentID = dispatchID
 	// Depends-on gating: the first run is born only when every declared
@@ -238,8 +272,8 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 		var verifiedCount int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM sub_goal WHERE goal_id=? AND status='verified' AND id IN (`+depsPlaceholders(len(deps))+`)`,
-			append([]any{goalID}, depsArgs(deps)...)...).Scan(&verifiedCount); err != nil {
-			return nil, fmt.Errorf("check dependencies: %w", err)
+			append([]any{sg.GoalID}, depsArgs(deps)...)...).Scan(&verifiedCount); err != nil {
+			return nil, nil, fmt.Errorf("check dependencies: %w", err)
 		}
 		depsReady = verifiedCount == len(deps)
 	}
@@ -247,21 +281,11 @@ func (s *GoalService) CreateSubGoal(ctx context.Context, goalID, title, descript
 	if depsReady {
 		_, ev, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, sg.ID, dispatchID)
 		if err != nil {
-			return nil, fmt.Errorf("enqueue sub-goal run: %w", err)
+			return nil, nil, fmt.Errorf("enqueue sub-goal run: %w", err)
 		}
 		runEv = ev
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	logging.Infof("sub-goal: created %q (goal %s) → assignee=%s verifier=%s deps=%d gated=%v", sg.Title, sg.GoalID, sg.AssigneeID, sg.VerifierID, len(deps), !depsReady)
-	s.bus.Publish(ctx, events.Event{Topic: "sub_goal.created", Payload: map[string]any{
-		"goal_id": goalID, "sub_goal_id": sg.ID,
-	}})
-	if runEv != nil {
-		s.bus.Publish(ctx, *runEv)
-	}
-	return &sg, nil
+	return &sg, runEv, nil
 }
 
 // GetSubGoal loads one sub-goal row.
@@ -385,6 +409,11 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 		if n, _ := res.RowsAffected(); n == 0 {
 			break // already terminal (cancelled/rejected raced) — no change
 		}
+		// Blueprint mirror (Phase A): task node settled. No-op for non-pinned
+		// goals (markBlueprintNodeTx misses the sub_goal_id lookup).
+		if err := markBlueprintNodeTx(ctx, tx, sg.ID, "settled"); err != nil {
+			return err
+		}
 		// Machine verification audit row (2026-11-14): the human/agent verifier
 		// path records a verification_result row in VerifySubGoal, but the
 		// MACHINE path promoted verified with NO row — so the workflow graph
@@ -458,6 +487,11 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE sub_goal SET status='failed' WHERE id=? AND status='running'`, sg.ID); err != nil {
 				return fmt.Errorf("fail sub-goal: %w", err)
+			}
+			// Blueprint mirror (Phase A): task node failed terminally (retry
+			// chain exhausted). No-op for non-pinned goals.
+			if err := markBlueprintNodeTx(ctx, tx, sg.ID, "failed"); err != nil {
+				return err
 			}
 			evs = append(evs, events.Event{Topic: "sub_goal.failed", Payload: map[string]any{
 				"goal_id": sg.GoalID, "sub_goal_id": sg.ID, "execution_attempt": attempt,
@@ -631,6 +665,10 @@ func (s *GoalService) VerifySubGoal(ctx context.Context, runID, verdict, summary
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE sub_goal SET status='verified' WHERE id=? AND status='verifying'`, sg.ID); err != nil {
 			return fmt.Errorf("verify sub-goal: %w", err)
+		}
+		// Blueprint mirror (Phase A): task node settled by its verifier.
+		if err := markBlueprintNodeTx(ctx, tx, sg.ID, "settled"); err != nil {
+			return err
 		}
 		// The revision refs come from the ASSIGNEE's latest run (the work
 		// being judged), not the verifier run.
@@ -1340,6 +1378,12 @@ func (s *GoalService) CancelSubGoal(ctx context.Context, subGoalID string) (*Sub
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, NewValidationError("the sub-goal is already terminal")
 	}
+	// Blueprint mirror (Phase A): a cancelled compiled task failed its spec
+	// node — cancel is a human decision the spec graph must record, and the
+	// finalization guard treats it as terminal (never pending again).
+	if err := markBlueprintNodeTx(ctx, tx, subGoalID, "failed"); err != nil {
+		return nil, err
+	}
 	var goalID string
 	if err := tx.QueryRowContext(ctx, `SELECT goal_id FROM sub_goal WHERE id=?`, subGoalID).Scan(&goalID); err != nil {
 		return nil, fmt.Errorf("load cancelled sub-goal: %w", err)
@@ -1529,6 +1573,19 @@ func (s *GoalService) wakeDependentsTx(ctx context.Context, tx *sql.Tx, goalID, 
 		// the assignee's report threads to the dispatch and the wake context
 		// names the leader instead of degrading to "the platform". Legacy rows
 		// have '' — the run keeps no anchor, exactly the old behaviour.
+		//
+		// Blueprint beat 2 (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.7): for a
+		// compiled task, resolve {{node.<id>.output}} placeholders against the
+		// upstream sub_goal's result_summary BEFORE the run is claimable (the
+		// assignee reads sub_goal.description as its prompt), snapshot the
+		// resolved brief into blueprint_node.resolved_config, and stamp the
+		// pending → running release. No-op for non-pinned goals.
+		if err := s.resolveReleasedBriefTx(ctx, tx, goalID, g.id); err != nil {
+			return nil, fmt.Errorf("resolve released brief %s: %w", g.id, err)
+		}
+		if err := markBlueprintNodeRunningTx(ctx, tx, g.id); err != nil {
+			return nil, err
+		}
 		_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, g.id, g.dispatchID)
 		if err != nil {
 			return nil, fmt.Errorf("wake gated sub-goal %s: %w", g.id, err)
@@ -1710,6 +1767,12 @@ func (s *GoalService) failGatedSubGoalTx(ctx context.Context, tx *sql.Tx, goalID
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, nil
+	}
+	// Blueprint mirror (Phase A): a gated compiled task whose dependency died
+	// failed WITHOUT ever running — the spec node must not stay pending or
+	// the goal's blueprint guard would hold it open forever.
+	if err := markBlueprintNodeTx(ctx, tx, sgID, "failed"); err != nil {
+		return nil, err
 	}
 	reason := "不存在"
 	switch depStatus {

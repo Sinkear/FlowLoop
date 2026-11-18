@@ -245,6 +245,7 @@ export interface Goal {
   content_capture?: string; // none|redacted|full（train 模式）
   budget_usd?: number; // 分析预算（train 模式默认 2）
   sample_rate?: number; // 采样率 0..1（train 模式默认 1）
+  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 蓝本驱动（Activate 编译 + guard 计数）
 }
 
 export interface GateRule {
@@ -879,14 +880,30 @@ export interface RsiTrendPoint {
 }
 
 // ── 编排图（goal 终态时冻结；训练详情读冻结版，goal 详情读 live 版） ──
-export type WorkflowNodeKind = "goal" | "agent" | "verify" | "review" | "consult" | "integrate";
+// Spec-only kinds (task/condition/router/gate/spawn/end) render a blueprint
+// version's normative graph through the same WorkflowGraph shape (Phase A,
+// docs/BLUEPRINT-PROPOSAL.md §4.12) — one renderer, two graph flavors.
+export type WorkflowNodeKind =
+  | "goal"
+  | "agent"
+  | "verify"
+  | "review"
+  | "consult"
+  | "integrate"
+  | "task"
+  | "condition"
+  | "router"
+  | "gate"
+  | "spawn"
+  | "end";
 export type WorkflowEdgeKind =
   | "created"
   | "depends_on"
   | "seq"
   | "verified_by"
   | "consult"
-  | "integrated";
+  | "integrated"
+  | "spec";
 
 export interface WorkflowNode {
   key: string;
@@ -951,4 +968,36 @@ export interface RsiOverview {
   findings: number;
   /** 旧后端可能没有该字段；页面必须容忍 undefined/空数组。 */
   trend?: RsiTrendPoint[];
+}
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// goal.blueprint_version_id 钉住一个 published 版本；Activate 时编译成
+// gated sub_goal（拍 1 建结构，拍 2 释放时填 brief）。规范图经
+// /workflows/blueprints/{versionId} 以 WorkflowGraph 形状渲染。
+
+export interface Blueprint {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  latest_version_id: string; // '' = 尚无版本
+}
+
+export type BlueprintVersionStatus = "draft" | "published";
+
+export interface BlueprintVersion {
+  id: string;
+  blueprint_id: string;
+  version: number; // 从 1 递增
+  status: BlueprintVersionStatus;
+  content: string; // 规范图 JSON（发布后不可变）
+  content_hash: string; // sha256(content)，读取时校验
+  changelog: string;
+  created_at: string;
+  published_at: string; // RFC3339；未发布为 ''
+}
+
+export interface BlueprintDetail {
+  blueprint: Blueprint;
+  versions: BlueprintVersion[];
 }

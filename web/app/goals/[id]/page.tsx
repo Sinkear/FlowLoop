@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow } from "@/lib/queries";
+import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow, useBlueprintGraph } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -39,6 +39,14 @@ function GoalDetailPageInner() {
     isError: workflowError,
     error: workflowErr,
   } = useGoalWorkflow(id);
+  // 蓝本规范图（Phase A）：goal 钉了 published 版本时展示「计划态」——
+  // 与下面的执行图（实际怎么跑）对照。未钉时 enabled=false 不发请求。
+  const {
+    data: blueprintGraph,
+    isLoading: bpGraphLoading,
+    isError: bpGraphError,
+    error: bpGraphErr,
+  } = useBlueprintGraph(goal?.blueprint_version_id ?? "");
 
   if (isLoading) return <div className="p-8 text-sm text-ink-3">加载中…</div>;
   if (!goal) return <div className="p-8 text-sm text-ink-3">找不到 Goal。</div>;
@@ -75,6 +83,12 @@ function GoalDetailPageInner() {
         <p className="text-sm text-ink-3 mt-1">
           分配给：{assigneeLabel}
         </p>
+        {goal.blueprint_version_id && (
+          <p className="text-xs text-ink-3 mt-1">
+            蓝本：<span className="font-mono">{goal.blueprint_version_id}</span>
+            （激活时按规范图编译；子任务创建被结构拒绝）
+          </p>
+        )}
         {goal.source_ref && (
           <p className="text-xs text-ink-3 mt-1">
             来源：<span className="font-mono">{goal.source_ref}</span>
@@ -105,6 +119,28 @@ function GoalDetailPageInner() {
 
       {/* Changes（v2：子任务的逻辑交付物 + 修订史——owner 的集成视图） */}
       <GoalChanges goalId={id} />
+
+      {/* 蓝本：规范图（计划态）——只在 goal 钉了蓝图时出现（Phase A） */}
+      {goal.blueprint_version_id && (
+        <SectionCard
+          title="蓝本（计划）"
+          count={blueprintGraph?.nodes?.length}
+          desc="激活时钉住的规范图：执行顺序由结构保证。与下方执行图对照可看出「计划 vs 实际」"
+          bodyClassName="p-0"
+        >
+          <WorkflowGraphView
+            graph={blueprintGraph ?? null}
+            loading={bpGraphLoading}
+            error={
+              bpGraphError
+                ? bpGraphErr instanceof Error
+                  ? bpGraphErr.message
+                  : String(bpGraphErr)
+                : null
+            }
+          />
+        </SectionCard>
+      )}
 
       {/* 编排：live DAG（训练分析里冻结的是同一张图的终态版本） */}
       <SectionCard

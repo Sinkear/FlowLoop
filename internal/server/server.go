@@ -55,6 +55,9 @@ type Server struct {
 	templateApply *service.TemplateApplyService
 	// rsi: training sessions / trace analysis (optional — nil disables it).
 	rsiSvc *service.RSIService
+	// blueprintSvc: the spec-graph service (Phase A, docs/BLUEPRINT-PROPOSAL.md
+	// — optional in tests, nil = blueprint endpoints report "not configured").
+	blueprintSvc *service.BlueprintService
 	// hookSvc: the lifecycle-hooks registry + executor (optional in tests).
 	hookSvc *service.HookService
 }
@@ -68,6 +71,10 @@ func New(st *store.Store, bus *events.Bus, d *daemon.Daemon, goalSvc *service.Go
 // SetRSI wires the training-session / trace-analysis service (kept out of
 // New's parameter list, like SetTemplates).
 func (s *Server) SetRSI(rsi *service.RSIService) { s.rsiSvc = rsi }
+
+// SetBlueprint wires the spec-graph service (Phase A) — setter style like
+// SetRSI: New's parameter list stays stable; nil = blueprint endpoints 503.
+func (s *Server) SetBlueprint(bp *service.BlueprintService) { s.blueprintSvc = bp }
 
 func (s *Server) SetTemplates(templates *service.TemplateService, templateApply *service.TemplateApplyService) {
 	s.templates = templates
@@ -136,6 +143,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		Intake:     s.intakeSvc,
 		Connection: service.NewConnectionService(s.st, s.bus),
 		RSI:        s.rsiSvc,
+		Blueprint:  s.blueprintSvc,
 		Hooks:      s.hookSvc,
 		// M4-B: the real-time issue triggers (github + gitcode) share the
 		// poller's create path (source_ref idempotency makes webhook + poll

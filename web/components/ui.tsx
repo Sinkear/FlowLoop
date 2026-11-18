@@ -55,6 +55,10 @@ const STATUS_COLORS: Record<string, string> = {
   analyzing: "bg-blue-500/10 text-blue-300 dot-blue",
   ready: "bg-emerald-500/10 text-emerald-300 dot-emerald",
   skipped: "bg-zinc-500/10 text-ink-3 dot-zinc",
+  // 蓝本版本状态（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.6）：draft 可改，
+  // published 不可变（goal 只能钉 published）。
+  draft: "bg-amber-500/10 text-amber-300 dot-amber",
+  published: "bg-emerald-500/10 text-emerald-300 dot-emerald",
 };
 
 // 状态的中文显示名：UI 里不再直接暴露 backlog/active 这类枚举值。
@@ -75,6 +79,9 @@ export const STATUS_LABEL: Record<string, string> = {
   online: "在线",
   offline: "离线",
   paused: "已暂停",
+  // 蓝本版本（Phase A）
+  draft: "草稿",
+  published: "已发布",
 };
 
 const STATUS_DOTS: Record<string, string> = {

@@ -63,6 +63,11 @@ type Handlers struct {
 	Connection *service.ConnectionService
 	// RSI is the training-session / trace-analysis service (训练分析).
 	RSI *service.RSIService
+	// Blueprint is the spec-graph service (Phase A, docs/BLUEPRINT-PROPOSAL.md):
+	// versioned orchestration blueprints — create/draft/publish + spec-graph
+	// rendering. A goal pins a published version and the compiler turns it
+	// into gated sub_goal rows.
+	Blueprint *service.BlueprintService
 	// Hooks is the lifecycle-hooks registry + bus-subscribed executor
 	// (spec: tmp/hooks-spec.md v0.2). nil-safe: absent = hook endpoints
 	// return 500s and no lifecycle firing (tests may omit it).
@@ -123,6 +128,20 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	// squad's recent goals (orchestration visibility, read-only).
 	mux.HandleFunc("GET /workflows/goals/{goalId}", h.goalWorkflow)
 	mux.HandleFunc("GET /workflows/squads/{squadId}", h.squadWorkflows)
+	// Spec graph (Phase A): a blueprint version's normative graph, rendered
+	// in the same shape as the execution graph (workflow-graph component
+	// reuse, proposal §4.12).
+	mux.HandleFunc("GET /workflows/blueprints/{versionId}", h.blueprintVersionGraph)
+
+	// Blueprint CRUD (Phase A): the serialized orchestration authority.
+	mux.HandleFunc("GET /blueprints", h.listBlueprints)
+	mux.HandleFunc("POST /blueprints", h.createBlueprint)
+	mux.HandleFunc("GET /blueprints/{id}", h.getBlueprint)
+	mux.HandleFunc("GET /blueprints/{id}/versions", h.listBlueprintVersions)
+	mux.HandleFunc("POST /blueprints/{id}/versions", h.newBlueprintDraft)
+	mux.HandleFunc("PUT /blueprint-versions/{versionId}", h.updateBlueprintDraft)
+	mux.HandleFunc("POST /blueprint-versions/{versionId}/publish", h.publishBlueprintVersion)
+	mux.HandleFunc("GET /blueprint-versions/{versionId}/graph", h.blueprintVersionGraph)
 
 	mux.HandleFunc("GET /squads", h.listSquads)
 	mux.HandleFunc("POST /squads", h.createSquad)

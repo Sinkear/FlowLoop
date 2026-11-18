@@ -3,11 +3,16 @@
 import { useId, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  CircleSlash,
   Eye,
+  ForkKnife,
+  GitBranch,
   GitMerge,
+  ListChecks,
   Maximize2,
   MessageSquare,
   ShieldCheck,
+  Split,
   Target,
   Waypoints,
   ZoomIn,
@@ -42,6 +47,13 @@ const KIND_ICON: Record<string, LucideIcon> = {
   review: Eye,
   consult: MessageSquare,
   integrate: GitMerge,
+  // 蓝本规范图节点（Phase A）；未知 kind 已有 fallback（Waypoints）。
+  task: ListChecks,
+  condition: Split,
+  router: ForkKnife,
+  gate: CircleSlash,
+  spawn: GitBranch,
+  end: Target,
 };
 
 interface LaidOut {
@@ -181,6 +193,9 @@ function nodeStatusDot(status: string): string {
     case "review":
     case "reviewing":
       return "bg-blue-400";
+    case "spec":
+      // 蓝本规范图节点：非执行态，用中性色区分「这是规范，不是执行记录」。
+      return "bg-teal-400";
     default:
       return "bg-ink-3";
   }

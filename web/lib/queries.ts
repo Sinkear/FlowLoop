@@ -106,6 +106,12 @@ import {
   retryRsiSession,
   getGoalWorkflow,
   listSquadWorkflows,
+  listBlueprints,
+  getBlueprint,
+  getBlueprintGraph,
+  newBlueprintDraft,
+  updateBlueprintDraft,
+  publishBlueprintVersion,
 } from "./api";
 import { useWSEvent } from "./ws";
 import type {
@@ -160,6 +166,10 @@ export const qk = {
   workflowGoal: (goalId: string) => ["workflows", "goals", goalId] as const,
   workflowSquad: (squadId: string, limit: number) =>
     ["workflows", "squads", squadId, limit] as const,
+  // 蓝本（Phase A）：列表 / 单体（含版本） / 规范图。
+  blueprints: ["blueprints"] as const,
+  blueprint: (id: string) => ["blueprints", id] as const,
+  blueprintGraph: (versionId: string) => ["blueprints", "graph", versionId] as const,
   templates: ["templates"] as const,
   templatesByType: (type: string) => ["templates", { type }] as const,
   template: (kind: string, id: string) => ["templates", kind, id] as const,
@@ -1185,5 +1195,60 @@ export function useSquadWorkflows(squadId: string, limit = 10) {
     queryKey: qk.workflowSquad(squadId, limit),
     queryFn: () => listSquadWorkflows(squadId, limit),
     enabled: !!squadId,
+  });
+}
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// 只读查询；写操作（新草稿/改草稿/发布）走 mutation 后失效 blueprints 键。
+
+// 蓝本列表（列表页）。
+export function useBlueprints() {
+  return useQuery({ queryKey: qk.blueprints, queryFn: listBlueprints });
+}
+
+// 单个蓝本 + 其版本列表（详情页）。
+export function useBlueprint(id: string) {
+  return useQuery({
+    queryKey: qk.blueprint(id),
+    queryFn: () => getBlueprint(id),
+    enabled: !!id,
+  });
+}
+
+// 一个版本的规范图（WorkflowGraph 形状，复用 workflow-graph 渲染）。
+export function useBlueprintGraph(versionId: string) {
+  return useQuery({
+    queryKey: qk.blueprintGraph(versionId),
+    queryFn: () => getBlueprintGraph(versionId),
+    enabled: !!versionId,
+  });
+}
+
+// 开新草稿（从最新版本 fork 出 v+1 draft）。
+export function useNewBlueprintDraft(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (changelog: string) => newBlueprintDraft(id, changelog),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 更新草稿内容（发布门会全量校验 V1–V6）。
+export function useUpdateBlueprintDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { versionId: string; content: string }) =>
+      updateBlueprintDraft(p.versionId, p.content),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 发布（draft → published，内容自此不可变）。
+export function usePublishBlueprintVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { versionId: string; changelog: string }) =>
+      publishBlueprintVersion(p.versionId, p.changelog),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
   });
 }

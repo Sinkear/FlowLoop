@@ -216,8 +216,55 @@ CREATE TABLE IF NOT EXISTS goal (
     execution_mode   TEXT NOT NULL DEFAULT 'infer', -- RSI: infer | train (train freezes the workflow graph at terminal and analyzes it)
     content_capture  TEXT NOT NULL DEFAULT 'redacted', -- RSI: none | redacted | full
     budget_usd       REAL NOT NULL DEFAULT 2,      -- RSI: analysis budget ceiling (displayed/enforced later)
-    sample_rate      REAL NOT NULL DEFAULT 1       -- RSI: 0..1 trace sampling rate
+    sample_rate      REAL NOT NULL DEFAULT 1,      -- RSI: 0..1 trace sampling rate
+    blueprint_version_id TEXT NOT NULL DEFAULT ''  -- Blueprint Phase A: pinned spec version ('' = infer mode, unchanged semantics)
 );
+
+-- Blueprint (docs/BLUEPRINT-PROPOSAL.md §5): the serialized orchestration
+-- authority. blueprint = named reusable spec; blueprint_version = immutable
+-- content snapshot (publish requires the static validator V1–V6); goal pins
+-- one version so the same version always compiles to the same topology.
+CREATE TABLE IF NOT EXISTS blueprint (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL DEFAULT '',
+    created_by_type TEXT NOT NULL DEFAULT 'human',   -- human | agent (RSI optimizer drafts count as agent)
+    created_by_id   TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS blueprint_version (
+    id            TEXT PRIMARY KEY,
+    blueprint_id  TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+    version       INTEGER NOT NULL,
+    content       TEXT NOT NULL,              -- spec graph JSON (the single source of truth)
+    content_hash  TEXT NOT NULL,              -- sha256(content) — drift guard (V6)
+    status        TEXT NOT NULL DEFAULT 'draft',  -- draft|published|retired
+    changelog     TEXT NOT NULL DEFAULT '',   -- per-version change note; optimizer hypotheses land here
+    created_at    TEXT NOT NULL,
+    UNIQUE(blueprint_id, version)
+);
+
+-- blueprint_node: per-goal instance ledger — the alignment anchor between
+-- the spec graph (node_key) and the execution graph (sub_goal_id). The
+-- all-nodes-terminal completion criterion and RSI per-node attribution both
+-- read this table. State here is the node's OWN lifecycle (the spec graph
+-- never copies execution state; workflow.go still assembles read-time).
+CREATE TABLE IF NOT EXISTS blueprint_node (
+    id              TEXT PRIMARY KEY,
+    goal_id         TEXT NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
+    node_key        TEXT NOT NULL,            -- spec node id; spawn children: '<spawn_key>#<seq>'
+    parent_key      TEXT NOT NULL DEFAULT '', -- set for spawn children (the spawn node's key)
+    node_type       TEXT NOT NULL,            -- task|condition|router|gate|spawn|end
+    sub_goal_id     TEXT NOT NULL DEFAULT '', -- '' until compiled/registered
+    state           TEXT NOT NULL DEFAULT 'pending', -- pending|running|settled|skipped|failed
+    resolved_config TEXT NOT NULL DEFAULT '', -- instantiation snapshot: resolved brief / branch choice
+    created_at      TEXT NOT NULL,
+    UNIQUE(goal_id, node_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_blueprint_node_sub_goal ON blueprint_node(sub_goal_id);
 
 CREATE INDEX IF NOT EXISTS idx_goal_assignee ON goal(assignee_type, assignee_id);
 CREATE INDEX IF NOT EXISTS idx_goal_status ON goal(status);

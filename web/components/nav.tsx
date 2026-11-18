@@ -20,6 +20,7 @@ import {
   MessagesSquare,
   LayoutDashboard,
   BarChart3,
+  Waypoints,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,9 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/", label: "总览", icon: LayoutDashboard },
       { href: "/goals", label: "任务", icon: Target },
+      // 蓝本（Phase A）：结构化编排权威——goal 钉住 published 版本，Activate
+      // 时编译成 gated sub_goal。放工作台：定义「任务怎么跑」的日常面。
+      { href: "/blueprints", label: "蓝本", icon: Waypoints },
       // 训练分析与任务平级：它是“回看任务怎么跑”的入口，不做二级菜单。
       { href: "/training", label: "训练分析", icon: BarChart3 },
       { href: "/chat", label: "对话", icon: MessageSquare },

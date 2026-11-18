@@ -163,6 +163,8 @@ export interface CreateGoalBody {
   content_capture?: "none" | "redacted" | "full";
   budget_usd?: number;
   sample_rate?: number; // 0..1（不是百分数）
+  // Phase A：钉住一个 published 蓝本版本——''/缺省 = infer 模式（动态拆解）。
+  blueprint_version_id?: string;
 }
 export const createGoal = (body: CreateGoalBody) =>
   api<Goal>("/goals", { method: "POST", body: JSON.stringify(body) });
@@ -491,6 +493,40 @@ export const listSquadWorkflows = (squadId: string, limit = 10) =>
   api<WorkflowGoalSummary[]>(
     `/workflows/squads/${squadId}?limit=${Math.max(1, Math.min(50, Math.trunc(limit)))}`
   );
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md §5）：结构化编排权威 ──
+// 规范图与执行图共用 WorkflowGraph 形状（§4.12），前端零布局改动复用
+// workflow-graph 组件渲染。goal.blueprint_version_id 钉 published 版本，
+// Activate 时编译成 gated sub_goal。
+export const listBlueprints = () =>
+  api<import("./types").Blueprint[]>("/blueprints");
+
+export const getBlueprint = (id: string) =>
+  api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
+
+export const listBlueprintVersions = (id: string) =>
+  api<import("./types").BlueprintVersion[]>(`/blueprints/${id}/versions`);
+
+export const newBlueprintDraft = (id: string, changelog: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprints/${id}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ changelog }),
+  });
+
+export const updateBlueprintDraft = (versionId: string, content: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprint-versions/${versionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+
+export const publishBlueprintVersion = (versionId: string, changelog: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprint-versions/${versionId}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ changelog }),
+  });
+
+export const getBlueprintGraph = (versionId: string) =>
+  api<WorkflowGraph>(`/workflows/blueprints/${versionId}`);
 // ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
 
 export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");

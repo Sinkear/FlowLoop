@@ -205,6 +205,50 @@ export const NODE_KIND_META: Record<
     ring: "border-rose-500/40",
     bar: "bg-rose-400",
   },
+  // ── 蓝本规范图节点（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.2）──
+  // 规范图与执行图共用 WorkflowGraph 形状，这些 kind 只出现在规范图里。
+  task: {
+    label: "任务",
+    desc: "蓝本任务节点；编译为 gated sub_goal",
+    badge: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+    ring: "border-blue-500/40",
+    bar: "bg-blue-400",
+  },
+  condition: {
+    label: "条件",
+    desc: "结构化条件分支；启动时求值剪枝",
+    badge: "border-teal-500/30 bg-teal-500/10 text-teal-300",
+    ring: "border-teal-500/40",
+    bar: "bg-teal-400",
+  },
+  router: {
+    label: "路由",
+    desc: "LLM 受限选择（Phase B 生效）",
+    badge: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+    ring: "border-cyan-500/40",
+    bar: "bg-cyan-400",
+  },
+  gate: {
+    label: "人工门",
+    desc: "人工审批断点（Phase B 生效）",
+    badge: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+    ring: "border-orange-500/40",
+    bar: "bg-orange-400",
+  },
+  spawn: {
+    label: "派生",
+    desc: "动态子任务拆分（Phase B 生效）",
+    badge: "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300",
+    ring: "border-fuchsia-500/40",
+    bar: "bg-fuchsia-400",
+  },
+  end: {
+    label: "终点",
+    desc: "规范图终点（success|failure）",
+    badge: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
+    ring: "border-zinc-500/40",
+    bar: "bg-zinc-400",
+  },
 };
 
 export function nodeKindMeta(kind: string) {
@@ -226,6 +270,7 @@ export const EDGE_KIND_LABEL: Record<string, string> = {
   verified_by: "验证",
   consult: "咨询",
   integrated: "集成",
+  spec: "规范", // 蓝本规范边（Phase A）：节点间的规范性顺序/分支
 };
 // ── 优化轮次 delta（W-RSI v3 insight panel） ──
 // delta 的 pct 是相对变化率（(to-from)/from），不是百分点；from=0 时后端省略。
