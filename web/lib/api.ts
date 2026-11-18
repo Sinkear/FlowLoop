@@ -501,6 +501,18 @@ export const listSquadWorkflows = (squadId: string, limit = 10) =>
 export const listBlueprints = () =>
   api<import("./types").Blueprint[]>("/blueprints");
 
+// 创建（web 蓝图编辑器唯一后门之外的正规入口）：content 是完整的规范 JSON
+// 字符串，保存即过 V1–V6 校验，失败 400 带逐条原因。
+export const createBlueprint = (body: {
+  name: string;
+  description?: string;
+  content: string;
+}) =>
+  api<import("./types").Blueprint>("/blueprints", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 export const getBlueprint = (id: string) =>
   api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
 

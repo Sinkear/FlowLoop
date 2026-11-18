@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   listRuntimes,
   createRuntime,
@@ -107,6 +107,7 @@ import {
   getGoalWorkflow,
   listSquadWorkflows,
   listBlueprints,
+  createBlueprint,
   getBlueprint,
   getBlueprintGraph,
   newBlueprintDraft,
@@ -1206,21 +1207,35 @@ export function useBlueprints() {
   return useQuery({ queryKey: qk.blueprints, queryFn: listBlueprints });
 }
 
-// 单个蓝本 + 其版本列表（详情页）。
+// 创建蓝本（新蓝图页）：保存即校验，服务端 400 的逐条原因原样透传给表单。
+export function useCreateBlueprint() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string; content: string }) =>
+      createBlueprint(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 单个蓝本 + 其版本列表（详情页）。keepPreviousData：发布/开草稿后
+// invalidate 刷新时旧内容保持挂载，不闪骨架屏（m01573「页面刷新了一下」）。
 export function useBlueprint(id: string) {
   return useQuery({
     queryKey: qk.blueprint(id),
     queryFn: () => getBlueprint(id),
     enabled: !!id,
+    placeholderData: keepPreviousData,
   });
 }
 
 // 一个版本的规范图（WorkflowGraph 形状，复用 workflow-graph 渲染）。
+// keepPreviousData：切换版本按钮时保留上一张图，避免整图闪空白。
 export function useBlueprintGraph(versionId: string) {
   return useQuery({
     queryKey: qk.blueprintGraph(versionId),
     queryFn: () => getBlueprintGraph(versionId),
     enabled: !!versionId,
+    placeholderData: keepPreviousData,
   });
 }
 

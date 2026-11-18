@@ -223,10 +223,13 @@ function NodeCard({
   const meta = nodeKindMeta(node.kind);
   const Icon = KIND_ICON[node.kind] ?? Waypoints;
   const showAttempt = node.attempt > 0;
+  const isSpecNode = node.status === "spec";
   const tooltip = [
     `${node.label || node.key}（${meta.label}）`,
     node.status ? `状态：${node.status}` : "",
-    `耗时：${fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}`,
+    isSpecNode
+      ? "计划态节点：任务激活后才会执行"
+      : `耗时：${fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}`,
     node.assignee_id ? `执行者：${node.assignee_id}` : "",
     node.attempt > 0 ? `尝试：${node.attempt}` : "",
     node.reworks > 0 ? `返工：${node.reworks}` : "",
@@ -260,9 +263,11 @@ function NodeCard({
           {meta.label}
         </span>
         <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", nodeStatusDot(node.status))} />
-        <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-ink-3">
-          {fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}
-        </span>
+        {!isSpecNode && (
+          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-ink-3">
+            {fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}
+          </span>
+        )}
       </div>
       <div className="mt-1.5 truncate text-xs font-medium text-ink" title={node.label}>
         {node.label || node.key}
@@ -385,6 +390,7 @@ export function WorkflowGraphView({
   analyzing = false,
   heightClass = "min-h-[260px]",
   showMetrics = true,
+  variant = "execution",
 }: {
   graph: WorkflowGraph | null | undefined;
   loading?: boolean;
@@ -395,7 +401,14 @@ export function WorkflowGraphView({
   analyzing?: boolean;
   heightClass?: string;
   showMetrics?: boolean;
+  /**
+   * spec = 蓝本规范图（计划态，未执行）：隐藏执行期概念——冻结横幅、
+   * 深度、生成时间、节点耗时、执行指标行；图例只列图上真实出现的边类型。
+   * 同一渲染器两种“味”（提案 §4.12），不是两套组件。
+   */
+  variant?: "execution" | "spec";
 }) {
+  const spec = variant === "spec";
   const uid = useId().replace(/[:]/g, "");
   const markerBase = `wf-arrow-${uid}`;
   const markerCritical = `wf-arrow-c-${uid}`;
@@ -434,7 +447,7 @@ export function WorkflowGraphView({
     return (
       <div className="space-y-3 p-4">
         <p className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-red-300">
-          编排图读取失败：{error}
+          {spec ? "规范图读取失败" : "编排图读取失败"}：{error}
         </p>
         {showMetrics && <WorkflowMetricsRow metrics={graphMetrics} />}
       </div>
@@ -464,6 +477,9 @@ export function WorkflowGraphView({
 
   const cpSet = new Set(graph?.critical_path ?? []);
   const nodesByKey = layout.byKey;
+  // 图例只列图上真实出现的边类型：规范图只有 spec 边，执行图也免受七类
+  // 无关键目的干扰（执行图早期常只有 created/depends_on 两三种边）。
+  const legendKinds = new Set<string>((graph?.edges ?? []).map((e) => e.kind));
   const maxShare = Math.max(
     0,
     ...layout.nodes.map((n) => (Number.isFinite(n.node.critical_share) ? n.node.critical_share : 0))
@@ -474,15 +490,22 @@ export function WorkflowGraphView({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-ink-3">
         <span className="inline-flex items-center gap-1 text-ink-2">
           <Waypoints className="h-3.5 w-3.5" />
-          {analyzing
-            ? graph?.frozen
-              ? "上次分析快照（分析中）"
-              : "实时编排图（分析中）"
-            : graph?.frozen
-              ? "已冻结编排图"
-              : "实时编排图"}
+          {spec
+            ? "计划图 · 未执行"
+            : analyzing
+              ? graph?.frozen
+                ? "上次分析快照（分析中）"
+                : "实时编排图（分析中）"
+              : graph?.frozen
+                ? "已冻结编排图"
+                : "实时编排图"}
         </span>
-        {analyzing && (
+        {spec && (
+          <span className="text-ink-3">
+            任务激活时按此图编译成带依赖的子任务，这里只是计划
+          </span>
+        )}
+        {analyzing && !spec && (
           <span className="text-ink-3">
             {graph?.frozen
               ? "重跑中，完成后更新为本次快照"
@@ -490,24 +513,34 @@ export function WorkflowGraphView({
           </span>
         )}
         <span>
-          节点 {fmtInt(layout.nodes.length)} · 边 {fmtInt((graph?.edges ?? []).length)} · 深度{" "}
-          {fmtInt(layout.maxLayer + 1)}
+          {spec
+            ? `节点 ${fmtInt(layout.nodes.length)} · 边 ${fmtInt((graph?.edges ?? []).length)}`
+            : `节点 ${fmtInt(layout.nodes.length)} · 边 ${fmtInt((graph?.edges ?? []).length)} · 深度 ${fmtInt(layout.maxLayer + 1)}`}
         </span>
-        {graph?.generated_at && <span>生成于 {graph.generated_at}</span>}
+        {!spec && graph?.generated_at && <span>生成于 {graph.generated_at}</span>}
         {cpSet.size > 0 && (
           <span className="inline-flex items-center gap-1 text-accent">
             <span className="h-1.5 w-3.5 rounded-sm bg-accent" />
             关键路径
           </span>
         )}
-        <span className="inline-flex items-center gap-1">
-          <span className="h-0.5 w-3.5 bg-ink-3/60" />
-          依赖
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-0.5 w-3.5 border-t border-dashed border-ink-3/60" />
-          推断时序
-        </span>
+        {spec ? (
+          <span className="inline-flex items-center gap-1">
+            <span className="h-0.5 w-3.5 bg-teal-400/70" />
+            规范连线（执行顺序）
+          </span>
+        ) : (
+          <>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-0.5 w-3.5 bg-ink-3/60" />
+              依赖
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-0.5 w-3.5 border-t border-dashed border-ink-3/60" />
+              推断时序
+            </span>
+          </>
+        )}
         {maxShare > 0 && (
           <span className="text-ink-3">节点右上角为耗时，关键路径节点显示占比</span>
         )}
@@ -654,13 +687,17 @@ export function WorkflowGraphView({
 
       {showMetrics && <div className="px-4 pb-1"><WorkflowMetricsRow metrics={graphMetrics} /></div>}
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] text-ink-3">
-        {Object.entries(EDGE_KIND_LABEL).map(([kind, label]) => (
-          <span key={kind}>
-            <span className="font-mono">{kind}</span> {label}
-          </span>
-        ))}
-      </div>
+      {legendKinds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] text-ink-3">
+          {Object.entries(EDGE_KIND_LABEL)
+            .filter(([kind]) => legendKinds.has(kind))
+            .map(([kind, label]) => (
+              <span key={kind}>
+                <span className="font-mono">{kind}</span> {label}
+              </span>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

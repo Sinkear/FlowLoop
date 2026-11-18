@@ -138,6 +138,8 @@ function GoalDetailPageInner() {
                   : String(bpGraphErr)
                 : null
             }
+            variant="spec"
+            showMetrics={false}
           />
         </SectionCard>
       )}

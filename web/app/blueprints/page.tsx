@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Waypoints } from "lucide-react";
+import { PlusCircle, Waypoints } from "lucide-react";
 import { Badge, Empty, PageBody, PageHeader, SectionCard, Skeleton } from "@/components/ui";
 import { useBlueprints } from "@/lib/queries";
 import { relTime } from "@/lib/utils";
 
-// 蓝本列表（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.12）：结构化编排权威的
-// 入口页。只读——创建/编辑走 API 或后续阶段的起草通道；这里先解决
-// 「平台上有哪些工作流定义、各自长什么样」的可见性。
+// 蓝本列表（Phase A + UX 闭环，docs/BLUEPRINT-PROPOSAL.md §4.12）：结构化
+// 编排权威的入口页。创建走 /blueprints/new（模板起步）；这里解决「平台上
+// 有哪些工作流定义、各自长什么样」的可见性。
 //
 // 行布局：名称+描述自适应，其余定宽；窄屏折行。
 
@@ -66,6 +66,14 @@ export default function BlueprintsPage() {
       <PageHeader
         title="蓝本"
         desc="工作流的结构化定义：goal 钉住一个已发布版本，激活时由平台编译成带依赖门控的子任务——执行顺序由代码保证，不靠提示词。"
+        action={
+          <Link
+            href="/blueprints/new"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent/85"
+          >
+            <PlusCircle className="h-3.5 w-3.5" /> 新建蓝图
+          </Link>
+        }
       />
 
       <SectionCard title="蓝本列表" count={blueprints?.length} bodyClassName="p-0">
@@ -88,7 +96,13 @@ export default function BlueprintsPage() {
         ) : (blueprints ?? []).length === 0 ? (
           <div className="p-6">
             <Empty icon={<Waypoints className="h-8 w-8" />}>
-              还没有蓝本。创建蓝本走 API（POST /blueprints），或等训练分析从反复同构的执行图里自动起草。
+              还没有蓝本。蓝本就是「先做 A、再做 B、两路并行后汇合」这样的执行计划——写成结构化的节点和依赖，由平台保证按计划跑，不会漏步骤、不会乱序。
+              <Link
+                href="/blueprints/new?template=serial"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent/85"
+              >
+                <PlusCircle className="h-3.5 w-3.5" /> 从模板新建第一份
+              </Link>
             </Empty>
           </div>
         ) : (

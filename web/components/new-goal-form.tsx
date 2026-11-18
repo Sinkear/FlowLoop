@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Dialog, Field, inputCls } from "@/components/ui";
 import { useBlueprints, useCreateGoal, useHooks } from "@/lib/queries";
 import { bindGoalHook, type CreateGoalBody } from "@/lib/api";
@@ -29,7 +29,14 @@ export function NewGoalForm({
   const { data: blueprints } = useBlueprints();
   const publishedBlueprints = (blueprints ?? []).filter((b) => b.latest_version_id);
   const [blueprintVersionId, setBlueprintVersionId] = useState("");
-  const [title, setTitle] = useState("");
+
+  // 深链预选（蓝图详情页「用此版本新建任务」按钮）：/goals/new?blueprint=<versionId>
+  // 直接把版本钉进表单，省得在对话框里再找一遍。读 window.location 而不是
+  // useSearchParams——避开静态预渲染页的 Suspense 边界约束。
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get("blueprint");
+    if (v) setBlueprintVersionId(v);
+  }, []);  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [domainId, setDomainId] = useState("");
   const [domainErr, setDomainErr] = useState("");

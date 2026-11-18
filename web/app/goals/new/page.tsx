@@ -81,6 +81,12 @@ export default function NewGoalPage() {
     return () => window.clearTimeout(timer);
   }, [st.phase]);
 
+  // 深链：蓝图详情「用此版本新建任务」直达这里。管家对话不吃蓝图参数，
+  // 直接展开手动表单并预选该版本（NewGoalForm 读同一个 ?blueprint= 参数）。
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("blueprint")) setManual(true);
+  }, []);
+
   // 建成功 → 切回任务视图。phase=created 可能发生在用户不在本页的时候
   // （切去了别的页面，轮询在 store 里继续跑）——回到本页时补上这次跳转，
   // 然后 reset 让 store 干净地迎接下一段流程。

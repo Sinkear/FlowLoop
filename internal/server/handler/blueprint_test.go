@@ -115,6 +115,22 @@ func TestBlueprintHTTPRoutes(t *testing.T) {
 		t.Fatalf("publish: %d %s", rec.Code, rec.Body.String())
 	}
 
+	// After publishing, list MUST expose latest_version_id — the web UI keys
+	// off it for the published badge AND the new-goal "bind blueprint"
+	// dropdown (a missing field would make every blueprint unbindable from
+	// the UI).
+	rec = get(t, "/blueprints")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list after publish: %d %s", rec.Code, rec.Body.String())
+	}
+	var listed []service.Blueprint
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("list decode: %v", err)
+	}
+	if len(listed) != 1 || listed[0].LatestVersionID != v2.ID {
+		t.Fatalf("list must carry latest_version_id=%s, got %+v", v2.ID, listed)
+	}
+
 	rec = get(t, "/workflows/blueprints/"+v2.ID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("spec graph: %d %s", rec.Code, rec.Body.String())

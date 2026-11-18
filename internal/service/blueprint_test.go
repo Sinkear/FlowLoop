@@ -422,7 +422,9 @@ func TestBlueprintPublishedVersionsAreImmutable(t *testing.T) {
 	if err != nil || len(versions) == 0 {
 		t.Fatalf("versions: %v", err)
 	}
-	wj := func(brief string) string { return strings.ReplaceAll(bpJSON("t", brief), "agent:WORKER", "agent:"+worker) }
+	wj := func(brief string) string {
+		return strings.ReplaceAll(bpJSON("t", brief), "agent:WORKER", "agent:"+worker)
+	}
 	v := versions[0]
 	if _, err := bs.UpdateDraft(ctx, v.ID, wj("b2")); err != nil {
 		t.Fatalf("draft must be editable: %v", err)
@@ -489,5 +491,71 @@ func TestInferGoalUnaffectedByBlueprintHooks(t *testing.T) {
 	gg := mustGoal(t, gs, g.ID)
 	if gg.Status != "done" {
 		t.Fatalf("infer goal must finalize through the unchanged path, got %q", gg.Status)
+	}
+}
+
+// TestBlueprintSquadAssigneeCompilesToLeader pins the multi-squad question
+// (m01687): a task node assigned to a SQUAD compiles to a sub_goal owned by
+// that squad's LEADER agent. Runs are claimed per agent (Claim JOINs the
+// agent table), so shipping a squad id into run.agent_id would deadlock the
+// node in the queue forever — compile-time resolution is the fix.
+func TestBlueprintSquadAssigneeCompilesToLeader(t *testing.T) {
+	gs, _, bs, st := bpCluster(t)
+	ctx := context.Background()
+
+	leader := seedAgent(t, st, "squad-leader")
+	owner := seedAgent(t, st, "owner")
+	sqSvc := NewSquadService(st, events.NewBus())
+	sq, err := sqSvc.Create(ctx, Squad{Name: "ops-squad", Description: "ops", LeaderID: leader})
+	if err != nil {
+		t.Fatalf("seed squad: %v", err)
+	}
+
+	content := strings.ReplaceAll(bpJSON("squad chain", "finish it"), "agent:WORKER", "squad:"+sq.ID)
+	bp, err := bs.Create(ctx, "bp-squad", "", content, "human", "")
+	if err != nil {
+		t.Fatalf("create blueprint: %v", err)
+	}
+	_, versions, err := bs.Get(ctx, bp.ID)
+	if err != nil || len(versions) == 0 {
+		t.Fatalf("blueprint versions missing: %v", err)
+	}
+	if _, err := bs.Publish(ctx, versions[0].ID, "init"); err != nil {
+		t.Fatalf("publish blueprint: %v", err)
+	}
+
+	domain := seedDomain(t, st)
+	g, err := gs.Create(ctx, Goal{
+		Title: "multi squad", AssigneeType: "agent", AssigneeID: owner,
+		Status: "backlog", DomainID: domain, BlueprintVersionID: versions[0].ID,
+	})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := gs.Activate(ctx, g.ID); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+
+	var got []struct{ id, assignee string }
+	rows, err := st.DB().QueryContext(ctx,
+		`SELECT id, assignee_id FROM sub_goal WHERE goal_id=? ORDER BY created_at`, g.ID)
+	if err != nil {
+		t.Fatalf("query sub-goals: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r struct{ id, assignee string }
+		if err := rows.Scan(&r.id, &r.assignee); err != nil {
+			t.Fatalf("scan sub-goal: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("compiled sub-goals = %d, want 2", len(got))
+	}
+	for _, r := range got {
+		if r.assignee != leader {
+			t.Fatalf("sub_goal %s assignee = %q, want leader agent %q (squad ids deadlock Claim)", r.id, r.assignee, leader)
+		}
 	}
 }

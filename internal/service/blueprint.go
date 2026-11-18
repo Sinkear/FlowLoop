@@ -129,6 +129,11 @@ type Blueprint struct {
 	CreatedByType string `json:"created_by_type"`
 	CreatedByID   string `json:"created_by_id"`
 	CreatedAt     string `json:"created_at"`
+	// LatestVersionID is the newest PUBLISHED version's id — '' while the
+	// blueprint has no published version. The web UI keys off this both for
+	// the published/draft badge and the new-goal "bind blueprint" dropdown
+	// (only published versions are pinnable — Create refuses drafts).
+	LatestVersionID string `json:"latest_version_id"`
 }
 
 type BlueprintVersion struct {
@@ -843,7 +848,9 @@ func (s *BlueprintService) GetVersion(ctx context.Context, versionID string) (*B
 // List returns all blueprints with their version/发布 state summary.
 func (s *BlueprintService) List(ctx context.Context) ([]Blueprint, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,name,description,created_by_type,created_by_id,created_at FROM blueprint ORDER BY created_at DESC`)
+		`SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
+			COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), '')
+		FROM blueprint b ORDER BY b.created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list blueprints: %w", err)
 	}
@@ -851,7 +858,7 @@ func (s *BlueprintService) List(ctx context.Context) ([]Blueprint, error) {
 	var out []Blueprint
 	for rows.Next() {
 		var b Blueprint
-		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt, &b.LatestVersionID); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -883,8 +890,11 @@ func (s *BlueprintService) ListVersions(ctx context.Context, blueprintID string)
 func (s *BlueprintService) Get(ctx context.Context, id string) (*Blueprint, []BlueprintVersion, error) {
 	var b Blueprint
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,name,description,created_by_type,created_by_id,created_at FROM blueprint WHERE id=?`, id).
-		Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt)
+		`SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
+			COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), '')
+		FROM blueprint b WHERE b.id=?`,
+		id).
+		Scan(&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt, &b.LatestVersionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}
@@ -1203,6 +1213,23 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		kind, id, _ := strings.Cut(n.Task.Assignee, ":")
 		if kind != "agent" && kind != "squad" {
 			return NewValidationError(fmt.Sprintf("node %q: assignee %q not resolvable at compile time", n.ID, n.Task.Assignee))
+		}
+		// A squad assignee compiles to its LEADER agent — runs are claimed
+		// per agent (Claim JOINs the agent table), so a squad id in
+		// run.agent_id would queue forever (found while answering the
+		// multi-squad question; same semantics as the goal-level
+		// resolveLeaderTx). The leader's run carries the squad's
+		// roster/playbook only when the goal itself is squad-assigned —
+		// cross-squad briefings are Phase B.
+		if kind == "squad" {
+			var leader string
+			if err := tx.QueryRowContext(ctx, `SELECT leader_id FROM squad WHERE id=?`, id).Scan(&leader); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return NewValidationError(fmt.Sprintf("node %q: squad %q not found", n.ID, id))
+				}
+				return fmt.Errorf("resolve squad %s leader: %w", id, err)
+			}
+			id = leader
 		}
 		verifier := ""
 		if n.Task.Verify != nil && n.Task.Verify.Mode == "agent" {
