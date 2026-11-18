@@ -144,6 +144,14 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /blueprint-versions/{versionId}", h.updateBlueprintDraft)
 	mux.HandleFunc("POST /blueprint-versions/{versionId}/publish", h.publishBlueprintVersion)
 	mux.HandleFunc("GET /blueprint-versions/{versionId}/graph", h.blueprintVersionGraph)
+	// Phase C (proposal §12): patch proposals + diff + same-issue A/B.
+	mux.HandleFunc("GET /blueprints/{id}/proposals", h.listBlueprintProposals)
+	mux.HandleFunc("POST /blueprints/{id}/proposals", h.createBlueprintProposal)
+	mux.HandleFunc("GET /blueprint-proposals/{proposalId}", h.getBlueprintProposal)
+	mux.HandleFunc("GET /blueprint-proposals/{proposalId}/diff", h.blueprintProposalDiff)
+	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/approve", h.approveBlueprintProposal)
+	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/reject", h.rejectBlueprintProposal)
+	mux.HandleFunc("GET /workflows/blueprints/{id}/ab", h.blueprintABCompare)
 
 	mux.HandleFunc("GET /squads", h.listSquads)
 	mux.HandleFunc("POST /squads", h.createSquad)

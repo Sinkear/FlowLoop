@@ -33,10 +33,12 @@ import {
 
 // 只读 DAG 的分层布局。不引第三方图库：
 // 横向按拓扑层排列，纵向同层横排；坐标是固定的 CSS 像素，连线用 SVG 画。
-const NODE_W = 196;
-const NODE_H = 82;
-const GAP_X = 58;
-const GAP_Y = 16;
+// 卡片尺寸（m04217 视觉统一）：比旧版高一档，为了装下「状态章 + 两行标题 +
+// 元数据脚注」，和蓝本规范图的节点卡共用同一套版式。
+const NODE_W = 212;
+const NODE_H = 94;
+const GAP_X = 66;
+const GAP_Y = 18;
 const COL_W = NODE_W + GAP_X;
 const ROW_H = NODE_H + GAP_Y;
 
@@ -105,7 +107,15 @@ function computeLayout(graph: WorkflowGraph): Layout {
 
   const layer = new Map<string, number>();
   const queue: string[] = [];
-  for (const n of nodes) if ((indeg.get(n.key) ?? 0) === 0) queue.push(n.key);
+  // 根节点必须显式落 0 层（m04217 修）：旧版只 push 不 set，于是根节点的
+  // layer 一直是 undefined，走到下面的「环保护」分支被当成未处理节点塞到
+  // 最深层——goal 永远被画在最右边，图读起来是「执行 → 执行 → 目标」。
+  for (const n of nodes) {
+    if ((indeg.get(n.key) ?? 0) === 0) {
+      layer.set(n.key, 0);
+      queue.push(n.key);
+    }
+  }
   // 队列按开始时间取，保证同层输出稳定。
   queue.sort((a, b) => sortNodes(byKeyRaw.get(a)!, byKeyRaw.get(b)!));
 
@@ -142,7 +152,10 @@ function computeLayout(graph: WorkflowGraph): Layout {
   for (const n of nodes) {
     if (!linked.has(n.key) && n.kind !== "goal") layer.set(n.key, lastLayer);
   }
-  maxLayer = Math.max(maxLayer, lastLayer);
+  // 深度按「实际落到第几列」重算：单节点图（只有 goal）不该因为
+  // lastLayer 的下限 1 而显示成深度 2。
+  maxLayer = 0;
+  for (const v of layer.values()) maxLayer = Math.max(maxLayer, v);
 
   const groups = new Map<number, WorkflowNode[]>();
   for (const n of nodes) {
@@ -179,26 +192,49 @@ function computeLayout(graph: WorkflowGraph): Layout {
   };
 }
 
-function nodeStatusDot(status: string): string {
-  switch (status) {
-    case "done":
-    case "ready":
-    case "approved":
-      return "bg-emerald-400";
-    case "failed":
-    case "rejected":
-    case "error":
-      return "bg-red-400";
-    case "active":
-    case "review":
-    case "reviewing":
-      return "bg-blue-400";
-    case "spec":
-      // 蓝本规范图节点：非执行态，用中性色区分「这是规范，不是执行记录」。
-      return "bg-teal-400";
-    default:
-      return "bg-ink-3";
-  }
+// 状态语义（m04217）：旧版只有一个 1.5px 小圆点，颜色还漏掉了后端真实存在的
+// verified / running / completed / cancelled 四种状态——它们全落进了灰色兜底，
+// 「已验证」和「待执行」在图上是同一个灰点。这里把状态升级成「左侧色条 + 中文
+// 状态章」的组合，并补齐词表（取自 ui.tsx 的 STATUS_LABEL，平台内一套说法）。
+interface StatusMeta {
+  label: string;
+  /** 左侧色条 */
+  bar: string;
+  /** 状态章底色 + 文字 */
+  chip: string;
+  /** 章内圆点 */
+  dot: string;
+}
+
+const STATUS_META: Record<string, StatusMeta> = {
+  done: { label: "已完成", bar: "bg-emerald-400", chip: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+  verified: { label: "已验证", bar: "bg-emerald-400", chip: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+  completed: { label: "已完成", bar: "bg-emerald-400", chip: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+  approved: { label: "已通过", bar: "bg-emerald-400", chip: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+  ready: { label: "就绪", bar: "bg-emerald-400", chip: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+  running: { label: "执行中", bar: "bg-blue-400", chip: "bg-blue-500/10 text-blue-300", dot: "bg-blue-400" },
+  active: { label: "进行中", bar: "bg-blue-400", chip: "bg-blue-500/10 text-blue-300", dot: "bg-blue-400" },
+  review: { label: "待审批", bar: "bg-purple-400", chip: "bg-purple-500/10 text-purple-300", dot: "bg-purple-400" },
+  reviewing: { label: "审查中", bar: "bg-purple-400", chip: "bg-purple-500/10 text-purple-300", dot: "bg-purple-400" },
+  failed: { label: "失败", bar: "bg-red-400", chip: "bg-red-500/10 text-red-300", dot: "bg-red-400" },
+  error: { label: "出错", bar: "bg-red-400", chip: "bg-red-500/10 text-red-300", dot: "bg-red-400" },
+  rejected: { label: "已拒绝", bar: "bg-red-400", chip: "bg-red-500/10 text-red-300", dot: "bg-red-400" },
+  blocked: { label: "阻塞", bar: "bg-amber-400", chip: "bg-amber-500/10 text-amber-300", dot: "bg-amber-400" },
+  pending: { label: "待执行", bar: "bg-ink-3/50", chip: "bg-surface-2 text-ink-3", dot: "bg-ink-3" },
+  queued: { label: "排队中", bar: "bg-ink-3/50", chip: "bg-surface-2 text-ink-3", dot: "bg-ink-3" },
+  cancelled: { label: "已取消", bar: "bg-zinc-400", chip: "bg-zinc-500/10 text-ink-3", dot: "bg-zinc-400" },
+  // 蓝本规范图节点：非执行态，用中性青区分「这是规范，不是执行记录」。
+  spec: { label: "计划", bar: "bg-teal-400", chip: "bg-teal-500/10 text-teal-300", dot: "bg-teal-400" },
+};
+
+function nodeStatusMeta(status: string): StatusMeta {
+  if (STATUS_META[status]) return STATUS_META[status];
+  return {
+    label: status || "未开始",
+    bar: "bg-ink-3/40",
+    chip: "bg-surface-2 text-ink-3",
+    dot: "bg-ink-3",
+  };
 }
 
 function edgePath(from: LaidOut, to: LaidOut): string {
@@ -221,15 +257,16 @@ function NodeCard({
 }) {
   const { node } = laid;
   const meta = nodeKindMeta(node.kind);
+  const st = nodeStatusMeta(node.status);
   const Icon = KIND_ICON[node.kind] ?? Waypoints;
-  const showAttempt = node.attempt > 0;
   const isSpecNode = node.status === "spec";
+  const duration = fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null);
   const tooltip = [
-    `${node.label || node.key}（${meta.label}）`,
+    `${node.label || node.key}（${meta.label} · ${st.label}）`,
     node.status ? `状态：${node.status}` : "",
     isSpecNode
       ? "计划态节点：任务激活后才会执行"
-      : `耗时：${fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}`,
+      : `耗时：${duration}`,
     node.assignee_id ? `执行者：${node.assignee_id}` : "",
     node.attempt > 0 ? `尝试：${node.attempt}` : "",
     node.reworks > 0 ? `返工：${node.reworks}` : "",
@@ -241,54 +278,68 @@ function NodeCard({
     .filter(Boolean)
     .join("\n");
 
+  // 版式与蓝本规范图节点卡统一（m04217）：左侧状态色条 → 类型章 + 状态章 →
+  // 两行标题（不再 truncate 成一行，长标题在图上可读）→ 脚注元数据。
   return (
     <div
       className={cn(
-        "absolute overflow-hidden rounded-lg border bg-surface-1 px-2.5 py-2 shadow-sm",
+        "group absolute overflow-hidden rounded-lg border bg-surface-1 shadow-sm transition-shadow duration-150 hover:z-10 hover:shadow-md",
         meta.ring,
-        critical && "border-accent/70 bg-accent/[0.06] ring-1 ring-accent/25",
-        criticalPath && !critical && "border-accent/40"
+        critical && "border-accent/60 bg-accent/[0.05] shadow-accent/10",
+        !critical && criticalPath && "border-accent/40"
       )}
       style={{ left: laid.x, top: laid.top, width: NODE_W, height: NODE_H }}
       title={tooltip}
     >
-      <div className="flex items-center gap-1.5">
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
-            meta.badge
-          )}
+      <span className={cn("absolute inset-y-0 left-0 w-[3px]", st.bar)} aria-hidden="true" />
+      <div className="flex h-full flex-col px-2.5 py-2 pl-[13px]">
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
+              meta.badge
+            )}
+          >
+            <Icon className="h-3 w-3" />
+            {meta.label}
+          </span>
+          <span
+            className={cn(
+              "ml-auto inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] font-medium",
+              st.chip
+            )}
+          >
+            <span className={cn("h-1.5 w-1.5 rounded-full", st.dot)} />
+            {st.label}
+          </span>
+        </div>
+        <div
+          className="mt-1 line-clamp-2 text-[11.5px] font-medium leading-[1.35] text-ink"
+          title={node.label}
         >
-          <Icon className="h-3 w-3" />
-          {meta.label}
-        </span>
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", nodeStatusDot(node.status))} />
-        {!isSpecNode && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-ink-3">
-            {fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null)}
-          </span>
-        )}
-      </div>
-      <div className="mt-1.5 truncate text-xs font-medium text-ink" title={node.label}>
-        {node.label || node.key}
-      </div>
-      <div className="mt-1 flex items-center gap-2 text-[10px] text-ink-3">
-        {showAttempt && <span>尝试 {node.attempt}</span>}
-        {node.reworks > 0 && (
-          <span className={node.reworks > 0 ? "text-amber-300" : undefined}>
-            返工 {node.reworks}
-          </span>
-        )}
-        {!showAttempt && node.reworks <= 0 && (
-          <span className="font-mono" title={node.key}>
-            {node.key.length > 22 ? `${node.key.slice(0, 22)}…` : node.key}
-          </span>
-        )}
-        {critical && (
-          <span className="ml-auto shrink-0 font-mono text-accent">
-            关键 {fmtRatio(node.critical_share, 0)}
-          </span>
-        )}
+          {node.label || node.key}
+        </div>
+        <div className="mt-auto flex items-center gap-2 overflow-hidden text-[10px] text-ink-3">
+          {!isSpecNode && duration !== DASH && (
+            <span className="shrink-0 font-mono tabular-nums">{duration}</span>
+          )}
+          {node.attempt > 1 && <span className="shrink-0">尝试 {node.attempt}</span>}
+          {node.reworks > 0 && (
+            <span className="shrink-0 font-medium text-amber-300">返工 {node.reworks}</span>
+          )}
+          {isSpecNode && (
+            <span className="truncate font-mono" title={node.key}>
+              {node.key}
+            </span>
+          )}
+          {/* 执行者 id 是哈希，画在卡上只是噪声（tooltip 里有）——脚注留给
+              耗时/尝试/返工这些能读懂的数。 */}
+          {critical && (
+            <span className="ml-auto shrink-0 font-mono text-accent">
+              关键 {fmtRatio(node.critical_share, 0)}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -301,6 +352,7 @@ function EdgeLine({
   critical,
   markerBase,
   markerCritical,
+  markerSpec,
 }: {
   edge: WorkflowEdge;
   from: LaidOut;
@@ -308,42 +360,68 @@ function EdgeLine({
   critical: boolean;
   markerBase: string;
   markerCritical: string;
+  markerSpec: string;
 }) {
   const inferredSeq = edge.kind === "seq" && edge.source === "inferred";
+  const isSpec = edge.kind === "spec";
+  // 颜色走主题令牌（m04217）：旧版写死 #71717a / #22c55e，浅色主题下灰线在
+  // 纸面上偏脏、绿线和 accent 也不同源。现在依赖/创建/规范三类边各有强度。
+  const stroke = critical
+    ? "var(--color-accent)"
+    : isSpec
+      ? "var(--color-teal-400)"
+      : "var(--color-ink-3)";
+  const strokeOpacity = critical ? 0.95 : isSpec ? 0.65 : edge.kind === "created" ? 0.32 : 0.5;
+  const strokeWidth = critical ? 2.1 : isSpec ? 1.4 : 1.1;
   return (
     <path
       d={edgePath(from, to)}
       fill="none"
-      stroke={critical ? "#22c55e" : "#71717a"}
-      strokeWidth={critical ? 2.2 : 1}
-      strokeOpacity={critical ? 0.9 : 0.45}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      strokeOpacity={strokeOpacity}
+      strokeLinecap="round"
       strokeDasharray={inferredSeq ? "4 4" : edge.source === "inferred" ? "2 3" : undefined}
-      markerEnd={`url(#${critical ? markerCritical : markerBase})`}
+      markerEnd={`url(#${critical ? markerCritical : isSpec ? markerSpec : markerBase})`}
     />
   );
 }
 
+// 编排指标行（m04217）：和蓝本列表的 StatStrip 一个版式——小号大写标签 +
+// 等宽大数字，值才是主角。旧版 14px 数值和标签几乎同权重，八格读起来像表格。
+// tone 只在本省得的指标上标警（返工率 > 0、分派失衡 > 1.3×），其余保持中性。
 export function WorkflowMetricsRow({
   metrics,
 }: {
   metrics: Record<string, unknown> | null | undefined;
 }) {
   const m = metrics ?? {};
-  const items: { label: string; value: string; tone?: string }[] = [
+  const speedup = metricNum(m, "parallel_speedup");
+  const rework = metricNum(m, "rework_ratio");
+  const imbalance = metricNum(m, "lane_imbalance");
+  const items: { label: string; value: string; tone?: "accent" | "warn"; hint?: string }[] = [
     {
       label: "并行加速",
-      value: fmtSpeedupSafe(metricNum(m, "parallel_speedup")),
+      value: fmtSpeedupSafe(speedup),
       tone: "accent",
+      hint: "串行耗时才并行加速之比",
     },
-    { label: "关键路径", value: fmtMs(metricNum(m, "critical_path_ms")) },
-    { label: "串行损失", value: fmtMs(metricNum(m, "serialization_loss_ms")) },
-    { label: "验证开销", value: fmtRatio(metricNum(m, "verify_overhead_ratio")) },
-    { label: "返工率", value: fmtRatio(metricNum(m, "rework_ratio")) },
-    { label: "咨询次数", value: fmtInt(metricNum(m, "consult_count")) },
-    { label: "排队等待", value: fmtMs(metricNum(m, "queue_wait_ms")) },
+    { label: "关键路径", value: fmtMs(metricNum(m, "critical_path_ms")), hint: "决定墙钟的那条链" },
+    { label: "串行损失", value: fmtMs(metricNum(m, "serialization_loss_ms")), hint: "本可并行却被串起来的等待" },
+    { label: "验证开销", value: fmtRatio(metricNum(m, "verify_overhead_ratio")), hint: "验证占执行时间比例" },
+    {
+      label: "返工率",
+      value: fmtRatio(rework),
+      tone: rework !== null && rework > 0 ? "warn" : undefined,
+      hint: "返工次数 / 任务数",
+    },
+    { label: "咨询次数", value: fmtInt(metricNum(m, "consult_count")), hint: "小队内跨 agent 咨询" },
+    { label: "排队等待", value: fmtMs(metricNum(m, "queue_wait_ms")), hint: "依赖门控 + 派发延迟" },
     {
       label: "分派失衡",
-      value: fmtLaneImbalance(metricNum(m, "lane_imbalance")),
+      value: fmtLaneImbalance(imbalance),
+      tone: imbalance !== null && imbalance > 1.3 ? "warn" : undefined,
+      hint: "最忙 lane / 平均 lane",
     },
   ];
 
@@ -352,15 +430,20 @@ export function WorkflowMetricsRow({
       {items.map((it) => (
         <div
           key={it.label}
-          className="rounded-md border border-line bg-surface-2/30 px-2.5 py-2"
+          className="rounded-md border border-line bg-surface-1 px-2.5 py-2"
+          title={it.hint}
         >
-          <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3">
+          <div className="text-[10px] font-medium tracking-[0.06em] text-ink-3">
             {it.label}
           </div>
           <div
             className={cn(
-              "mt-1 font-mono text-sm tabular-nums",
-              it.tone === "accent" ? "text-accent" : "text-ink-2"
+              "mt-0.5 font-mono text-[17px] leading-tight tabular-nums",
+              it.tone === "accent"
+                ? "text-accent"
+                : it.tone === "warn"
+                  ? "text-amber-300"
+                  : "text-ink-2"
             )}
           >
             {it.value}
@@ -380,6 +463,51 @@ function fmtLaneImbalance(v: number | null): string {
   if (v === null) return DASH;
   // lane_imbalance = 最忙 lane / 平均 lane，>=1 才有意义；不是 0..1 比例。
   return `${v.toFixed(2)}×`;
+}
+
+// 节点类型图例（m04217）：按 kind 计数渲染彩色章（类型章与节点卡同一套
+// NODE_KIND_META.badge），右侧是结构计数。蓝本规范图与执行编排图共用这一份，
+// 免得两个页面各写一份、颜色和文案慢慢漂开。
+export function WorkflowKindLegend({
+  graph,
+  suffix,
+}: {
+  graph: WorkflowGraph | null | undefined;
+  /** 追加在「节点 N · 边 M」后面的结构量，如「深度 3」。 */
+  suffix?: string;
+}) {
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of graph?.nodes ?? []) m.set(n.kind, (m.get(n.kind) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [graph]);
+  const nodes = graph?.nodes?.length ?? 0;
+  const edges = graph?.edges?.length ?? 0;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-surface-2/30 px-4 py-2">
+      {counts.map(([kind, n]) => {
+        const meta = nodeKindMeta(kind);
+        return (
+          <span
+            key={kind}
+            className={cn(
+              "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
+              meta.badge
+            )}
+            title={meta.desc}
+          >
+            {meta.label}
+            <span className="font-mono tabular-nums opacity-80">×{n}</span>
+          </span>
+        );
+      })}
+      <span className="ml-auto font-mono text-[11px] tabular-nums text-ink-3">
+        节点 {fmtInt(nodes)} · 边 {fmtInt(edges)}
+        {suffix ? ` · ${suffix}` : ""}
+      </span>
+    </div>
+  );
 }
 
 export function WorkflowGraphView({
@@ -412,6 +540,7 @@ export function WorkflowGraphView({
   const uid = useId().replace(/[:]/g, "");
   const markerBase = `wf-arrow-${uid}`;
   const markerCritical = `wf-arrow-c-${uid}`;
+  const markerSpec = `wf-arrow-s-${uid}`;
   // 30 节点链宽度可达 7.5k px，直接铺开会把整页撑爆：限制容器高度并允许双向滚动，
   // 再提供缩放/适应宽度，默认 1×。
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -480,14 +609,11 @@ export function WorkflowGraphView({
   // 图例只列图上真实出现的边类型：规范图只有 spec 边，执行图也免受七类
   // 无关键目的干扰（执行图早期常只有 created/depends_on 两三种边）。
   const legendKinds = new Set<string>((graph?.edges ?? []).map((e) => e.kind));
-  const maxShare = Math.max(
-    0,
-    ...layout.nodes.map((n) => (Number.isFinite(n.node.critical_share) ? n.node.critical_share : 0))
-  );
-
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-ink-3">
+    <div className="space-y-0">
+      {/* 工具条（m04217）：第一行只说「这是什么图 + 缩放」，节点类型图例
+          单独一行带计数——和蓝本规范图同一套层级，读者先认图再认结构。 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[11px] text-ink-3">
         <span className="inline-flex items-center gap-1 text-ink-2">
           <Waypoints className="h-3.5 w-3.5" />
           {spec
@@ -512,37 +638,12 @@ export function WorkflowGraphView({
               : "分析完成后才会冻结为只读快照"}
           </span>
         )}
-        <span>
-          {spec
-            ? `节点 ${fmtInt(layout.nodes.length)} · 边 ${fmtInt((graph?.edges ?? []).length)}`
-            : `节点 ${fmtInt(layout.nodes.length)} · 边 ${fmtInt((graph?.edges ?? []).length)} · 深度 ${fmtInt(layout.maxLayer + 1)}`}
-        </span>
         {!spec && graph?.generated_at && <span>生成于 {graph.generated_at}</span>}
         {cpSet.size > 0 && (
           <span className="inline-flex items-center gap-1 text-accent">
             <span className="h-1.5 w-3.5 rounded-sm bg-accent" />
             关键路径
           </span>
-        )}
-        {spec ? (
-          <span className="inline-flex items-center gap-1">
-            <span className="h-0.5 w-3.5 bg-teal-400/70" />
-            规范连线（执行顺序）
-          </span>
-        ) : (
-          <>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-0.5 w-3.5 bg-ink-3/60" />
-              依赖
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-0.5 w-3.5 border-t border-dashed border-ink-3/60" />
-              推断时序
-            </span>
-          </>
-        )}
-        {maxShare > 0 && (
-          <span className="text-ink-3">节点右上角为耗时，关键路径节点显示占比</span>
         )}
         <div className="ml-auto inline-flex items-center gap-1.5">
           <button
@@ -588,7 +689,21 @@ export function WorkflowGraphView({
         </div>
       </div>
 
-      <div ref={scrollRef} className="max-h-[72vh] max-w-full overflow-auto px-4 pb-1">
+      <WorkflowKindLegend
+        graph={graph}
+        suffix={spec ? undefined : `深度 ${fmtInt(layout.maxLayer + 1)}`}
+      />
+
+      <div
+        ref={scrollRef}
+        className="max-h-[72vh] max-w-full overflow-auto px-4 py-3"
+        style={{
+          // 细点阵底（图的样子，不是空白画布）：深浅主题都用 --color-line，
+          // 因此不需要两套样式。
+          backgroundImage: "radial-gradient(var(--color-line) 1px, transparent 1px)",
+          backgroundSize: "16px 16px",
+        }}
+      >
         <div
           className="relative"
           style={{ width: layout.width * zoom, height: layout.height * zoom }}
@@ -618,7 +733,7 @@ export function WorkflowGraphView({
                 markerHeight="6"
                 orient="auto"
               >
-                <path d="M 0 0 L 8 4 L 0 8 z" fill="#71717a" />
+                <path d="M 0 0 L 8 4 L 0 8 z" style={{ fill: "var(--color-ink-3)" }} />
               </marker>
               <marker
                 id={markerCritical}
@@ -629,7 +744,18 @@ export function WorkflowGraphView({
                 markerHeight="6"
                 orient="auto"
               >
-                <path d="M 0 0 L 8 4 L 0 8 z" fill="#22c55e" />
+                <path d="M 0 0 L 8 4 L 0 8 z" style={{ fill: "var(--color-accent)" }} />
+              </marker>
+              <marker
+                id={markerSpec}
+                viewBox="0 0 8 8"
+                refX="7"
+                refY="4"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto"
+              >
+                <path d="M 0 0 L 8 4 L 0 8 z" style={{ fill: "var(--color-teal-400)" }} />
               </marker>
             </defs>
             {(graph?.edges ?? []).map((e, i) => {
@@ -646,6 +772,7 @@ export function WorkflowGraphView({
                   critical={critical}
                   markerBase={markerBase}
                   markerCritical={markerCritical}
+                  markerSpec={markerSpec}
                 />
               );
             })}
@@ -669,13 +796,13 @@ export function WorkflowGraphView({
       </div>
 
       {cpSet.size > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-1 text-[10px] text-ink-3">
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-2 text-[10px] text-ink-3">
           <span className="shrink-0">关键路径：</span>
           {graph!.critical_path.map((key, i) => {
             const n = nodesByKey.get(key)?.node;
             return (
               <span key={`${key}-${i}`} className="inline-flex items-center gap-1.5">
-                {i > 0 && <span className="text-ink-3/60">→</span>}
+                {i > 0 && <span className="text-ink-3">→</span>}
                 <span className="rounded border border-accent/25 bg-accent/[0.06] px-1.5 py-0.5 text-accent">
                   {n?.label || key}
                 </span>
@@ -685,7 +812,11 @@ export function WorkflowGraphView({
         </div>
       )}
 
-      {showMetrics && <div className="px-4 pb-1"><WorkflowMetricsRow metrics={graphMetrics} /></div>}
+      {showMetrics && (
+        <div className="border-t border-line px-4 py-3">
+          <WorkflowMetricsRow metrics={graphMetrics} />
+        </div>
+      )}
 
       {legendKinds.size > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] text-ink-3">

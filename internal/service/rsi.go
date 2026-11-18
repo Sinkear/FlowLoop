@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -134,6 +135,11 @@ type RsiRound struct {
 type RSIService struct {
 	st  *store.Store
 	bus *events.Bus
+
+	// blueprintSvc is wired from main (SetBlueprint, Phase C §12.4): the
+	// 3-isomorphism emergent draft needs the blueprint validator. Optional —
+	// without it RecordInferShape logs and skips drafting.
+	blueprintSvc *BlueprintService
 
 	// analyzeMu serializes analyses: analysis is fast (SQL + arithmetic) and
 	// a single lock keeps a retry from racing a terminal trigger.
@@ -662,4 +668,215 @@ func percentile95(v []int64) int64 {
 	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
 	idx := int(float64(len(cp)-1) * 0.95)
 	return cp[idx]
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase C (proposal §12.4): 涌现固化 — infer 执行图同构检测.
+// goal:finished(done) & infer-mode → shape signature 入账 infer_shape；
+// 同域连续 3 次同签名 → BlueprintService.DraftFromGoalExecution 自动起草
+// v1 草稿（确定性翻译，永不自动发布）。
+// ═══════════════════════════════════════════════════════════════════════
+
+// SetBlueprint wires the blueprint service for the emergent draft (§12.4).
+func (s *RSIService) SetBlueprint(bp *BlueprintService) { s.blueprintSvc = bp }
+
+// executionShapeSignature is the v1 heuristic (§12.4, honestly labeled):
+// node-kind multiset + normalized (from_kind|to_kind|edge_kind) triple
+// multiset, sorted, SHA256. Identity-free (agents swapping does not change
+// it); NOT full graph canonization — a false positive only produces an
+// extra human-reviewed draft, which is zero-risk by construction.
+func executionShapeSignature(wf *WorkflowGraph) string {
+	parts := make([]string, 0, len(wf.Nodes)+len(wf.Edges))
+	kinds := make([]string, len(wf.Nodes))
+	for i, n := range wf.Nodes {
+		kinds[i] = n.Kind
+	}
+	sort.Strings(kinds)
+	parts = append(parts, "N:"+strings.Join(kinds, ","))
+	triples := make([]string, 0, len(wf.Edges))
+	kindOf := map[string]string{}
+	for _, n := range wf.Nodes {
+		kindOf[n.Key] = n.Kind
+	}
+	for _, e := range wf.Edges {
+		triples = append(triples, kindOf[e.From]+"|"+kindOf[e.To]+"|"+e.Kind)
+	}
+	sort.Strings(triples)
+	parts = append(parts, "E:"+strings.Join(triples, ","))
+	return hashContent(strings.Join(parts, "\n"))
+}
+
+// RecordInferShape runs on goal:finished(done) for unbound (infer) goals. It
+// computes the execution graph's shape signature, appends it to infer_shape,
+// and on the 3rd consecutive equal signature in the same domain asks the
+// blueprint service to auto-draft a v1 (idempotent by name, never published).
+func (s *RSIService) RecordInferShape(ctx context.Context, goalID string) error {
+	var status, bpVersion, domainID, assigneeType, assigneeID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT status, COALESCE(blueprint_version_id,''), COALESCE(domain_id,''), assignee_type, COALESCE(assignee_id,'') FROM goal WHERE id=?`, goalID).
+		Scan(&status, &bpVersion, &domainID, &assigneeType, &assigneeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("load goal for shape: %w", err)
+	}
+	// Only successful, unbound (infer) goals carry an emergent signal:
+	// spec-driven goals already HAVE a blueprint; failed/cancelled runs don't
+	// represent a repeatable success shape.
+	if status != "done" || bpVersion != "" {
+		return nil
+	}
+	wf, err := s.BuildGoalWorkflow(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("build workflow for shape: %w", err)
+	}
+	sig := executionShapeSignature(wf)
+	squadID := ""
+	if assigneeType == "squad" {
+		squadID = assigneeID
+	}
+	if _, err := s.st.DB().ExecContext(ctx,
+		`INSERT INTO infer_shape (id,goal_id,domain_id,squad_id,signature,node_count,created_at) VALUES (?,?,?,?,?,?,?)`,
+		newID(), goalID, domainID, squadID, sig, len(wf.Nodes), now()); err != nil {
+		return fmt.Errorf("insert infer shape: %w", err)
+	}
+	// 3-consecutive check in the same domain (Q4 定稿: 阈值 3).
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT signature FROM infer_shape WHERE domain_id=? ORDER BY created_at DESC LIMIT 3`, domainID)
+	if err != nil {
+		return fmt.Errorf("load recent shapes: %w", err)
+	}
+	defer rows.Close()
+	var sigs []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return err
+		}
+		sigs = append(sigs, v)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(sigs) < 3 || sigs[0] != sig || sigs[1] != sig || sigs[2] != sig {
+		return nil
+	}
+	logging.Infof("rsi: 3 consecutive isomorphic infer shapes in domain %s — drafting blueprint v1", domainID[:8])
+	if s.blueprintSvc == nil {
+		logging.Warnf("rsi: blueprint service not wired — emergent draft skipped")
+		return nil
+	}
+	if _, err := s.blueprintSvc.DraftFromGoalExecution(ctx, goalID, domainID, sig); err != nil {
+		// A draft failure must never break the goal's terminal flow.
+		logging.Errorf("rsi: emergent draft failed: %v", err)
+	}
+	return nil
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase C (proposal §12.3): 同题 A/B — two goals' execution metrics side by
+// side with deltas. The pinned blueprint version of each goal is echoed so
+// the caller can verify the pair actually compares two variants. Metric set
+// is the one the platform really computes (§12.3 honestly notes
+// verify_pass_rate / cost_per_success land in Phase D — no fake numbers).
+// ═══════════════════════════════════════════════════════════════════════
+
+// ABMetricKeys is the ordered comparison set (label shown by the frontend).
+var ABMetricKeys = []string{
+	"critical_path_ms",
+	"wall_ms",
+	"parallel_speedup",
+	"rework_ratio",
+	"verify_overhead_ratio",
+	"human_wait_ms",
+}
+
+// ABGoalFace is one side of the comparison.
+type ABGoalFace struct {
+	GoalID             string         `json:"goal_id"`
+	GoalTitle          string         `json:"goal_title"`
+	Status             string         `json:"status"`
+	BlueprintVersionID string         `json:"blueprint_version_id"`
+	Metrics            map[string]any `json:"metrics"`
+}
+
+// ABCompareResult carries both faces + deltas (b - a, computed where numeric).
+type ABCompareResult struct {
+	GoalA   ABGoalFace `json:"goal_a"`
+	GoalB   ABGoalFace `json:"goal_b"`
+	Deltas  map[string]any `json:"deltas"`
+	Notes   []string   `json:"notes,omitempty"`
+}
+
+func abGoalFace(ctx context.Context, s *RSIService, goalID string) (ABGoalFace, error) {
+	var title, status, bpVersion string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT title, status, COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).
+		Scan(&title, &status, &bpVersion); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ABGoalFace{}, NewValidationError(fmt.Sprintf("goal %q not found", goalID))
+		}
+		return ABGoalFace{}, fmt.Errorf("load goal %s: %w", goalID, err)
+	}
+	wf, err := s.BuildGoalWorkflow(ctx, goalID)
+	if err != nil {
+		return ABGoalFace{}, fmt.Errorf("build workflow %s: %w", goalID, err)
+	}
+	metrics := map[string]any{}
+	for _, k := range ABMetricKeys {
+		if v, ok := wf.Metrics[k]; ok {
+			metrics[k] = v
+		}
+	}
+	return ABGoalFace{GoalID: goalID, GoalTitle: title, Status: status, BlueprintVersionID: bpVersion, Metrics: metrics}, nil
+}
+
+// numLike coerces the metric map values (int64|float64|int|float32) to float64.
+func numLike(v any) (float64, bool) {
+	switch t := v.(type) {
+	case int64:
+		return float64(t), true
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case float32:
+		return float64(t), true
+	}
+	return 0, false
+}
+
+func (s *RSIService) GoalABCompare(ctx context.Context, goalAID, goalBID string) (*ABCompareResult, error) {
+	a, err := abGoalFace(ctx, s, goalAID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := abGoalFace(ctx, s, goalBID)
+	if err != nil {
+		return nil, err
+	}
+	deltas := map[string]any{}
+	var notes []string
+	for _, k := range ABMetricKeys {
+		av, aok := a.Metrics[k]
+		bv, bok := b.Metrics[k]
+		if !aok || !bok {
+			continue
+		}
+		af, aIsNum := numLike(av)
+		bf, bIsNum := numLike(bv)
+		if aIsNum && bIsNum {
+			deltas[k] = bf - af
+		}
+	}
+	if a.Status != "done" || b.Status != "done" {
+		notes = append(notes, "one or both goals are still mid-flight — metrics are partial until both are done")
+	}
+	if a.BlueprintVersionID == b.BlueprintVersionID && a.BlueprintVersionID != "" {
+		notes = append(notes, "both goals pin the SAME blueprint version — this is not a variant comparison")
+	}
+	if a.BlueprintVersionID == "" || b.BlueprintVersionID == "" {
+		notes = append(notes, "one or both goals are infer-mode (no pinned version) — comparison still shown, but not a v1-vs-v2 A/B")
+	}
+	return &ABCompareResult{GoalA: a, GoalB: b, Deltas: deltas, Notes: notes}, nil
 }

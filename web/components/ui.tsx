@@ -14,7 +14,7 @@ const BTN_VARIANTS: Record<ButtonVariant, string> = {
   outline:
     "border border-line-strong bg-transparent text-ink-2 hover:border-accent/50 hover:text-ink hover:bg-surface-2",
   ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
-  danger: "bg-red-500/90 text-white hover:bg-red-500",
+  danger: "bg-red-600 text-white hover:bg-red-700",
 };
 
 export function Button({

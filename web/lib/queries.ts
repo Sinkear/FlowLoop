@@ -1,7 +1,17 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
+import {
+  listBlueprintProposals,
+  getBlueprintProposalDiff,
+  approveBlueprintProposal,
+  rejectBlueprintProposal,
+  compareBlueprintAB,
   listRuntimes,
   createRuntime,
   deleteRuntime,
@@ -153,6 +163,12 @@ export const qk = {
   subGoalVerifications: (goalId: string, subGoalId: string) =>
     ["goals", goalId, "sub-goals", subGoalId, "verifications"] as const,
   heldGates: (goalId: string) => ["goals", goalId, "blueprint-gates"] as const,
+  blueprintProposals: (blueprintId: string) =>
+    ["blueprints", blueprintId, "proposals"] as const,
+  blueprintProposalDiff: (proposalId: string) =>
+    ["blueprint-proposals", proposalId, "diff"] as const,
+  blueprintAB: (blueprintId: string, a: string, b: string) =>
+    ["blueprints", blueprintId, "ab", a, b] as const,
   squads: ["squads"] as const,
   squad: (id: string) => ["squads", id] as const,
   squadMembers: (squadId: string) => ["squads", squadId, "members"] as const,
@@ -1337,5 +1353,53 @@ export function useResolveHeldGate(goalId: string) {
       qc.invalidateQueries({ queryKey: qk.goal(goalId) });
       qc.invalidateQueries({ queryKey: qk.workflowGoal(goalId) });
     },
+  });
+}
+
+
+// ── 蓝本提案（Phase C，§12）：结构化补丁 + 人工批准 + 三色 diff + A/B ──
+export function useBlueprintProposals(blueprintId: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintProposals(blueprintId!),
+    queryFn: () => listBlueprintProposals(blueprintId!),
+    enabled: !!blueprintId,
+  });
+}
+
+export function useBlueprintProposalDiff(proposalId: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintProposalDiff(proposalId!),
+    queryFn: () => getBlueprintProposalDiff(proposalId!),
+    enabled: !!proposalId,
+  });
+}
+
+export function useApproveBlueprintProposal(blueprintId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (proposalId: string) => approveBlueprintProposal(proposalId),
+    onSuccess: () => {
+      // 批准产出新草稿：版本列表、规范图、提案列表全要刷新。
+      qc.invalidateQueries({ queryKey: qk.blueprint(blueprintId) });
+      qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
+    },
+  });
+}
+
+export function useRejectBlueprintProposal(blueprintId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (proposalId: string) => rejectBlueprintProposal(proposalId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
+    },
+  });
+}
+
+export function useBlueprintAB(blueprintId: string | null, goalA: string | null, goalB: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintAB(blueprintId!, goalA!, goalB!),
+    queryFn: () => compareBlueprintAB(blueprintId!, goalA!, goalB!),
+    enabled: !!blueprintId && !!goalA && !!goalB,
   });
 }

@@ -238,6 +238,40 @@ func Open(path string) (*Store, error) {
 		    UNIQUE(squad_id, name)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name)`,
+
+		// Phase C (proposal §12): blueprint patch proposals + infer shape
+		// signatures. Mirrors schema.sql for old DBs.
+		`CREATE TABLE IF NOT EXISTS blueprint_proposal (
+		    id                 TEXT PRIMARY KEY,
+		    blueprint_id       TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+		    base_version_id    TEXT NOT NULL REFERENCES blueprint_version(id),
+		    title              TEXT NOT NULL,
+		    hypothesis         TEXT NOT NULL DEFAULT '',
+		    expected_metric    TEXT NOT NULL DEFAULT '',
+		    expected_direction TEXT NOT NULL DEFAULT '',
+		    patches_json       TEXT NOT NULL DEFAULT '[]',
+		    finding_id         TEXT NOT NULL DEFAULT '',
+		    status             TEXT NOT NULL DEFAULT 'pending',
+		    applied_version_id TEXT NOT NULL DEFAULT '',
+		    decided_at         TEXT NOT NULL DEFAULT '',
+		    decided_by_type    TEXT NOT NULL DEFAULT '',
+		    decided_by_id      TEXT NOT NULL DEFAULT '',
+		    created_by_type    TEXT NOT NULL DEFAULT 'human',
+		    created_by_id      TEXT NOT NULL DEFAULT '',
+		    created_at         TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_bp ON blueprint_proposal(blueprint_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_status ON blueprint_proposal(status, created_at)`,
+		`CREATE TABLE IF NOT EXISTS infer_shape (
+		    id         TEXT PRIMARY KEY,
+		    goal_id    TEXT NOT NULL,
+		    domain_id  TEXT NOT NULL DEFAULT '',
+		    squad_id   TEXT NOT NULL DEFAULT '',
+		    signature  TEXT NOT NULL,
+		    node_count INTEGER NOT NULL DEFAULT 0,
+		    created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at)`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

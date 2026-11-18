@@ -292,6 +292,10 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 	// cancelled goal must not keep an agent burning compute on work that is
 	// already decided dead. Same stop mechanism as StopRun.
 	bus.Subscribe("goal:finished", d.onGoalFinished)
+	// Phase C §12.4 涌现固化: every DONE goal passes the infer-shape recorder
+	// (unbound goals only — RecordInferShape re-checks status/pin itself).
+	// 3 consecutive isomorphic shapes in one domain → auto-draft blueprint v1.
+	bus.Subscribe("goal:finished", d.onInferShapeRecorder)
 	// Delete likewise: the goal:deleted payload carries the running run ids
 	// captured before the cascade removed their rows (the DB can no longer
 	// answer the query by the time this handler fires).

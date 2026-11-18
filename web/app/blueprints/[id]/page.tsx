@@ -21,11 +21,27 @@ import {
   PenLine,
   Rocket,
   Waypoints,
+  GitPullRequestArrow,
+  ThumbsUp,
+  ThumbsDown,
+  GitCompareArrows,
 } from "lucide-react";
 import { Badge, Button, Dialog, Empty, Field, PageBody, SectionCard, Skeleton, inputCls } from "@/components/ui";
-import { useBlueprint, useBlueprintGraph, useNewBlueprintDraft, usePublishBlueprintVersion, useUpdateBlueprintDraft } from "@/lib/queries";
+import {
+  useBlueprint,
+  useBlueprintGraph,
+  useNewBlueprintDraft,
+  usePublishBlueprintVersion,
+  useUpdateBlueprintDraft,
+  useBlueprintProposals,
+  useBlueprintProposalDiff,
+  useApproveBlueprintProposal,
+  useRejectBlueprintProposal,
+  useBlueprintAB,
+} from "@/lib/queries";
+import type { BlueprintProposal } from "@/lib/types";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
-import { DASH, NODE_KIND_META, fmtInt } from "@/components/training/format";
+import { DASH, fmtInt } from "@/components/training/format";
 import { cn } from "@/lib/utils";
 import type { WorkflowGraph } from "@/lib/types";
 
@@ -71,46 +87,6 @@ function StepTrack({ current }: { current: number }) {
 
 // 规范图节点类型分布：比「节点 6 / 边 5」四个数字更能说明这份计划的结构——
 // 一眼看出它有几次分叉、有没有人工门、是不是拆解型。
-function SpecKindLegend({ graph }: { graph: WorkflowGraph | null | undefined }) {
-  const counts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const n of graph?.nodes ?? []) m.set(n.kind, (m.get(n.kind) ?? 0) + 1);
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [graph]);
-
-  if (!graph || counts.length === 0) {
-    return (
-      <div className="border-b border-line px-4 py-2 font-mono text-[11px] text-ink-3">
-        节点 {fmtInt(0)} · 边 {fmtInt(0)}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2">
-      {counts.map(([kind, n]) => {
-        const meta = NODE_KIND_META[kind];
-        return (
-          <span
-            key={kind}
-            className={cn(
-              "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
-              meta?.badge ?? "border-line bg-surface-2 text-ink-3"
-            )}
-            title={meta?.desc ?? "未知节点类型"}
-          >
-            {meta?.label ?? kind}
-            <span className="font-mono tabular-nums opacity-80">×{n}</span>
-          </span>
-        );
-      })}
-      <span className="ml-auto font-mono text-[11px] tabular-nums text-ink-3">
-        节点 {fmtInt((graph.nodes ?? []).length)} · 边 {fmtInt((graph.edges ?? []).length)}
-      </span>
-    </div>
-  );
-}
-
 // 错误统一展示块：服务端校验失败时 message 里带逐条原因。
 function ErrorBox({ title, message }: { title: string; message: string }) {
   return (
@@ -171,6 +147,26 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+
+// A/B 对比一行：指标名 / A 值 / B 值（带 Δ）。数值列用等宽字体对齐。
+function ABRow({ metric, a, b, delta }: { metric: string; a: number | string | undefined; b: number | string | undefined; delta: number }) {
+  const fmt = (v: number | string | undefined) =>
+    v === undefined ? DASH : typeof v === "number" ? String(Math.round(v)) : v;
+  const up = delta > 0;
+  return (
+    <>
+      <span className="truncate text-ink-3" title={metric}>{metric}</span>
+      <span className="text-ink-2">{fmt(a)}</span>
+      <span className="text-ink-2">
+        {fmt(b)}
+        <span className={cn("ml-1.5 text-[10px]", up ? "text-red-400" : "text-emerald-300")}>
+          Δ {delta > 0 ? "+" : ""}{Math.round(delta)}
+        </span>
+      </span>
+    </>
+  );
+}
+
 export default function BlueprintDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
@@ -213,6 +209,30 @@ export default function BlueprintDetailPage() {
   const [publishChangelog, setPublishChangelog] = useState("");
   const [newDraftOpen, setNewDraftOpen] = useState(false);
   const [newDraftChangelog, setNewDraftChangelog] = useState("");
+
+  // ── 提案（Phase C §12）：列表 + diff 预览 + 批准/拒绝 ──
+  const proposals = useBlueprintProposals(id);
+  const [diffProposalId, setDiffProposalId] = useState<string | null>(null);
+  const proposalDiff = useBlueprintProposalDiff(diffProposalId);
+  const approveProposal = useApproveBlueprintProposal(id);
+  const rejectProposal = useRejectBlueprintProposal(id);
+  const [confirmApproveId, setConfirmApproveId] = useState<string | null>(null);
+
+  async function doApprove(proposalId: string) {
+    try {
+      const { draft } = await approveProposal.mutateAsync(proposalId);
+      setConfirmApproveId(null);
+      setDiffProposalId(null);
+      if (draft?.id) setSelectedVersionId(draft.id); // 批准产出新草稿，直接切过去
+    } catch {
+      // 错误在对话框里展示（approveProposal.error）
+    }
+  }
+
+  // ── 同题 A/B（§12.3）：两个 goal id 一比 ──
+  const [abGoalA, setAbGoalA] = useState("");
+  const [abGoalB, setAbGoalB] = useState("");
+  const ab = useBlueprintAB(id, abGoalA.trim() || null, abGoalB.trim() || null);
 
   const mutError = (e: unknown) => (e instanceof Error ? e.message : null);
 
@@ -496,6 +516,184 @@ export default function BlueprintDetailPage() {
             )}
           </SectionCard>
 
+          {/* ── 提案（Phase C §12.1）：结构化补丁 → 人工批准 → 新草稿 ── */}
+          <SectionCard
+            title="优化提案"
+            count={proposals.data?.proposals?.length ?? 0}
+            desc="结构化补丁提案：批准 = 以假设为说明开一个新草稿（不自动发布）；拒绝 = 一锤定音。提案可由 RSI finding 翻译而来，也接受手工创建"
+          >
+            {proposals.isLoading ? (
+              <div className="p-4"><Skeleton className="h-16 w-full" /></div>
+            ) : (proposals.data?.proposals?.length ?? 0) === 0 ? (
+              <div className="p-6">
+                <Empty icon={<GitPullRequestArrow className="h-8 w-8" />}>
+                  还没有提案。跑过几次绑定了本蓝本的任务后，训练分析会产出结构化建议；也可以走 API（POST /blueprints/「id」/proposals）手工提交补丁。
+                </Empty>
+              </div>
+            ) : (
+              <ol className="divide-y divide-line">
+                {proposals.data!.proposals.map((pr: BlueprintProposal) => (
+                  <li key={pr.id} className="px-4 py-3">
+                    <div className="flex flex-wrap items-start gap-2">
+                      <span
+                        className={cn(
+                          "mt-0.5 inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                          pr.status === "pending" && "bg-amber-500/15 text-amber-300",
+                          pr.status === "approved" && "bg-emerald-500/15 text-emerald-300",
+                          pr.status === "rejected" && "bg-zinc-500/15 text-zinc-400"
+                        )}
+                      >
+                        {pr.status === "pending" ? "待批" : pr.status === "approved" ? "已批准" : "已拒绝"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-ink">{pr.title}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{pr.hypothesis || "（未写假设）"}</p>
+                        <p className="mt-1 font-mono text-[10.5px] text-ink-3">
+                          {pr.patches.length} 个补丁 op · 基于 {pr.base_version_id.slice(0, 8)}
+                          {pr.expected_metric && ` · 预期 ${pr.expected_metric} ${pr.expected_direction === "down" ? "↓" : "↑"}`}
+                          {pr.applied_version_id && ` · 已生成草稿 ${pr.applied_version_id.slice(0, 8)}`}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        <Button
+                          variant="outline"
+                          className="gap-1 text-[11px]"
+                          onClick={() => setDiffProposalId(diffProposalId === pr.id ? null : pr.id)}
+                        >
+                          <GitCompareArrows className="h-3 w-3" />
+                          {diffProposalId === pr.id ? "收起 diff" : "看 diff"}
+                        </Button>
+                        {pr.status === "pending" && (
+                          <>
+                            <Button
+                              variant="outline"
+                              className="gap-1 text-[11px]"
+                              disabled={rejectProposal.isPending}
+                              onClick={() => rejectProposal.mutate(pr.id)}
+                            >
+                              <ThumbsDown className="h-3 w-3" /> 拒绝
+                            </Button>
+                            <Button
+                              className="gap-1 text-[11px]"
+                              onClick={() => setConfirmApproveId(pr.id)}
+                            >
+                              <ThumbsUp className="h-3 w-3" /> 批准
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </SectionCard>
+
+          {/* ── 提案 diff：三色对照（新增=emerald、删除=red、改动=amber）── */}
+          {diffProposalId && (
+            <SectionCard
+              title="提案 diff"
+              desc="左：改动前规范图 · 右：改动后规范图（补丁应用后仍过 V1–V6 校验才会出现）"
+            >
+              {proposalDiff.isLoading ? (
+                <div className="p-4"><Skeleton className="h-64 w-full" /></div>
+              ) : proposalDiff.isError ? (
+                <div className="p-4">
+                  <ErrorBox title="diff 读取失败：" message={String(proposalDiff.error)} />
+                </div>
+              ) : proposalDiff.data ? (
+                <div className="space-y-3">
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-medium text-ink-3">改动前</p>
+                      <WorkflowGraphView
+                        graph={proposalDiff.data.base}
+                        loading={false}
+                        error={null}
+                        variant="spec"
+                        showMetrics={false}
+                      />
+                    </div>
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-medium text-ink-3">改动后</p>
+                      <WorkflowGraphView
+                        graph={proposalDiff.data.patched}
+                        loading={false}
+                        error={null}
+                        variant="spec"
+                        showMetrics={false}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px]">
+                    {proposalDiff.data.nodes_added.map((k) => (
+                      <span key={k} className="text-emerald-300">+ 节点 {k}</span>
+                    ))}
+                    {proposalDiff.data.nodes_removed.map((k) => (
+                      <span key={k} className="text-red-400">− 节点 {k}</span>
+                    ))}
+                    {proposalDiff.data.nodes_changed.map((c) => (
+                      <span key={c.id} className="text-amber-300">± 节点 {c.id}（{c.kind}）</span>
+                    ))}
+                    {proposalDiff.data.edges_added.map((k) => (
+                      <span key={k} className="text-emerald-300">+ 边 {k}</span>
+                    ))}
+                    {proposalDiff.data.edges_removed.map((k) => (
+                      <span key={k} className="text-red-400">− 边 {k}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </SectionCard>
+          )}
+
+          {/* ── 同题 A/B（§12.3）：两个 goal 的执行指标对比 ── */}
+          <SectionCard
+            title="同题 A/B"
+            desc="输入两个用过本蓝本的任务 id：并排比较执行指标（墙钟/关键路径/并行加速/返工/人工等待）。verified 通过率与成本留 Phase D"
+          >
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-56 flex-1">
+                <Field label="任务 A（goal id）">
+                  <input className={cn(inputCls, "font-mono text-xs")} value={abGoalA} onChange={(e) => setAbGoalA(e.target.value)} placeholder="32 位任务 id" />
+                </Field>
+              </div>
+              <div className="min-w-56 flex-1">
+                <Field label="任务 B（goal id）">
+                  <input className={cn(inputCls, "font-mono text-xs")} value={abGoalB} onChange={(e) => setAbGoalB(e.target.value)} placeholder="32 位任务 id" />
+                </Field>
+              </div>
+            </div>
+            {ab.isError && (
+              <div className="mt-3"><ErrorBox title="对比读取失败：" message={String(ab.error)} /></div>
+            )}
+            {ab.data && (
+              <div className="mt-3 space-y-2">
+                <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                  <span className="text-ink-3">指标</span>
+                  <span className="truncate text-ink-2" title={ab.data.goal_a.goal_id}>
+                    A · {ab.data.goal_a.goal_title || ab.data.goal_a.goal_id.slice(0, 8)}
+                    {ab.data.goal_a.blueprint_version_id && ` (钉 ${ab.data.goal_a.blueprint_version_id.slice(0, 8)})`}
+                  </span>
+                  <span className="truncate text-ink-2" title={ab.data.goal_b.goal_id}>
+                    B · {ab.data.goal_b.goal_title || ab.data.goal_b.goal_id.slice(0, 8)}
+                    {ab.data.goal_b.blueprint_version_id && ` (钉 ${ab.data.goal_b.blueprint_version_id.slice(0, 8)})`}
+                  </span>
+                  {Object.entries(ab.data.deltas).map(([k, d]) => (
+                    <ABRow key={k} metric={k} a={ab.data!.goal_a.metrics[k]} b={ab.data!.goal_b.metrics[k]} delta={d} />
+                  ))}
+                </div>
+                {(ab.data.notes?.length ?? 0) > 0 && (
+                  <ul className="space-y-0.5 text-[11px] text-amber-300/90">
+                    {ab.data!.notes!.map((n, i) => (
+                      <li key={i}>· {n}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </SectionCard>
+
           {/* ── 规范图（Phase A 验收项）：复用执行图渲染器 ── */}
           <SectionCard
             title="规范图"
@@ -508,7 +706,6 @@ export default function BlueprintDetailPage() {
               </div>
             ) : (
               <>
-                <SpecKindLegend graph={graph ?? null} />
                 <WorkflowGraphView
                   graph={graph ?? null}
                   loading={graphLoading}
@@ -643,6 +840,36 @@ export default function BlueprintDetailPage() {
             </Field>
             {mutError(newDraft.error) && (
               <ErrorBox title="创建草稿失败：" message={mutError(newDraft.error)!} />
+            )}
+          </div>
+        </Dialog>
+      )}
+      {/* ── 批准提案确认（Phase C §12.1）── */}
+      {confirmApproveId && (
+        <Dialog
+          title="批准这个提案？"
+          onClose={() => setConfirmApproveId(null)}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setConfirmApproveId(null)}>取消</Button>
+              <Button
+                onClick={() => void doApprove(confirmApproveId)}
+                disabled={approveProposal.isPending}
+                className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+              >
+                {approveProposal.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                批准并开新草稿
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-xs leading-relaxed text-ink-2">
+              批准 = 把补丁应用到基准版本，重新过一遍 V1–V6 校验，然后以提案的假设为变更说明开一个
+              <strong className="text-ink">新草稿</strong>。草稿不会自动发布——要不要生效、什么时候生效，仍由你点「发布」决定。
+            </p>
+            {mutError(approveProposal.error) && (
+              <ErrorBox title="批准失败：" message={mutError(approveProposal.error)!} />
             )}
           </div>
         </Dialog>

@@ -148,3 +148,104 @@ func statusFor(err error) int {
 		return http.StatusInternalServerError
 	}
 }
+
+// ── Phase C (proposal §12): patch proposals + diff + A/B compare ──
+
+// listBlueprintProposals: GET /blueprints/{id}/proposals
+func (h *Handlers) listBlueprintProposals(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	out, err := h.Blueprint.ListProposals(r.Context(), r.PathValue("id"))
+	if out == nil && err == nil {
+		out = []service.BlueprintProposal{}
+	}
+	writeJSON(w, map[string]any{"proposals": out}, err)
+}
+
+// createBlueprintProposal: POST /blueprints/{id}/proposals
+func (h *Handlers) createBlueprintProposal(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	var body struct {
+		Title             string                 `json:"title"`
+		Hypothesis        string                 `json:"hypothesis"`
+		ExpectedMetric    string                 `json:"expected_metric"`
+		ExpectedDirection string                 `json:"expected_direction"`
+		Patches           []service.BlueprintPatch `json:"patches"`
+		FindingID         string                 `json:"finding_id"`
+		BaseVersionID     string                 `json:"base_version_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, service.NewValidationError("invalid JSON body: "+err.Error()))
+		return
+	}
+	out, err := h.Blueprint.CreateProposal(r.Context(), r.PathValue("id"), body.BaseVersionID,
+		body.Title, body.Hypothesis, body.ExpectedMetric, body.ExpectedDirection,
+		body.Patches, body.FindingID, "human", "")
+	writeJSON(w, out, err)
+}
+
+// getBlueprintProposal: GET /blueprint-proposals/{proposalId}
+func (h *Handlers) getBlueprintProposal(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	out, err := h.Blueprint.GetProposal(r.Context(), r.PathValue("proposalId"))
+	writeJSON(w, out, err)
+}
+
+// blueprintProposalDiff: GET /blueprint-proposals/{proposalId}/diff —
+// three-color structured diff, base vs patched (§12.2).
+func (h *Handlers) blueprintProposalDiff(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	out, err := h.Blueprint.ProposalDiff(r.Context(), r.PathValue("proposalId"))
+	writeJSON(w, out, err)
+}
+
+// approveBlueprintProposal: POST /blueprint-proposals/{proposalId}/approve —
+// apply + re-validate + open a NEW DRAFT (changelog = hypothesis). Never
+// auto-publishes.
+func (h *Handlers) approveBlueprintProposal(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	p, v, err := h.Blueprint.ApproveProposal(r.Context(), r.PathValue("proposalId"), "human", "")
+	writeJSON(w, map[string]any{"proposal": p, "draft": v}, err)
+}
+
+// rejectBlueprintProposal: POST /blueprint-proposals/{proposalId}/reject
+func (h *Handlers) rejectBlueprintProposal(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	out, err := h.Blueprint.RejectProposal(r.Context(), r.PathValue("proposalId"), "human", "")
+	writeJSON(w, out, err)
+}
+
+// blueprintABCompare: GET /workflows/blueprints/{id}/ab?goal_a=..&goal_b=.. —
+// same-issue A/B face (§12.3): two goals' execution metrics side by side with
+// deltas. The goals' pinned blueprint versions are echoed so the caller can
+// verify they are actually comparing v1 vs v2 (or any chosen pair).
+func (h *Handlers) blueprintABCompare(w http.ResponseWriter, r *http.Request) {
+	if h.RSI == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("rsi service not configured"))
+		return
+	}
+	goalA, goalB := r.URL.Query().Get("goal_a"), r.URL.Query().Get("goal_b")
+	if goalA == "" || goalB == "" {
+		writeErr(w, http.StatusBadRequest, service.NewValidationError("query params goal_a and goal_b are both required"))
+		return
+	}
+	ab, err := h.RSI.GoalABCompare(r.Context(), goalA, goalB)
+	writeJSON(w, ab, err)
+}

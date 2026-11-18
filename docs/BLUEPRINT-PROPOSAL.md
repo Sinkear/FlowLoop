@@ -576,3 +576,57 @@ AFlow 式 MCTS 在补丁空间搜索，A/B 门控，预算（goal.budget_usd）�
 | 人设 | agent.system_prompt | agent 全局行为风格 | W-RSI 提案已含 prompt_version 回滚目标——system prompt 在迭代中可修改，走同一提案闸门 |
 
 岗位描述**不替代** system prompt（一个是岗位说明书，一个是人格底座）；两者都可被 RSI 提案修改，但都必须过人工批准——这正是 §11.2 双簿记+人在环的既有闸门，不新增直通道。
+
+---
+
+## 12. Phase C 设计定稿：优化闭环（2026-11-18 定稿，用户已批准执行）
+
+> 验收目标（§7-C）：一次完整的 **finding → patch → 批准 → A/B → 采纳** 闭环可跑通并展示给用户。四样东西一个都不能少：可度量的规范、结构化提案、人工批准闸门、可对比的复测。
+
+### 12.0 Q3 定稿（跨 goal 的蓝图参数化）
+
+绑定面维持 Phase A 现状：**goal 字段白名单（`{{goal.*}}`）+ 上游节点输出（`{{node.<id>.output}}`）**，编译拍 1 / 释放拍 2 解析。不做跨 goal 全局参数表——那是 Phase D 预算/参数化的一部分。理由：当前所有真实绑定诉求（标题/描述/类别/来源引用）都被白名单覆盖；参数表一旦引入就要面对参数漂移、缺省继承、版本间参数变更语义三座山，MVP 不接。
+
+### 12.1 结构化补丁提案（`blueprint_proposal` 表）
+
+```
+finding/人 ──▶ 补丁提案（add/update/delete node/edge）──▶ 校验器双检 ──▶ 人工批准
+                                                                       │
+    新版本草稿（changelog = hypothesis） ◀── apply 到 base 版本内容 ◀────┘
+```
+
+- 新表 `blueprint_proposal`（id, blueprint_id, base_version_id, title, hypothesis, expected_metric, expected_direction, patches_json, finding_id?, status pending|approved|rejected, applied_version_id, decided_*, created_*）。
+- **patches_json = 结构化操作数组**，五种 op：`add_node`（完整 SpecNode）/ `update_node`（同 id 同 type 全量替换 body）/ `delete_node`（级联删相连边）/ `add_edge` / `delete_edge`。
+- **校验器双检**：创建时 apply→V1–V6 全量校验（不合法当场拒）；批准时**重新** apply+校验（base 内容不可变 + patches 不可变 ⇒ 确定性，双检防的是库被旁路改动的漂移，同 V6 content_hash 精神）。
+- **批准 = 开新草稿**（changelog=hypothesis，applied_version_id 记录），**不自动发布**——发布仍是独立人工动作（W-RSI「提案不自动应用」原则原样保留）。绑定新任务的采纳决策因此也永远是人的决策。
+- finding_id 可选字段：W-RSI finding（suggestion 文本）→ 人把建议结构化成补丁 → 提案闭环。finding→patch 的翻译由人完成（LLM+P 分工：人/LLM 提议，校验器执法）；Phase D 才让机器自动翻译。
+
+### 12.2 三色 diff（提案视图）
+
+`ProposalDiff`：apply patches 得 patched 图，与 base 图做结构化 diff——nodes_added / nodes_removed / nodes_changed（按 id 对齐，含字段级前后值）/ edges_added / edges_removed。前端：左右两张规范图并排 + 彩色变更清单（+绿 / −红 / ~琥珀）。规范图零改动复用（§4.12 一渲染器两图味）。
+
+### 12.3 同题 A/B 对照（复测面）
+
+`GET /workflows/blueprints/{id}/ab?goal_a&goal_b`：两个 goal 的执行图 metrics 并排 + delta 列。比较项用**平台已实测的指标**：critical_path_ms / wall_ms / parallel_speedup / rework_ratio / verify_overhead_ratio / human_wait_ms。verify_pass_rate 与 cost_per_success 留给 Phase D（需要验证轮次语义规整 + 预算埋点，当前平台没有这两个数——不造数）。goal 级对照是 A/B 的最小诚实实现：同一 issue 的配对复测（RSI.md P3 的 same_issue_ab）在预算埋点后升级。
+
+### 12.4 涌现固化通道（Q4 定稿的落地：3 次同构）
+
+```
+infer goal 终态(done) ──▶ 执行图 shape 签名 ──▶ infer_shape 入账（按 domain）
+                                │
+              同域连续 3 次同签名 ──▶ 自动起草新蓝本 v1 草稿（确定性翻译，不发布）
+```
+
+- **签名**（v1 启发式，诚实标注）：节点 kind 多重集 + 规范化边三元组 (from_kind|to_kind|edge_kind) 多重集，排序后 SHA256。不含 agent 身份（同构=结构同构，人换了不影响）；不做到图的同构 canonization（NP 难方向），多重集签名是便宜的第一道滤网——误报（结构碰巧同）只会多起草一份草稿，草稿本身零风险（不发布不绑定）。
+- **触发**：goal:finished(status=done) 且 goal.blueprint_version_id=''（infer 模式）；同 domain 最近 3 条 infer_shape 签名全等 → 起草。
+- **翻译（确定性，无 LLM）**：sub_goal → task 节点（id=sgN、title、assignee=agent:<实际执行者>、brief=终态 description、verifier 带 verify 块）；depends_on → done 边；追加共享 end_ok。Create 走既有校验门——非法即弃（fail-closed，只记日志）。
+- **幂等**：起草名 = `固化：<签名前8位>·<domain名>`，blueprint.name UNIQUE 撞名即跳过（同形状重复触发不双开）。
+- 产物是普通草稿：列表可见、description 注明「3 次同构自动起草」、发布权在人。阈值 3 硬编码 const（Q4 说可调——RSI 参数化随 Phase D 配置面，v1 不做配置项）。
+
+### 12.5 验收（Phase C 完成判据）
+
+1. 补丁提案：非法补丁创建被拒；合法补丁批准后生成带 patched 内容的新草稿（changelog=hypothesis）、重复批准冲突。
+2. diff：ProposalDiff 的 add/remove/change 清单与构造的补丁一致。
+3. A/B：两 goal 对照端点返回双方 metrics + delta。
+4. 固化：同域 3 次同构 infer goal 触发自动起草（确定性翻译通过校验）；形状不同不触发；重复触发不双开。
+5. 全量回归 + 浏览器实测（提案批准→diff 视图→A/B 卡→固化草稿出现在列表）。

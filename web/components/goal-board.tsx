@@ -427,7 +427,7 @@ export function GoalBoard({
                       "flex h-20 items-center justify-center rounded-lg border border-dashed text-[11px]",
                       hovered && hover!.legal
                         ? "border-accent/40 text-accent"
-                        : "border-line/70 text-ink-3/70"
+                        : "border-line/70 text-ink-3"
                     )}
                   >
                     {hovered && hover!.legal ? hover!.hint : "这一列是空的"}
@@ -556,7 +556,7 @@ export function GoalBoard({
                             重新打开
                           </button>
                         )}
-                        <span className="ml-auto font-mono text-[10px] text-ink-3/70">
+                        <span className="ml-auto font-mono text-[10px] text-ink-3">
                           {STATUS_LABEL[g.status] ?? g.status}
                         </span>
                       </div>

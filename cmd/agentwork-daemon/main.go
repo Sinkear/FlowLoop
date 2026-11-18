@@ -139,6 +139,9 @@ func main() {
 	// pinned version inside Activate; the server exposes the blueprint
 	// CRUD + spec-graph endpoints.
 	blueprintSvc := service.NewBlueprintService(st, bus)
+	// Phase C §12.4: the RSI emergent draft (3-isomorphism trigger) drafts
+	// blueprint v1 through the blueprint validator — wire it.
+	rsiSvc.SetBlueprint(blueprintSvc)
 	teamImportSvc := service.NewTeamImportService(st, bus)
 	teamImportSvc.SetDependencies(runSvc, goalSvc, domainSvc, agentSvc, skillSvc, squadSvc)
 

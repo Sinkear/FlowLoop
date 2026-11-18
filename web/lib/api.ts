@@ -570,6 +570,52 @@ export const publishBlueprintVersion = (versionId: string, changelog: string) =>
 
 export const getBlueprintGraph = (versionId: string) =>
   api<WorkflowGraph>(`/workflows/blueprints/${versionId}`);
+
+// ── 蓝本提案（Phase C，§12）：结构化补丁 → 人工批准 → 新草稿 ──
+export const listBlueprintProposals = (blueprintId: string) =>
+  api<{ proposals: import("./types").BlueprintProposal[] }>(
+    `/blueprints/${blueprintId}/proposals`
+  );
+
+export const createBlueprintProposal = (
+  blueprintId: string,
+  body: {
+    title: string;
+    hypothesis?: string;
+    expected_metric?: string;
+    expected_direction?: string;
+    patches: import("./types").BlueprintPatch[];
+    finding_id?: string;
+    base_version_id?: string;
+  }
+) =>
+  api<import("./types").BlueprintProposal>(`/blueprints/${blueprintId}/proposals`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const getBlueprintProposalDiff = (proposalId: string) =>
+  api<import("./types").BlueprintProposalDiff>(
+    `/blueprint-proposals/${proposalId}/diff`
+  );
+
+export const approveBlueprintProposal = (proposalId: string) =>
+  api<{ proposal: import("./types").BlueprintProposal; draft: import("./types").BlueprintVersion }>(
+    `/blueprint-proposals/${proposalId}/approve`,
+    { method: "POST" }
+  );
+
+export const rejectBlueprintProposal = (proposalId: string) =>
+  api<import("./types").BlueprintProposal>(`/blueprint-proposals/${proposalId}/reject`, {
+    method: "POST",
+  });
+
+// 同题 A/B（§12.3）：两个 goal 执行指标并排 + delta。
+export const compareBlueprintAB = (blueprintId: string, goalA: string, goalB: string) =>
+  api<import("./types").ABCompareResult>(
+    `/workflows/blueprints/${blueprintId}/ab?goal_a=${goalA}&goal_b=${goalB}`
+  );
+
 // ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
 
 export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");

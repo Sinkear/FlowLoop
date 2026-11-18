@@ -1044,3 +1044,71 @@ export interface HeldGate {
   timeout_action?: string;
   sub_goal_id: string;
 }
+
+// ── 蓝本提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
+// 批准 = 开新草稿（changelog=hypothesis），永不自动发布。
+export type BlueprintPatchOp =
+  | "add_node"
+  | "update_node"
+  | "delete_node"
+  | "add_edge"
+  | "delete_edge";
+
+export interface BlueprintPatch {
+  op: BlueprintPatchOp;
+  id?: string;
+  node?: { id: string; type: string; title: string; [k: string]: unknown };
+  edge?: { source: string; source_handle?: string; target: string };
+}
+
+export interface BlueprintProposal {
+  id: string;
+  blueprint_id: string;
+  base_version_id: string;
+  title: string;
+  hypothesis: string;
+  expected_metric: string;
+  expected_direction: string; // up|down|""
+  patches: BlueprintPatch[];
+  finding_id: string;
+  status: "pending" | "approved" | "rejected";
+  applied_version_id: string;
+  decided_at: string;
+  created_by_type: string;
+  created_at: string;
+}
+
+export interface DiffNode {
+  id: string;
+  kind: string;
+  base: Record<string, unknown>;
+  patched: Record<string, unknown>;
+}
+
+export interface BlueprintProposalDiff {
+  proposal_id: string;
+  base_version_id: string;
+  base: WorkflowGraph;
+  patched: WorkflowGraph;
+  patched_content: string;
+  nodes_added: string[];
+  nodes_removed: string[];
+  nodes_changed: DiffNode[];
+  edges_added: string[];
+  edges_removed: string[];
+}
+
+export interface ABGoalFace {
+  goal_id: string;
+  goal_title: string;
+  status: string;
+  blueprint_version_id: string;
+  metrics: Record<string, number | string>;
+}
+
+export interface ABCompareResult {
+  goal_a: ABGoalFace;
+  goal_b: ABGoalFace;
+  deltas: Record<string, number>;
+  notes?: string[];
+}

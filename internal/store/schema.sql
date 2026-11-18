@@ -284,6 +284,48 @@ CREATE TABLE IF NOT EXISTS blueprint_node (
 CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_blueprint_node_sub_goal ON blueprint_node(sub_goal_id);
 
+-- blueprint_proposal (Phase C §12.1): one structured patch proposal against a
+-- published base version. patches_json is a JSON array of ops
+-- (add_node|update_node|delete_node|add_edge|delete_edge); approval applies
+-- them to the base content, re-validates (V1-V6), and opens a NEW DRAFT
+-- version (changelog = hypothesis) — never auto-published. applied_version_id
+-- records the draft the approval produced.
+CREATE TABLE IF NOT EXISTS blueprint_proposal (
+    id                 TEXT PRIMARY KEY,
+    blueprint_id       TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+    base_version_id    TEXT NOT NULL REFERENCES blueprint_version(id),
+    title              TEXT NOT NULL,
+    hypothesis         TEXT NOT NULL DEFAULT '',
+    expected_metric    TEXT NOT NULL DEFAULT '',
+    expected_direction TEXT NOT NULL DEFAULT '',  -- up|down
+    patches_json       TEXT NOT NULL DEFAULT '[]',
+    finding_id         TEXT NOT NULL DEFAULT '',   -- optional link: rsi_finding.id
+    status             TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+    applied_version_id TEXT NOT NULL DEFAULT '',  -- set on approve (the new draft)
+    decided_at         TEXT NOT NULL DEFAULT '',
+    decided_by_type    TEXT NOT NULL DEFAULT '',
+    decided_by_id      TEXT NOT NULL DEFAULT '',
+    created_by_type    TEXT NOT NULL DEFAULT 'human',
+    created_by_id      TEXT NOT NULL DEFAULT '',
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_bp ON blueprint_proposal(blueprint_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_status ON blueprint_proposal(status, created_at);
+
+-- infer_shape (Phase C §12.4): shape signature of each finished infer goal's
+-- execution graph, keyed by domain. 3 consecutive equal signatures in one
+-- domain trigger the auto-draft of a blueprint v1 (never auto-published).
+CREATE TABLE IF NOT EXISTS infer_shape (
+    id         TEXT PRIMARY KEY,
+    goal_id    TEXT NOT NULL,
+    domain_id  TEXT NOT NULL DEFAULT '',
+    squad_id   TEXT NOT NULL DEFAULT '',
+    signature  TEXT NOT NULL,
+    node_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_goal_assignee ON goal(assignee_type, assignee_id);
 CREATE INDEX IF NOT EXISTS idx_goal_status ON goal(status);
 

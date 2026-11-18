@@ -45,20 +45,20 @@ type SpecGraph struct {
 // by type (task/condition/router/gate/spawn/end) — mirrors the approved
 // JSON Schema so the same document validates on both sides.
 type SpecNode struct {
-	ID        string       `json:"id"`
-	Type      string       `json:"type"` // task|condition|router|gate|spawn|end
-	Title     string       `json:"title"`
-	Task      *SpecTask    `json:"task,omitempty"`
-	Condition *SpecCond    `json:"condition,omitempty"`
-	Router    *SpecRouter  `json:"router,omitempty"` // Phase B
-	Gate      *SpecGate    `json:"gate,omitempty"`   // Phase B
-	Spawn     *SpecSpawn   `json:"spawn,omitempty"`  // Phase B
-	End       *SpecEnd     `json:"end,omitempty"`
+	ID        string      `json:"id"`
+	Type      string      `json:"type"` // task|condition|router|gate|spawn|end
+	Title     string      `json:"title"`
+	Task      *SpecTask   `json:"task,omitempty"`
+	Condition *SpecCond   `json:"condition,omitempty"`
+	Router    *SpecRouter `json:"router,omitempty"` // Phase B
+	Gate      *SpecGate   `json:"gate,omitempty"`   // Phase B
+	Spawn     *SpecSpawn  `json:"spawn,omitempty"`  // Phase B
+	End       *SpecEnd    `json:"end,omitempty"`
 }
 
 type SpecTask struct {
-	Assignee string     `json:"assignee"` // "agent:xx" | "squad:xx"
-	Brief    string     `json:"brief"`    // template: {{goal.<field>}} / {{node.<id>.output}}
+	Assignee string      `json:"assignee"` // "agent:xx" | "squad:xx"
+	Brief    string      `json:"brief"`    // template: {{goal.<field>}} / {{node.<id>.output}}
 	Verify   *SpecVerify `json:"verify,omitempty"`
 }
 
@@ -68,9 +68,9 @@ type SpecVerify struct {
 }
 
 type SpecCond struct {
-	Expr  string    `json:"expr"` // restricted-operator expression over goal fields
+	Expr  string     `json:"expr"` // restricted-operator expression over goal fields
 	Cases []SpecCase `json:"cases"`
-	Else  string    `json:"else,omitempty"` // default "else"
+	Else  string     `json:"else,omitempty"` // default "else"
 }
 
 type SpecCase struct {
@@ -89,7 +89,7 @@ type SpecRouterClass struct {
 }
 
 type SpecGate struct { // Phase B
-	Prompt  string          `json:"prompt"`
+	Prompt  string           `json:"prompt"`
 	Actions []SpecGateAction `json:"actions"`
 	Timeout *SpecGateTimeout `json:"timeout,omitempty"`
 }
@@ -104,6 +104,7 @@ func (g *SpecGate) ActionIDs() []string {
 	}
 	return ids
 }
+
 type SpecGateAction struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -174,15 +175,15 @@ type BlueprintVersion struct {
 // (pruned by a condition choice). end nodes stay pending until
 // settleBlueprintEndsTx flips them when every active node is terminal.
 type BlueprintNode struct {
-	ID            string `json:"id"`
-	GoalID        string `json:"goal_id"`
-	NodeKey       string `json:"node_key"`
-	ParentKey     string `json:"parent_key"`
-	NodeType      string `json:"node_type"`
-	SubGoalID     string `json:"sub_goal_id"`
-	State         string `json:"state"`
+	ID             string `json:"id"`
+	GoalID         string `json:"goal_id"`
+	NodeKey        string `json:"node_key"`
+	ParentKey      string `json:"parent_key"`
+	NodeType       string `json:"node_type"`
+	SubGoalID      string `json:"sub_goal_id"`
+	State          string `json:"state"`
 	ResolvedConfig string `json:"resolved_config"`
-	CreatedAt     string `json:"created_at"`
+	CreatedAt      string `json:"created_at"`
 }
 
 // ── validation ──
@@ -1130,8 +1131,15 @@ func (s *BlueprintService) SpecWorkflowGraph(ctx context.Context, versionID stri
 	if err != nil {
 		return nil, err
 	}
+	return specGraphToWorkflow(v.ID, g), nil
+}
+
+// specGraphToWorkflow assembles a spec graph into the WorkflowGraph shape the
+// frontend renderer already understands (§4.12 one renderer, two flavors).
+// Shared by stored-version rendering AND proposal diff preview (Phase C).
+func specGraphToWorkflow(scopeID string, g *SpecGraph) *WorkflowGraph {
 	wf := &WorkflowGraph{
-		GoalID:      "blueprint:" + v.ID,
+		GoalID:      "blueprint:" + scopeID,
 		GeneratedAt: now(),
 		Frozen:      true, // a published spec version is immutable
 		Nodes:       make([]WorkflowNode, 0, len(g.Nodes)),
@@ -1166,7 +1174,7 @@ func (s *BlueprintService) SpecWorkflowGraph(ctx context.Context, versionID stri
 	wf.Metrics["task_count"] = tasks
 	wf.Metrics["condition_count"] = conds
 	sort.SliceStable(wf.Nodes, func(i, j int) bool { return wf.Nodes[i].Key < wf.Nodes[j].Key })
-	return wf, nil
+	return wf
 }
 
 // ── compile (beat 1) + node lifecycle hooks — GoalService methods ──
@@ -1556,13 +1564,13 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			if len(depIDs) == 0 {
 				nodeState = "running" // held from the start — no upstream to wait for
 				extra = map[string]string{
-					"held_since": ts,
-					"timeout_after": n.Gate.Timeout.After,
+					"held_since":     ts,
+					"timeout_after":  n.Gate.Timeout.After,
 					"timeout_action": n.Gate.Timeout.Action,
 				}
 			} else {
 				extra = map[string]string{
-					"timeout_after": n.Gate.Timeout.After,
+					"timeout_after":  n.Gate.Timeout.After,
 					"timeout_action": n.Gate.Timeout.Action,
 				}
 			}
@@ -1808,7 +1816,7 @@ func (s *GoalService) resolveReleasedBriefTx(ctx context.Context, tx *sql.Tx, go
 }
 
 // isBlueprintNodeTypeTx reports whether the sub_goal is a compiled node of
-// the given spec type ('' / no row = non-pinned goal or a plain task — no).
+// the given spec type (” / no row = non-pinned goal or a plain task — no).
 func isBlueprintNodeTypeTx(ctx context.Context, tx *sql.Tx, subGoalID, nodeType string) (bool, error) {
 	var n int
 	if err := tx.QueryRowContext(ctx,
@@ -2532,14 +2540,14 @@ func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
 // action buttons, the hold clock, and the timeout policy. Decided/skipped
 // gates are NOT listed — the card only exists while the decision is open.
 type HeldGate struct {
-	NodeKey       string          `json:"node_key"`
-	Title         string          `json:"title"`
-	Prompt        string          `json:"prompt"`
+	NodeKey       string           `json:"node_key"`
+	Title         string           `json:"title"`
+	Prompt        string           `json:"prompt"`
 	Actions       []SpecGateAction `json:"actions"`
-	HeldSince     string          `json:"held_since,omitempty"`
-	TimeoutAfter  string          `json:"timeout_after,omitempty"`
-	TimeoutAction string          `json:"timeout_action,omitempty"`
-	SubGoalID     string          `json:"sub_goal_id"`
+	HeldSince     string           `json:"held_since,omitempty"`
+	TimeoutAfter  string           `json:"timeout_after,omitempty"`
+	TimeoutAction string           `json:"timeout_action,omitempty"`
+	SubGoalID     string           `json:"sub_goal_id"`
 }
 
 // ListHeldGates returns a goal's open blueprint gates in node order — the
@@ -2732,7 +2740,7 @@ func resolveCapabilityTx(ctx context.Context, tx *sql.Tx, squadID, slug string) 
 // for, which agent actually got it, which squad briefs its runs.
 func marshalResolved(assigneeSpec, resolvedAgent, teamSquad string) (string, error) {
 	b, err := json.Marshal(map[string]string{
-		"assignee_spec": assigneeSpec,
+		"assignee_spec":  assigneeSpec,
 		"resolved_agent": resolvedAgent,
 		"team_squad_id":  teamSquad,
 	})
@@ -2790,4 +2798,597 @@ func spawnPlannerInstruction(n *SpecNode, teamSquadID string) string {
 		"- assignee 填该小队成员的智能体 id（32 位十六进制），不要填名字" + rosterHint + "；\n" +
 		"- 按成员的角色词派工，角色词体现岗位与专有技能的差异（如 proprietary-implementer 与 design-implementer 是两个岗位）——把每一项分给擅长它的成员，而不是分给空闲的人；名册里成员名后括号内标注了各自的专有技能\n" +
 		"- 最多 " + strconv.Itoa(maxKids) + " 项，超出会被拒绝并重试"
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase C (proposal §12): structured patch proposals → approve → new draft.
+// The optimization loop's write face: findings/humans produce PATCHES, the
+// validator enforces legality, approval opens a new DRAFT version
+// (changelog = hypothesis) — never auto-published. 双簿记: the spec is the
+// plan, execution graphs stay records; this loop is the bridge.
+// ═══════════════════════════════════════════════════════════════════════
+
+// BlueprintPatch is one structured edit op. Exactly one payload field is set
+// per op kind:
+//   - add_node:    Node (full SpecNode)
+//   - update_node: ID + Node (same id, same type, whole body replaced)
+//   - delete_node: ID (cascades: connected edges removed too)
+//   - add_edge:    Edge
+//   - delete_edge: Edge (source+source_handle+target identify)
+type BlueprintPatch struct {
+	Op   string    `json:"op"`
+	ID   string    `json:"id,omitempty"`
+	Node *SpecNode `json:"node,omitempty"`
+	Edge *SpecEdge `json:"edge,omitempty"`
+}
+
+// BlueprintProposal is one stored patch proposal row.
+type BlueprintProposal struct {
+	ID                string           `json:"id"`
+	BlueprintID       string           `json:"blueprint_id"`
+	BaseVersionID     string           `json:"base_version_id"`
+	Title             string           `json:"title"`
+	Hypothesis        string           `json:"hypothesis"`
+	ExpectedMetric    string           `json:"expected_metric"`
+	ExpectedDirection string           `json:"expected_direction"`
+	Patches           []BlueprintPatch `json:"patches"`
+	FindingID         string           `json:"finding_id"`
+	Status            string           `json:"status"` // pending|approved|rejected
+	AppliedVersionID  string           `json:"applied_version_id"`
+	DecidedAt         string           `json:"decided_at"`
+	DecidedByType     string           `json:"decided_by_type"`
+	DecidedByID       string           `json:"decided_by_id"`
+	CreatedByType     string           `json:"created_by_type"`
+	CreatedByID       string           `json:"created_by_id"`
+	CreatedAt         string           `json:"created_at"`
+}
+
+// applyBlueprintPatches applies ops to a parsed spec graph in order. Pure
+// structural edits only — legality (V1-V6) is validateContent's job, called
+// by BOTH create (fail fast) and approve (fail closed on drift).
+func applyBlueprintPatches(g *SpecGraph, patches []BlueprintPatch) error {
+	for i, p := range patches {
+		switch p.Op {
+		case "add_node":
+			if p.Node == nil {
+				return NewValidationError(fmt.Sprintf("patches[%d]: add_node requires node", i))
+			}
+			g.Nodes = append(g.Nodes, *p.Node)
+		case "update_node":
+			if p.Node == nil || p.ID == "" {
+				return NewValidationError(fmt.Sprintf("patches[%d]: update_node requires id + node", i))
+			}
+			if p.Node.ID != p.ID {
+				return NewValidationError(fmt.Sprintf("patches[%d]: update_node node.id %q != op.id %q", i, p.Node.ID, p.ID))
+			}
+			found := false
+			for j := range g.Nodes {
+				if g.Nodes[j].ID == p.ID {
+					if g.Nodes[j].Type != p.Node.Type {
+						return NewValidationError(fmt.Sprintf("patches[%d]: update_node cannot change type (%q → %q)", i, g.Nodes[j].Type, p.Node.Type))
+					}
+					g.Nodes[j] = *p.Node
+					found = true
+					break
+				}
+			}
+			if !found {
+				return NewValidationError(fmt.Sprintf("patches[%d]: update_node target %q not found", i, p.ID))
+			}
+		case "delete_node":
+			if p.ID == "" {
+				return NewValidationError(fmt.Sprintf("patches[%d]: delete_node requires id", i))
+			}
+			nodes := g.Nodes[:0]
+			for _, n := range g.Nodes {
+				if n.ID != p.ID {
+					nodes = append(nodes, n)
+				}
+			}
+			g.Nodes = nodes
+			edges := g.Edges[:0]
+			for _, e := range g.Edges {
+				if e.Source != p.ID && e.Target != p.ID {
+					edges = append(edges, e)
+				}
+			}
+			g.Edges = edges
+		case "add_edge":
+			if p.Edge == nil {
+				return NewValidationError(fmt.Sprintf("patches[%d]: add_edge requires edge", i))
+			}
+			g.Edges = append(g.Edges, *p.Edge)
+		case "delete_edge":
+			if p.Edge == nil {
+				return NewValidationError(fmt.Sprintf("patches[%d]: delete_edge requires edge", i))
+			}
+			edges := g.Edges[:0]
+			for _, e := range g.Edges {
+				if !(e.Source == p.Edge.Source && e.SourceHandle == p.Edge.SourceHandle && e.Target == p.Edge.Target) {
+					edges = append(edges, e)
+				}
+			}
+			g.Edges = edges
+		default:
+			return NewValidationError(fmt.Sprintf("patches[%d]: unknown op %q (add_node|update_node|delete_node|add_edge|delete_edge)", i, p.Op))
+		}
+	}
+	return nil
+}
+
+// patchedContent applies patches to the base version content and re-serializes.
+// Both create and approve call this — base content + patches are immutable, so
+// the result is deterministic (same spirit as V6 content_hash).
+func (s *BlueprintService) patchedContent(ctx context.Context, base *BlueprintVersion, patches []BlueprintPatch) (string, *SpecGraph, error) {
+	g, err := parseSpecContent(base)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := applyBlueprintPatches(g, patches); err != nil {
+		return "", nil, err
+	}
+	if _, err := s.validateContent(ctx, mustMarshalSpec(g)); err != nil {
+		return "", nil, err
+	}
+	out, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		return "", nil, fmt.Errorf("marshal patched spec: %w", err)
+	}
+	return string(out), g, nil
+}
+
+func mustMarshalSpec(g *SpecGraph) string {
+	b, _ := json.Marshal(g)
+	return string(b)
+}
+
+// CreateProposal stores a pending patch proposal. The patch is validated
+// against the base version IMMEDIATELY (fail fast) — the proposal API surface
+// should never accept an illegal graph, even as a draft.
+func (s *BlueprintService) CreateProposal(ctx context.Context, blueprintID, baseVersionID, title, hypothesis, expectedMetric, expectedDirection string, patches []BlueprintPatch, findingID, createdByType, createdByID string) (*BlueprintProposal, error) {
+	if strings.TrimSpace(title) == "" {
+		return nil, NewFieldRequiredError("title")
+	}
+	if len(patches) == 0 {
+		return nil, NewValidationError("patches must not be empty — a proposal carries at least one op")
+	}
+	if expectedDirection != "" && expectedDirection != "up" && expectedDirection != "down" {
+		return nil, NewValidationError(`expected_direction must be "up" or "down" (or empty)`)
+	}
+	if baseVersionID == "" {
+		// default: the blueprint's latest published version
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=? AND bv.status='published' ORDER BY bv.version DESC LIMIT 1`,
+			blueprintID).Scan(&baseVersionID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, NewValidationError("blueprint has no published version to patch yet")
+			}
+			return nil, fmt.Errorf("load latest published: %w", err)
+		}
+	}
+	base, err := s.getVersion(ctx, baseVersionID)
+	if err != nil {
+		return nil, err
+	}
+	if base.BlueprintID != blueprintID {
+		return nil, NewValidationError("base_version_id does not belong to this blueprint")
+	}
+	if base.Status != "published" {
+		return nil, NewValidationError("base version must be published (drafts are editable directly)")
+	}
+	if _, _, err := s.patchedContent(ctx, base, patches); err != nil {
+		return nil, err
+	}
+	patchesJSON, err := json.Marshal(patches)
+	if err != nil {
+		return nil, fmt.Errorf("marshal patches: %w", err)
+	}
+	p := BlueprintProposal{
+		ID:                newID(),
+		BlueprintID:       blueprintID,
+		BaseVersionID:     baseVersionID,
+		Title:             title,
+		Hypothesis:        hypothesis,
+		ExpectedMetric:    expectedMetric,
+		ExpectedDirection: expectedDirection,
+		Patches:           patches,
+		FindingID:         findingID,
+		Status:            "pending",
+		CreatedByType:     orDefault(createdByType, "human"),
+		CreatedByID:       createdByID,
+		CreatedAt:         now(),
+	}
+	if _, err := s.st.DB().ExecContext(ctx,
+		`INSERT INTO blueprint_proposal (id,blueprint_id,base_version_id,title,hypothesis,expected_metric,expected_direction,patches_json,finding_id,status,created_by_type,created_by_id,created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.BlueprintID, p.BaseVersionID, p.Title, p.Hypothesis, p.ExpectedMetric, p.ExpectedDirection, string(patchesJSON), p.FindingID, p.Status, p.CreatedByType, p.CreatedByID, p.CreatedAt); err != nil {
+		return nil, fmt.Errorf("insert blueprint proposal: %w", err)
+	}
+	logging.Infof("blueprint: proposal %q created against %s (%d ops)", p.Title, p.BaseVersionID[:8], len(p.Patches))
+	return &p, nil
+}
+
+func (s *BlueprintService) getProposal(ctx context.Context, proposalID string) (*BlueprintProposal, error) {
+	var patchesJSON string
+	p := &BlueprintProposal{}
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id,blueprint_id,base_version_id,title,hypothesis,expected_metric,expected_direction,patches_json,finding_id,status,applied_version_id,decided_at,decided_by_type,decided_by_id,created_by_type,created_by_id,created_at
+		 FROM blueprint_proposal WHERE id=?`, proposalID).
+		Scan(&p.ID, &p.BlueprintID, &p.BaseVersionID, &p.Title, &p.Hypothesis, &p.ExpectedMetric, &p.ExpectedDirection, &patchesJSON, &p.FindingID, &p.Status, &p.AppliedVersionID, &p.DecidedAt, &p.DecidedByType, &p.DecidedByID, &p.CreatedByType, &p.CreatedByID, &p.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("load proposal: %w", err)
+	}
+	if err := json.Unmarshal([]byte(patchesJSON), &p.Patches); err != nil {
+		return nil, fmt.Errorf("decode patches_json for proposal %s: %w", p.ID, err)
+	}
+	return p, nil
+}
+
+func (s *BlueprintService) GetProposal(ctx context.Context, proposalID string) (*BlueprintProposal, error) {
+	return s.getProposal(ctx, proposalID)
+}
+
+func (s *BlueprintService) ListProposals(ctx context.Context, blueprintID string) ([]BlueprintProposal, error) {
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT id,blueprint_id,base_version_id,title,hypothesis,expected_metric,expected_direction,patches_json,finding_id,status,applied_version_id,decided_at,decided_by_type,decided_by_id,created_by_type,created_by_id,created_at
+		 FROM blueprint_proposal WHERE blueprint_id=? ORDER BY created_at DESC`, blueprintID)
+	if err != nil {
+		return nil, fmt.Errorf("list proposals: %w", err)
+	}
+	defer rows.Close()
+	var out []BlueprintProposal
+	for rows.Next() {
+		var patchesJSON string
+		p := BlueprintProposal{}
+		if err := rows.Scan(&p.ID, &p.BlueprintID, &p.BaseVersionID, &p.Title, &p.Hypothesis, &p.ExpectedMetric, &p.ExpectedDirection, &patchesJSON, &p.FindingID, &p.Status, &p.AppliedVersionID, &p.DecidedAt, &p.DecidedByType, &p.DecidedByID, &p.CreatedByType, &p.CreatedByID, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan proposal: %w", err)
+		}
+		if err := json.Unmarshal([]byte(patchesJSON), &p.Patches); err != nil {
+			return nil, fmt.Errorf("decode patches_json for proposal %s: %w", p.ID, err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ApproveProposal applies the patches (re-validated, fail-closed on drift) and
+// opens a NEW DRAFT version with changelog = hypothesis. Publishing stays a
+// separate human act — 「提案不自动应用」原则原样保留.
+func (s *BlueprintService) ApproveProposal(ctx context.Context, proposalID, decidedByType, decidedByID string) (*BlueprintProposal, *BlueprintVersion, error) {
+	p, err := s.getProposal(ctx, proposalID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p.Status != "pending" {
+		return nil, nil, NewConflictError(fmt.Sprintf("proposal is already %s — a decision cannot be re-issued", p.Status))
+	}
+	base, err := s.getVersion(ctx, p.BaseVersionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	content, _, err := s.patchedContent(ctx, base, p.Patches)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-validate patch on approve (base may have drifted): %w", err)
+	}
+
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	var maxVer int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version),0) FROM blueprint_version WHERE blueprint_id=?`, p.BlueprintID).Scan(&maxVer); err != nil {
+		return nil, nil, fmt.Errorf("load max version: %w", err)
+	}
+	v := BlueprintVersion{
+		ID:          newID(),
+		BlueprintID: p.BlueprintID,
+		Version:     maxVer + 1,
+		Content:     content,
+		ContentHash: hashContent(content),
+		Status:      "draft",
+		Changelog:   p.Hypothesis, // §12.1: changelog = hypothesis
+		CreatedAt:   now(),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO blueprint_version (id,blueprint_id,version,content,content_hash,status,changelog,created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		v.ID, v.BlueprintID, v.Version, v.Content, v.ContentHash, v.Status, v.Changelog, v.CreatedAt); err != nil {
+		return nil, nil, fmt.Errorf("insert approved draft: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_proposal SET status='approved', applied_version_id=?, decided_at=?, decided_by_type=?, decided_by_id=? WHERE id=? AND status='pending'`,
+		v.ID, now(), decidedByType, decidedByID, p.ID); err != nil {
+		return nil, nil, fmt.Errorf("mark proposal approved: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	p.Status = "approved"
+	p.AppliedVersionID = v.ID
+	p.DecidedAt = now()
+	p.DecidedByType = decidedByType
+	p.DecidedByID = decidedByID
+	logging.Infof("blueprint: proposal %q approved → draft v%d (%s)", p.Title, v.Version, v.ID[:8])
+	return p, &v, nil
+}
+
+func (s *BlueprintService) RejectProposal(ctx context.Context, proposalID, decidedByType, decidedByID string) (*BlueprintProposal, error) {
+	p, err := s.getProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != "pending" {
+		return nil, NewConflictError(fmt.Sprintf("proposal is already %s — a decision cannot be re-issued", p.Status))
+	}
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE blueprint_proposal SET status='rejected', decided_at=?, decided_by_type=?, decided_by_id=? WHERE id=? AND status='pending'`,
+		now(), decidedByType, decidedByID, proposalID); err != nil {
+		return nil, fmt.Errorf("mark proposal rejected: %w", err)
+	}
+	p.Status = "rejected"
+	p.DecidedAt = now()
+	p.DecidedByType = decidedByType
+	p.DecidedByID = decidedByID
+	return p, nil
+}
+
+// BlueprintDiff is the structured three-color diff between base and patched
+// spec graphs (§12.2). Nodes are aligned by id; changed nodes carry both
+// snapshots so the frontend renders amber with field-level detail.
+type BlueprintDiff struct {
+	ProposalID     string         `json:"proposal_id"`
+	BaseVersionID  string         `json:"base_version_id"`
+	Base           *WorkflowGraph `json:"base"`
+	Patched        *WorkflowGraph `json:"patched"`
+	PatchedContent string         `json:"patched_content"`
+	NodesAdded     []string       `json:"nodes_added"`
+	NodesRemoved   []string       `json:"nodes_removed"`
+	NodesChanged   []DiffNode     `json:"nodes_changed"`
+	EdgesAdded     []string       `json:"edges_added"`
+	EdgesRemoved   []string       `json:"edges_removed"`
+}
+
+type DiffNode struct {
+	ID      string         `json:"id"`
+	Kind    string         `json:"kind"`
+	Base    map[string]any `json:"base"`
+	Patched map[string]any `json:"patched"`
+}
+
+func edgeKey(e SpecEdge) string {
+	return e.Source + " →" + e.SourceHandle + "→ " + e.Target
+}
+
+func (s *BlueprintService) ProposalDiff(ctx context.Context, proposalID string) (*BlueprintDiff, error) {
+	p, err := s.getProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	base, err := s.getVersion(ctx, p.BaseVersionID)
+	if err != nil {
+		return nil, err
+	}
+	baseG, err := parseSpecContent(base)
+	if err != nil {
+		return nil, err
+	}
+	patchedG, err := cloneSpec(baseG)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyBlueprintPatches(patchedG, p.Patches); err != nil {
+		return nil, err
+	}
+
+	d := &BlueprintDiff{
+		ProposalID:    p.ID,
+		BaseVersionID: p.BaseVersionID,
+		Base:          specGraphToWorkflow(p.BaseVersionID, baseG),
+		Patched:       specGraphToWorkflow("proposal:"+p.ID, patchedG),
+		// non-nil empties: JSON emits [] (not null) — the frontend maps over
+		// these lists directly.
+		NodesAdded:   []string{},
+		NodesRemoved: []string{},
+		NodesChanged: []DiffNode{},
+		EdgesAdded:   []string{},
+		EdgesRemoved: []string{},
+	}
+	patchedJSON, _ := json.MarshalIndent(patchedG, "", "  ")
+	d.PatchedContent = string(patchedJSON)
+
+	baseNodes := map[string]SpecNode{}
+	for _, n := range baseG.Nodes {
+		baseNodes[n.ID] = n
+	}
+	patchedNodes := map[string]SpecNode{}
+	for _, n := range patchedG.Nodes {
+		patchedNodes[n.ID] = n
+	}
+	for _, n := range patchedG.Nodes {
+		if _, ok := baseNodes[n.ID]; !ok {
+			d.NodesAdded = append(d.NodesAdded, n.ID)
+		}
+	}
+	for _, n := range baseG.Nodes {
+		if _, ok := patchedNodes[n.ID]; !ok {
+			d.NodesRemoved = append(d.NodesRemoved, n.ID)
+		}
+	}
+	for _, b := range baseG.Nodes {
+		pn, ok := patchedNodes[b.ID]
+		if !ok {
+			continue
+		}
+		bj, pj := mustMarshalSpec(&SpecGraph{Nodes: []SpecNode{b}}), mustMarshalSpec(&SpecGraph{Nodes: []SpecNode{pn}})
+		if bj != pj {
+			d.NodesChanged = append(d.NodesChanged, DiffNode{
+				ID:      b.ID,
+				Kind:    b.Type,
+				Base:    jsonMapOf(b),
+				Patched: jsonMapOf(pn),
+			})
+		}
+	}
+	baseEdges := map[string]bool{}
+	for _, e := range baseG.Edges {
+		baseEdges[edgeKey(e)] = true
+	}
+	patchedEdges := map[string]bool{}
+	for _, e := range patchedG.Edges {
+		patchedEdges[edgeKey(e)] = true
+	}
+	for k := range patchedEdges {
+		if !baseEdges[k] {
+			d.EdgesAdded = append(d.EdgesAdded, k)
+		}
+	}
+	for k := range baseEdges {
+		if !patchedEdges[k] {
+			d.EdgesRemoved = append(d.EdgesRemoved, k)
+		}
+	}
+	sort.Strings(d.NodesAdded)
+	sort.Strings(d.NodesRemoved)
+	sort.Strings(d.EdgesAdded)
+	sort.Strings(d.EdgesRemoved)
+	return d, nil
+}
+
+func cloneSpec(g *SpecGraph) (*SpecGraph, error) {
+	b, err := json.Marshal(g)
+	if err != nil {
+		return nil, err
+	}
+	var out SpecGraph
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func jsonMapOf(v any) map[string]any {
+	b, _ := json.Marshal(v)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// ── 涌现固化 (§12.4): deterministic execution-graph → blueprint translation ──
+
+// emergentDraftName is the auto-draft's unique name (blueprint.name UNIQUE ⇒
+// the same shape re-triggering does not double-draft).
+func emergentDraftName(sig string, domainName string) string {
+	if len(sig) > 8 {
+		sig = sig[:8]
+	}
+	if domainName == "" {
+		domainName = "未命名域"
+	}
+	return "固化：" + sig + "·" + domainName
+}
+
+// DraftFromGoalExecution translates a finished infer goal's sub_goals into a
+// blueprint v1 DRAFT (tasks + done edges + shared end). Deterministic: no LLM
+// — the structure is already known from execution; the validator is the gate.
+func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, domainID, signature string) (*Blueprint, error) {
+	// Idempotency: same shape in the same domain → same name → skip on conflict.
+	var domainName string
+	if domainID != "" {
+		_ = s.st.DB().QueryRowContext(ctx, `SELECT name FROM domain WHERE id=?`, domainID).Scan(&domainName)
+	}
+	name := emergentDraftName(signature, domainName)
+	var exists int
+	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint WHERE name=?`, name).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("check emergent draft existence: %w", err)
+	}
+	if exists > 0 {
+		logging.Infof("blueprint: emergent draft %q already exists — skip", name)
+		return nil, nil
+	}
+
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT id,title,description,assignee_id,verifier_id,depends_on FROM sub_goal WHERE goal_id=? ORDER BY created_at`, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("load sub-goals: %w", err)
+	}
+	defer rows.Close()
+	type sgRow struct {
+		ID, Title, Description, AssigneeID, VerifierID, DependsOn string
+	}
+	var sgs []sgRow
+	for rows.Next() {
+		var r sgRow
+		if err := rows.Scan(&r.ID, &r.Title, &r.Description, &r.AssigneeID, &r.VerifierID, &r.DependsOn); err != nil {
+			return nil, fmt.Errorf("scan sub-goal: %w", err)
+		}
+		sgs = append(sgs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(sgs) == 0 {
+		return nil, nil // nothing structural to freeze (feed-only goal)
+	}
+	idx := map[string]string{} // sub_goal id → sg node id
+	for i := range sgs {
+		idx[sgs[i].ID] = fmt.Sprintf("sg%d", i+1)
+	}
+	g := SpecGraph{Name: name}
+	for _, r := range sgs {
+		brief := strings.TrimSpace(r.Description)
+		if brief == "" {
+			brief = r.Title
+		}
+		n := SpecNode{
+			ID: idx[r.ID], Type: "task", Title: r.Title,
+			Task: &SpecTask{Assignee: "agent:" + r.AssigneeID, Brief: brief},
+		}
+		if r.VerifierID != "" {
+			n.Task.Verify = &SpecVerify{Mode: "agent", Verifier: "agent:" + r.VerifierID}
+		}
+		g.Nodes = append(g.Nodes, n)
+	}
+	// Root tasks (no deps) hang off nothing — V2 allows task|spawn roots.
+	for _, r := range sgs {
+		var deps []string
+		if r.DependsOn != "" && r.DependsOn != "[]" {
+			_ = json.Unmarshal([]byte(r.DependsOn), &deps)
+		}
+		for _, dep := range deps {
+			if src, ok := idx[dep]; ok {
+				g.Edges = append(g.Edges, SpecEdge{Source: src, SourceHandle: "done", Target: idx[r.ID]})
+			}
+		}
+	}
+	// One shared end for every task with no outbound edge.
+	outDeg := map[string]int{}
+	for _, e := range g.Edges {
+		outDeg[e.Source]++
+	}
+	g.Nodes = append(g.Nodes, SpecNode{ID: "end_ok", Type: "end", Title: "完成", End: &SpecEnd{Outcome: "success"}})
+	for _, r := range sgs {
+		if outDeg[idx[r.ID]] == 0 {
+			g.Edges = append(g.Edges, SpecEdge{Source: idx[r.ID], SourceHandle: "done", Target: "end_ok"})
+		}
+	}
+	content, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	bp, err := s.Create(ctx, name,
+		"3 次同构自动起草（Phase C §12.4）：同域连续 3 个 infer 执行图结构相同，由平台确定性翻译生成。请审查后发布；发布前不影响任何任务。",
+		string(content), "agent", "rsi-emergent")
+	if err != nil {
+		// A shape collision with existing blueprint names is a benign skip.
+		if strings.Contains(err.Error(), "already exists") {
+			logging.Infof("blueprint: emergent draft %q name collision — skip", name)
+			return nil, nil
+		}
+		return nil, err
+	}
+	logging.Infof("blueprint: emergent draft %q created from goal %s (%d tasks) — awaiting human review", name, goalID[:8], len(sgs))
+	return bp, nil
 }
