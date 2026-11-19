@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -675,10 +676,60 @@ func percentile95(v []int64) int64 {
 // goal:finished(done) & infer-mode → shape signature 入账 infer_shape；
 // 同域连续 3 次同签名 → BlueprintService.DraftFromGoalExecution 自动起草
 // v1 草稿（确定性翻译，永不自动发布）。
+// §14.1 收敛补强: L1 全量签名 + L0 骨架签名双层 — 复杂场景下三次全量同构
+// 很难凑齐（验证轮/咨询/时序波动都会扰动 L1）；L0 剥离这些运行间噪声后
+// 命中即出「近似固化」草稿（仍只起草、仍等人工审查）。
 // ═══════════════════════════════════════════════════════════════════════
+
+// Auto-iteration round cap (§14.2). Semantics: analysis itself is NEVER
+// capped (visibility must not regress); the cap limits the automatic
+// production of optimization artifacts — emergent drafts per domain
+// (infer_shape.drafted) and translator proposals per blueprint
+// (created_by_id='rsi-translator'). Human-created proposals, approvals and
+// publishes are never subject to it. Default 10; 0 = auto-drafting off.
+const (
+	rsiMaxAutoRoundsKey  = "rsi.max_auto_rounds"
+	defaultMaxAutoRounds = 10
+)
 
 // SetBlueprint wires the blueprint service for the emergent draft (§12.4).
 func (s *RSIService) SetBlueprint(bp *BlueprintService) { s.blueprintSvc = bp }
+
+// skeletonShapeSignature signs the WORK SKELETON only (§14.1): support loops
+// that legitimately vary run-to-run — verify/review/consult nodes, inferred
+// seq temporal edges, rework rounds — are stripped before signing. Two runs
+// of the same real process share a skeleton even when their verification or
+// timing details differ; that is the L0 lens that lets convergence happen in
+// complex scenarios. Same honest caveat as L1: a false positive only yields
+// an extra 近似固化 draft awaiting human review — zero risk by construction.
+func skeletonShapeSignature(wf *WorkflowGraph) string {
+	dropKind := map[string]bool{"verify": true, "review": true, "consult": true}
+	dropEdge := map[string]bool{"seq": true, "verified_by": true, "consult": true}
+	kindOf := map[string]string{}
+	for _, n := range wf.Nodes {
+		kindOf[n.Key] = n.Kind
+	}
+	kinds := make([]string, 0, len(wf.Nodes))
+	for _, n := range wf.Nodes {
+		if !dropKind[n.Kind] {
+			kinds = append(kinds, n.Kind)
+		}
+	}
+	sort.Strings(kinds)
+	triples := make([]string, 0, len(wf.Edges))
+	for _, e := range wf.Edges {
+		if dropEdge[e.Kind] || dropKind[kindOf[e.From]] || dropKind[kindOf[e.To]] {
+			continue
+		}
+		triples = append(triples, kindOf[e.From]+"|"+kindOf[e.To]+"|"+e.Kind)
+	}
+	sort.Strings(triples)
+	parts := []string{
+		"N:" + strings.Join(kinds, ","),
+		"E:" + strings.Join(triples, ","),
+	}
+	return hashContent(strings.Join(parts, "\n"))
+}
 
 // executionShapeSignature is the v1 heuristic (§12.4, honestly labeled):
 // node-kind multiset + normalized (from_kind|to_kind|edge_kind) triple
@@ -731,54 +782,119 @@ func (s *RSIService) RecordInferShape(ctx context.Context, goalID string) error 
 		return fmt.Errorf("build workflow for shape: %w", err)
 	}
 	sig := executionShapeSignature(wf)
+	skel := skeletonShapeSignature(wf)
 	squadID := ""
 	if assigneeType == "squad" {
 		squadID = assigneeID
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
-		`INSERT INTO infer_shape (id,goal_id,domain_id,squad_id,signature,node_count,created_at) VALUES (?,?,?,?,?,?,?)`,
-		newID(), goalID, domainID, squadID, sig, len(wf.Nodes), now()); err != nil {
+		`INSERT INTO infer_shape (id,goal_id,domain_id,squad_id,signature,skeleton,node_count,created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		newID(), goalID, domainID, squadID, sig, skel, len(wf.Nodes), now()); err != nil {
 		return fmt.Errorf("insert infer shape: %w", err)
 	}
-	// 3-consecutive check in the same domain (Q4 定稿: 阈值 3).
+	// 3-consecutive check in the same domain (Q4 定稿: 阈值 3; §14.1 layering):
+	// L1 exact ×3 → 固化 draft; L0 skeleton ×3 with L1 differing → 近似固化
+	// draft built from the LATEST execution, named by the skeleton signature
+	// (so later near-miss triples dedup into the same reviewable draft).
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT signature FROM infer_shape WHERE domain_id=? ORDER BY created_at DESC LIMIT 3`, domainID)
+		`SELECT signature, skeleton FROM infer_shape WHERE domain_id=? ORDER BY created_at DESC LIMIT 3`, domainID)
 	if err != nil {
 		return fmt.Errorf("load recent shapes: %w", err)
 	}
 	defer rows.Close()
-	var sigs []string
+	type shapeRow struct{ sig, skel string }
+	var recent []shapeRow
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var r shapeRow
+		if err := rows.Scan(&r.sig, &r.skel); err != nil {
 			return err
 		}
-		sigs = append(sigs, v)
+		recent = append(recent, r)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(sigs) < 3 || sigs[0] != sig || sigs[1] != sig || sigs[2] != sig {
+	if len(recent) < 3 {
 		return nil
 	}
-	logging.Infof("rsi: 3 consecutive isomorphic infer shapes in domain %s — drafting blueprint v1", domainID[:8])
+	exact := recent[0].sig == recent[1].sig && recent[1].sig == recent[2].sig
+	approx := !exact && recent[0].skel == recent[1].skel && recent[1].skel == recent[2].skel
+	if !exact && !approx {
+		return nil
+	}
 	if s.blueprintSvc == nil {
 		logging.Warnf("rsi: blueprint service not wired — emergent draft skipped")
 		return nil
 	}
-	if _, err := s.blueprintSvc.DraftFromGoalExecution(ctx, goalID, domainID, sig); err != nil {
+	// Auto-iteration round cap (§14.2): analysis is NEVER capped — only the
+	// automatic production of optimization artifacts is. Emergent drafts are
+	// counted per domain via infer_shape.drafted.
+	if cap := s.autoRoundsCap(ctx); cap >= 0 {
+		var drafted int
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM infer_shape WHERE domain_id=? AND drafted=1`, domainID).Scan(&drafted); err != nil {
+			return fmt.Errorf("count drafted shapes: %w", err)
+		}
+		if drafted >= cap {
+			logging.Infof("rsi: auto-iteration cap %d reached for domain %s — emergent draft skipped (rsi.max_auto_rounds)",
+				cap, shortID(domainID))
+			return nil
+		}
+	}
+	label := "固化"
+	nameSig := sig
+	if approx {
+		label = "近似固化"
+		nameSig = skel
+		logging.Infof("rsi: 3 consecutive isomorphic WORK SKELETONS (L0) in domain %s — details differ — drafting approximate blueprint", shortID(domainID))
+	} else {
+		logging.Infof("rsi: 3 consecutive isomorphic infer shapes in domain %s — drafting blueprint v1", shortID(domainID))
+	}
+	bp, err := s.blueprintSvc.DraftFromGoalExecution(ctx, goalID, domainID, nameSig, label)
+	if err != nil {
 		// A draft failure must never break the goal's terminal flow.
 		logging.Errorf("rsi: emergent draft failed: %v", err)
+		return nil
+	}
+	if bp != nil {
+		if _, err := s.st.DB().ExecContext(ctx,
+			`UPDATE infer_shape SET drafted=1 WHERE goal_id=?`, goalID); err != nil {
+			return fmt.Errorf("mark shape drafted: %w", err)
+		}
 	}
 	return nil
+}
+
+// shortID keeps log lines narrow (ids are 32-hex; 8 is enough to eyeball).
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// autoRoundsCap reads the auto-iteration round cap from app_settings
+// (§14.2). Key rsi.max_auto_rounds; default 10; 0 disables auto-drafting
+// entirely; unparseable values fall back to the default. Human actions —
+// manual proposals, approvals, publishes — are NEVER subject to this cap.
+func (s *RSIService) autoRoundsCap(ctx context.Context) int {
+	var v string
+	_ = s.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(value,'') FROM app_settings WHERE key=?`, rsiMaxAutoRoundsKey).Scan(&v)
+	v = strings.Trim(strings.TrimSpace(v), `"`)
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		return n
+	}
+	return defaultMaxAutoRounds
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase C (proposal §12.3): 同题 A/B — two goals' execution metrics side by
 // side with deltas. The pinned blueprint version of each goal is echoed so
 // the caller can verify the pair actually compares two variants. Metric set
-// is the one the platform really computes (§12.3 honestly notes
-// verify_pass_rate / cost_per_success land in Phase D — no fake numbers).
+// is the one the platform really computes (verify_pass_rate landed in
+// Phase D §13 from verification_result-derived graph data; cost_per_success
+// still honestly absent — run table carries no token/cost columns).
 // ═══════════════════════════════════════════════════════════════════════
 
 // ABMetricKeys is the ordered comparison set (label shown by the frontend).
@@ -787,6 +903,7 @@ var ABMetricKeys = []string{
 	"wall_ms",
 	"parallel_speedup",
 	"rework_ratio",
+	"verify_pass_rate",
 	"verify_overhead_ratio",
 	"human_wait_ms",
 }

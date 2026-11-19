@@ -3279,27 +3279,31 @@ func jsonMapOf(v any) map[string]any {
 // ── 涌现固化 (§12.4): deterministic execution-graph → blueprint translation ──
 
 // emergentDraftName is the auto-draft's unique name (blueprint.name UNIQUE ⇒
-// the same shape re-triggering does not double-draft).
-func emergentDraftName(sig string, domainName string) string {
+// the same shape re-triggering does not double-draft). label is "固化" or
+// "近似固化" (§14.1) — the two convergence paths never collide on a name.
+func emergentDraftName(sig string, domainName string, label string) string {
 	if len(sig) > 8 {
 		sig = sig[:8]
 	}
 	if domainName == "" {
 		domainName = "未命名域"
 	}
-	return "固化：" + sig + "·" + domainName
+	return label + "：" + sig + "·" + domainName
 }
 
 // DraftFromGoalExecution translates a finished infer goal's sub_goals into a
 // blueprint v1 DRAFT (tasks + done edges + shared end). Deterministic: no LLM
 // — the structure is already known from execution; the validator is the gate.
-func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, domainID, signature string) (*Blueprint, error) {
+// nameSig keys the draft NAME: exact L1 signature for a 固化 draft, the L0
+// skeleton signature for a 近似固化 draft (later near-miss triples dedup
+// into the same draft instead of piling up).
+func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, domainID, nameSig, label string) (*Blueprint, error) {
 	// Idempotency: same shape in the same domain → same name → skip on conflict.
 	var domainName string
 	if domainID != "" {
 		_ = s.st.DB().QueryRowContext(ctx, `SELECT name FROM domain WHERE id=?`, domainID).Scan(&domainName)
 	}
-	name := emergentDraftName(signature, domainName)
+	name := emergentDraftName(nameSig, domainName, label)
 	var exists int
 	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint WHERE name=?`, name).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("check emergent draft existence: %w", err)
@@ -3379,7 +3383,7 @@ func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, d
 		return nil, err
 	}
 	bp, err := s.Create(ctx, name,
-		"3 次同构自动起草（Phase C §12.4）：同域连续 3 个 infer 执行图结构相同，由平台确定性翻译生成。请审查后发布；发布前不影响任何任务。",
+		"自动起草（" + label + "）：同域连续 3 个 infer 执行图" + map[bool]string{true: "工作骨架同构（细节有差异）", false: "结构相同"}[label == "近似固化"] + "，由平台确定性翻译生成（" + map[bool]string{true: "§14.1 L0 骨架收敛", false: "§12.4 精确同构"}[label == "近似固化"] + "）。请审查后发布；发布前不影响任何任务。",
 		string(content), "agent", "rsi-emergent")
 	if err != nil {
 		// A shape collision with existing blueprint names is a benign skip.

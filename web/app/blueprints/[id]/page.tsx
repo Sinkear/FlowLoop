@@ -148,6 +148,17 @@ function CopyButton({ text }: { text: string }) {
 }
 
 
+// A/B 指标的中文名（§13.1：verify_pass_rate 已落地；cost_per_success 仍诚实缺席）。
+const AB_METRIC_LABELS: Record<string, string> = {
+  critical_path_ms: "关键路径",
+  wall_ms: "墙钟时间",
+  parallel_speedup: "并行加速",
+  rework_ratio: "返工率",
+  verify_pass_rate: "一次通过率",
+  verify_overhead_ratio: "验证开销",
+  human_wait_ms: "人工等待",
+};
+
 // A/B 对比一行：指标名 / A 值 / B 值（带 Δ）。数值列用等宽字体对齐。
 function ABRow({ metric, a, b, delta }: { metric: string; a: number | string | undefined; b: number | string | undefined; delta: number }) {
   const fmt = (v: number | string | undefined) =>
@@ -155,7 +166,7 @@ function ABRow({ metric, a, b, delta }: { metric: string; a: number | string | u
   const up = delta > 0;
   return (
     <>
-      <span className="truncate text-ink-3" title={metric}>{metric}</span>
+      <span className="truncate text-ink-3" title={metric}>{AB_METRIC_LABELS[metric] ?? metric}</span>
       <span className="text-ink-2">{fmt(a)}</span>
       <span className="text-ink-2">
         {fmt(b)}
@@ -650,7 +661,7 @@ export default function BlueprintDetailPage() {
           {/* ── 同题 A/B（§12.3）：两个 goal 的执行指标对比 ── */}
           <SectionCard
             title="同题 A/B"
-            desc="输入两个用过本蓝本的任务 id：并排比较执行指标（墙钟/关键路径/并行加速/返工/人工等待）。verified 通过率与成本留 Phase D"
+            desc="输入两个用过本蓝本的任务 id：并排比较执行指标（墙钟/关键路径/并行加速/返工/一次通过率/人工等待）；成本指标仍诚实缺席（run 无 token 采集）"
           >
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-56 flex-1">

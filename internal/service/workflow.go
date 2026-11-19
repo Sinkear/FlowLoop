@@ -590,11 +590,23 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	}
 
 	var verifyRounds, rejRounds, consultCount int
+	// verify_pass_rate (Phase D §13): share of verified work items that
+	// passed verification on the FIRST round. Node.Reworks counts rejected
+	// verification rounds, so a verified agent node with Reworks==0 passed
+	// first-try. Computed from the graph (already assembled from
+	// verification_result rows) — zero new instrumentation.
+	verifyPassed, verifyTotal := 0, 0
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		if n.Kind == "verify" {
 			verifyRounds += n.Attempt
 			rejRounds += n.Reworks
+		}
+		if n.Kind == "agent" && n.Status == "verified" {
+			verifyTotal++
+			if n.Reworks == 0 {
+				verifyPassed++
+			}
 		}
 		if n.Kind == "consult" {
 			consultCount++
@@ -632,6 +644,10 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	if verifyRounds > 0 {
 		rework = float64(rejRounds) / float64(verifyRounds)
 	}
+	verifyPass := 0.0
+	if verifyTotal > 0 {
+		verifyPass = float64(verifyPassed) / float64(verifyTotal)
+	}
 	laneMax, laneSum := int64(0), int64(0)
 	for _, v := range lane {
 		if v > laneMax {
@@ -660,6 +676,7 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m["retry_amplification"] = float64(maxAttempts)
 	m["verify_rounds"] = verifyRounds
 	m["rework_ratio"] = rework
+	m["verify_pass_rate"] = verifyPass
 	m["consult_count"] = consultCount
 	m["lane_count"] = len(lane)
 	m["lane_imbalance"] = laneImbalance

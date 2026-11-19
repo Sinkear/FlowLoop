@@ -312,16 +312,23 @@ CREATE TABLE IF NOT EXISTS blueprint_proposal (
 CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_bp ON blueprint_proposal(blueprint_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_status ON blueprint_proposal(status, created_at);
 
--- infer_shape (Phase C §12.4): shape signature of each finished infer goal's
--- execution graph, keyed by domain. 3 consecutive equal signatures in one
--- domain trigger the auto-draft of a blueprint v1 (never auto-published).
+-- infer_shape (Phase C §12.4, §14.1): shape signature of each finished infer
+-- goal's execution graph, keyed by domain. signature = exact L1 (all
+-- nodes/edges); skeleton = L0 work-skeleton (verify/review/consult nodes and
+-- seq/verified_by/consult edges stripped) for near-miss convergence in
+-- complex scenarios. 3 consecutive equal L1 → 固化 draft; 3 equal L0 with
+-- differing L1 → 近似固化 draft (never auto-published either). drafted=1
+-- marks rows whose shape produced an auto-draft — the per-domain counter
+-- behind the rsi.max_auto_rounds iteration cap (§14.2).
 CREATE TABLE IF NOT EXISTS infer_shape (
     id         TEXT PRIMARY KEY,
     goal_id    TEXT NOT NULL,
     domain_id  TEXT NOT NULL DEFAULT '',
     squad_id   TEXT NOT NULL DEFAULT '',
     signature  TEXT NOT NULL,
+    skeleton   TEXT NOT NULL DEFAULT '',
     node_count INTEGER NOT NULL DEFAULT 0,
+    drafted    INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at);

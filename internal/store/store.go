@@ -268,10 +268,14 @@ func Open(path string) (*Store, error) {
 		    domain_id  TEXT NOT NULL DEFAULT '',
 		    squad_id   TEXT NOT NULL DEFAULT '',
 		    signature  TEXT NOT NULL,
+		    skeleton   TEXT NOT NULL DEFAULT '',
 		    node_count INTEGER NOT NULL DEFAULT 0,
+		    drafted    INTEGER NOT NULL DEFAULT 0,
 		    created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at)`,
+		`ALTER TABLE infer_shape ADD COLUMN skeleton TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE infer_shape ADD COLUMN drafted INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

@@ -20,13 +20,15 @@ import (
 //   C5  GoalABCompare returns both faces + numeric deltas
 //   C6  RejectProposal flips status and forbids later approve
 
-// propCluster wires RSI + Blueprint together (RecordInferShape needs both).
+// propCluster wires RSI + Blueprint together (RecordInferShape needs both;
+// Phase D auto-proposals need the goal service to create training sessions).
 func propCluster(t *testing.T) (*GoalService, *RunService, *BlueprintService, *RSIService, *store.Store) {
 	t.Helper()
 	gs, rs, _, st := newTestCluster(t)
 	bs := NewBlueprintService(st, events.NewBus())
 	rsi := NewRSIService(st, events.NewBus())
 	rsi.SetBlueprint(bs)
+	gs.SetRSI(rsi)
 	return gs, rs, bs, rsi, st
 }
 

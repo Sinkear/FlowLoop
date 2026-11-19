@@ -88,7 +88,6 @@ export const createSkillPullRequest = (id: string, body?: { title?: string; body
     method: "POST",
     body: JSON.stringify(body ?? {}),
   });
-export const getRuntime = (id: string) => api<Runtime>(`/runtimes/${id}`);
 export const createRuntime = (body: Omit<Runtime, "id" | "created_at">) =>
   api<Runtime>("/runtimes", { method: "POST", body: JSON.stringify(body) });
 export const deleteRuntime = (id: string) =>
@@ -96,7 +95,6 @@ export const deleteRuntime = (id: string) =>
 
 // ── Agent ──
 export const listAgents = () => api<Agent[]>("/agents");
-export const getAgent = (id: string) => api<Agent>(`/agents/${id}`);
 export const createAgent = (body: Omit<Agent, "id" | "created_at">) =>
   api<Agent>("/agents", { method: "POST", body: JSON.stringify(body) });
 export const updateAgent = (id: string, body: Record<string, unknown>) =>
@@ -235,7 +233,6 @@ export const createGoalComment = (
 
 // ── Squad ──
 export const listSquads = () => api<Squad[]>("/squads");
-export const getSquad = (id: string) => api<Squad>(`/squads/${id}`);
 export const createSquad = (body: {
   name: string;
   leader_id: string;
@@ -419,7 +416,6 @@ export const savePlatformSettings = (body: PlatformSettings) =>
 
 // ── Schedule ──
 export const listSchedules = () => api<Schedule[]>("/schedules");
-export const getSchedule = (id: string) => api<Schedule>(`/schedules/${id}`);
 export const createSchedule = (body: {
   name: string;
   title_template: string;
@@ -547,9 +543,6 @@ export const resolveHeldGate = (
 export const getBlueprint = (id: string) =>
   api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
 
-export const listBlueprintVersions = (id: string) =>
-  api<import("./types").BlueprintVersion[]>(`/blueprints/${id}/versions`);
-
 export const newBlueprintDraft = (id: string, changelog: string) =>
   api<import("./types").BlueprintVersion>(`/blueprints/${id}/versions`, {
     method: "POST",
@@ -577,23 +570,6 @@ export const listBlueprintProposals = (blueprintId: string) =>
     `/blueprints/${blueprintId}/proposals`
   );
 
-export const createBlueprintProposal = (
-  blueprintId: string,
-  body: {
-    title: string;
-    hypothesis?: string;
-    expected_metric?: string;
-    expected_direction?: string;
-    patches: import("./types").BlueprintPatch[];
-    finding_id?: string;
-    base_version_id?: string;
-  }
-) =>
-  api<import("./types").BlueprintProposal>(`/blueprints/${blueprintId}/proposals`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-
 export const getBlueprintProposalDiff = (proposalId: string) =>
   api<import("./types").BlueprintProposalDiff>(
     `/blueprint-proposals/${proposalId}/diff`
@@ -619,8 +595,6 @@ export const compareBlueprintAB = (blueprintId: string, goalA: string, goalB: st
 // ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
 
 export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");
-export const listHookEvents = () =>
-  api<{ events: import("./types").HookEvent[] }>("/hooks/events");
 export const createHook = (body: {
   name: string;
   description?: string;

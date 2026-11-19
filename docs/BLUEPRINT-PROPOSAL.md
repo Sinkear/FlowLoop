@@ -630,3 +630,142 @@ infer goal 终态(done) ──▶ 执行图 shape 签名 ──▶ infer_shape �
 3. A/B：两 goal 对照端点返回双方 metrics + delta。
 4. 固化：同域 3 次同构 infer goal 触发自动起草（确定性翻译通过校验）；形状不同不触发；重复触发不双开。
 5. 全量回归 + 浏览器实测（提案批准→diff 视图→A/B 卡→固化草稿出现在列表）。
+
+## 13. Phase D 设计定稿：自动化与度量补全（2026-11-18 定稿，用户已批准执行）
+
+### 13.1 verify_pass_rate 落地（第 2 层指标补全）
+
+`verify_pass_rate` = verified 工作项中**首轮验证通过**的占比。数据源是执行图
+组装时已拉取的 verification_result 派生量（agent 节点 Reworks==0 即首轮过），
+零新埋点。落点两处：执行图 metrics（`workflow.go`）与 `ABMetricKeys`
+（rsi.go，A/B 对照第 7 个比较项，位于 rework_ratio 之后）。
+`cost_per_success` 诚实缺席：run 表无 token/成本列，平台不采集模型侧成本——
+不造数（沿用「no fake numbers」原则），留待真正接入计费信号。
+
+### 13.2 确定性 finding→补丁翻译器（LLM+P 的 P 侧自动化第一步）
+
+Phase C 里 finding→patch 是人工翻译。Phase D 把其中**可确定性翻译**的一类
+自动化：`serial_chain`（关键路径 ≥4 串行节点）。翻译规则（全部确定性、零 LLM）：
+
+- 前提：goal 钉了蓝本版本（infer goal 无 spec 可补丁，跳过）；执行图关键路径
+  上存在 ≥2 个纯 task 串行段，且段内相邻节点间是显式 depends_on 边。
+- 映射：执行节点 sg:id → blueprint_node.node_key（非 spec 任务如 spawn 子项
+  直接放弃翻译）。
+- 数据流检查：段内任何成员的 brief 引用另一成员的 `{{node.X.output}}`
+  （双向查）→ 放弃整个翻译——fork 会断引用。
+- 形状检查：末成员的 done 边必须直达唯一的 end 节点；每个相邻对在 spec 里
+  确实是 done 边相连（spec 是真相，执行图只是线索）。
+- 补丁：删 k−1 条链边 + 每个成员直连共享 end（链→fork；只删一条会让上游
+  失去到 end 的路径，V2 会拒，所以 all-or-nothing）。
+- 安全闸门：翻译产物仍走 CreateProposal 的完整 V1–V6 校验（fail-closed），
+  提案状态 pending——**翻译器永不发布，人工仍是闸门**（§12.1 不变）。
+  重复分析防重：按提案 title 精确去重（re-analyze / retry 不堆叠）。
+- 挂点：Analyze 提交后 `draftAutoProposals`（log-and-continue，翻译失败
+  不影响分析本身）。
+
+其余 finding 类别（split_candidate/lost_parallelism 等）Phase D **不**自动翻译：
+它们的正确补丁依赖重排细节与节点语义，确定性翻译写不出来就会变成瞎猜——
+这些仍走人工翻译通道（LLM+P 分工里 LLM 侧未来再做，见 §13.4）。
+
+### 13.3 冗余缩减与前端精简（2026-11-18 用户指令）
+
+- `web/lib/api.ts`：删除 7 个全前端零引用的函数（getRuntime/getAgent/
+  getSquad/getSchedule/listBlueprintVersions/createBlueprintProposal/
+  listHookEvents）。
+- 「项目仓库」页（domains）：**不是死模块**——domain 是 goal.domain_id 外
+  键目标、验收策略 Checks 是 verify 机制依据、webhook secret 是 issue
+  webhook 签名基础，删概念会断 goal/verify/RSI 三条主链。精简方向=页面拆
+  薄：卡点统计与全局 webhook secret 两个低频管理面板收进折叠（默认收起，
+  首屏只剩仓库列表）；编译确认卡/进度流保持原位（那是冻结验收策略的人工闸门）。
+- `workflow_edge` 预留空表维持不动（§5 已声明，零读写路径）。
+
+### 13.4 Phase D 边界（不做清单）
+
+- 不做 MCTS/AFlow 式自动搜索（远期 Phase E 话题）；
+- 不做 finding→patch 的 LLM 翻译（除 serial_chain 的确定性翻译外全部
+  人工）；
+- 不做 cost_per_success（无数据源不造数）；
+- 不删任何「感觉没用」但实际在主链上的模块（domains/templates/skills/
+  IM 均核实为活功能——分别是 goal 归属/环境冷启动/config.push 推送目标/
+  飞书通知通道）。
+
+## 14. 收敛补强与迭代护栏（2026-11-18 用户定稿）
+
+用户问题（m04460/m04472）："涌现固化在复杂场景的收敛是不是太困难了？
+效率可提升但准确性谁验收？给一个默认最高迭代轮次配置。"
+
+### 14.1 双层签名收敛（L0 骨架 / L1 精确）
+
+问题确认：L1 全量签名要求两次执行的**全部**节点与边同构——多一轮
+consult、一次 review、一次返工都会破坏同构。复杂场景凑齐「同域连续 3
+次全量同构」确实难——收敛困难是真实的，不是错觉。
+
+定稿（不放宽零风险原则，而是给收敛加一层镜头）：
+
+| 层 | 内容 | 触发动作 |
+|---|---|---|
+| L1 精确 | 现有全量签名（节点 kind 多重集 + 边三元组多重集） | 3 次同构 → 「固化」草稿（同 §12.4） |
+| L0 骨架 | 剥离运行间噪声：verify/review/consult 节点、seq（时序推断）/verified_by/consult 边、返工轮归一（Reworks/Attempt 不入签名——本来就只签 kind 不签数值） | 3 次骨架同构且 L1 不同 → 「近似固化」草稿 |
+
+要点：
+- 近似固化草稿**命名键 = L0 骨架签名**（不是 L1），同域后续 near-miss
+  三元组继续 dedup 进同一份草稿，不堆积；
+- 近似固化同样**只起草、不发布**——复杂场景收敛了，人工闸门没松；
+- 仍不引入 LLM 判断「形状相似否」——两层都是确定性哈希，可解释可复现；
+- 诚实标注保留：L0/L1 都是多重集启发式，不是图 canonization；误命中最坏
+  结果 = 多一份等人审的草稿，零风险（§12.4 原则不变）。
+
+### 14.2 自动迭代轮次上限（rsi.max_auto_rounds）
+
+用户定稿："给一个默认最高迭代的轮次配置。"
+
+- 配置键 `app_settings` 表 `rsi.max_auto_rounds`（JSON 字符串值），
+  **默认 10**；`0` = 关闭自动起草；非法值回落默认；
+- 计数口径：**按域计**——涌现固化以 `infer_shape.drafted=1` 行数计，
+  翻译器提案以 `blueprint_proposal.created_by_id='rsi-translator'` 的
+  distinct blueprint 数计；
+- **分析永不被封**（可见性不许倒退）：cap 只封「优化工件的自动产出」，
+  即自动草稿与自动提案的产生；`rsi_finding` 的发现、报告、metrics 照常；
+- **人工动作永不在 cap 内**：人工创建的提案、批准、发布、A/B 全部不受
+  限制——cap 只防"机器自己刷自己"，不防人；
+- 到达上限只记日志跳过，不报错、不断流（安全网语义，非错误）。
+
+### 14.3 评测集（做 ① 的方案，暂缓边界）
+
+用户追问"如果要做 1 的话你会怎么做"。方案（未实施，属 Phase E）：
+
+1. `domain` 加评测集声明：`eval_goals JSON`（一组历史 goal id，人工或
+   半自动挑选的"同题集"）；
+
+2. A/B 端点扩展：`GET /workflows/blueprints/{id}/ab?mode=eval` —— 不再
+   现场挑两个 goal，而是**对评测集里每个 goal 用两个版本各跑一次**
+   （复测 = 重新执行，非历史对比；这需要执行预算与并发调度，是 Phase E
+   的主体工作量）；
+3. 指标聚合从"单对 delta"升级为"集合均值 delta + 显著性符号检验"
+   （复用 §12.5 的 min_pairs 语义：至少 5 对才有结论）；
+4. 验收：评测集跑 v2 全面 ≥ v1（效率指标改善且质量指标不掉）才允许
+   采纳建议（仍人工发布）。
+
+成本诚实说明：重跑评测集 = 真实执行 = 花钱花时间。这正是 Phase D 没做
+它的原因——「没有评测集就不叫自迭代，只能叫生成」，但补齐它需要执行
+预算规划，不适合塞进本轮。
+
+### 14.4 best checkpoint（同问，暂缓边界）
+
+用户追问"是不是把 best checkpoint 能力也给加上"。结论：**版本链已经
+是 checkpoint，缺的是"标注哪个最好"**。方案（Phase E）：
+
+- 不新建机制：blueprint_version 的链本身就是全量 checkpoint（不可变、
+  可回滚——goal 钉版本即回滚）；
+- 补一列标注：`blueprint.best_version_id`（人工设置；A/B 卡上"设为最
+  佳"按钮；评测集达标后建议设置）；
+- 展示层：列表页/详情页徽章「最佳 v3」；新建任务绑定蓝本时默认选中
+  best 版本（仍可改选）；
+- 语义边界：best 是**标注不是开关**——不自动切流量、不自动发布，它只
+  是回答"这么多版本里该用哪个"的导航位。AFlow 的 archive 教训（调研
+  结论 b5）：**checkpoint 的价值在检索与复用，不在存储**——没有 best
+  标注的版本链等于没有索引的仓库。
+
+暂缓理由同 14.3：这两项都是真功能不是幻灯片，塞进 Phase D 尾巴会牺牲
+验收质量；作为 Phase E 的第一批候选，与评测集同属"让 A/B 结论从人工挑
+题升级为机器可执行"的主题。
