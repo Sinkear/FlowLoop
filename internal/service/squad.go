@@ -36,6 +36,41 @@ type SquadMember struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+// SquadRole is one word in a squad's role vocabulary registry
+// (BLUEPRINT-PROPOSAL §11.8). Name is the capability slug blueprint
+// "capability:<name>" nodes resolve against; Description is the job spec —
+// the alignment copy the squad owner, the blueprint author, and the spawn
+// planner all read. Skill-level differences that matter for dispatch must be
+// encoded as distinct words here (single closed axis — no second skill axis).
+type SquadRole struct {
+	ID          string `json:"id"`
+	SquadID     string `json:"squad_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// SquadRoleView is a registry word joined with its squad's name — the
+// cross-squad listing the blueprint author reads for 口径对齐.
+type SquadRoleView struct {
+	SquadID     string `json:"squad_id"`
+	SquadName   string `json:"squad_name"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// reservedSquadRoles are always-valid role words that never live in the
+// registry: 'reviewer' is the structural REVIEWER-ONLY word (subgoal.go), and
+// 'member' is the legacy default the web UI seeds.
+var reservedSquadRoles = map[string]bool{"reviewer": true, "member": true}
+
+// normalizeRole returns the canonical form of a role word — the same
+// LOWER(TRIM()) normalization capability resolution matches against.
+func normalizeRole(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
+}
+
 type SquadService struct {
 	st  *store.Store
 	bus *events.Bus
@@ -208,6 +243,30 @@ func (s *SquadService) AddMember(ctx context.Context, squadID, memberType, membe
 			return nil, err
 		}
 	}
+	// Vocabulary gate (proposal §11.8): once a squad has registered ANY role
+	// in its squad_role registry, member roles must come from the registry
+	// (or the reserved words reviewer/member). Zero rows = free text kept
+	// (template apply / team import / legacy squads unchanged).
+	var vocab int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM squad_role WHERE squad_id=?`, squadID).Scan(&vocab); err != nil {
+		return nil, fmt.Errorf("check squad role vocabulary: %w", err)
+	}
+	if vocab > 0 {
+		norm := normalizeRole(role)
+		if !reservedSquadRoles[norm] {
+			var n int
+			if err := s.st.DB().QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM squad_role WHERE squad_id=? AND name=?`, squadID, norm).Scan(&n); err != nil {
+				return nil, fmt.Errorf("check role vocabulary: %w", err)
+			}
+			if n == 0 {
+				return nil, NewValidationError(fmt.Sprintf(
+					"role %q is not in this squad's registered vocabulary: register it first (POST /squads/{id}/roles) or pick a registered word; reserved words: reviewer, member", role))
+			}
+		}
+		role = norm
+	}
 	m := SquadMember{
 		ID:         newID(),
 		SquadID:    squadID,
@@ -223,6 +282,129 @@ func (s *SquadService) AddMember(ctx context.Context, squadID, memberType, membe
 	}
 	s.bus.Publish(ctx, events.Event{Topic: "squad:member_added", Payload: m})
 	return &m, nil
+}
+
+// RegisterRole adds (or re-describes) a word in the squad's role vocabulary.
+// The name normalizes like a capability slug (^[a-z][a-z0-9_-]*$); re-registering
+// an existing word only updates its job spec (upsert — the registry is
+// human-curated, duplicate registration is an edit, not an error).
+func (s *SquadService) RegisterRole(ctx context.Context, squadID, name, description string) (*SquadRole, error) {
+	name = normalizeRole(name)
+	if !capabilitySlugRe.MatchString(name) {
+		return nil, NewValidationError(fmt.Sprintf(
+			"role name %q must match ^[a-z][a-z0-9_-]*$ (lowercase word, digits, - and _)", name))
+	}
+	if reservedSquadRoles[name] {
+		return nil, NewValidationError(fmt.Sprintf(
+			"role %q is reserved and needs no registration (reviewer is the structural review word, member the legacy default)", name))
+	}
+	if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, squadID, "squad"); err != nil {
+		return nil, err
+	}
+	var id string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id FROM squad_role WHERE squad_id=? AND name=?`, squadID, name).Scan(&id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		id = newID()
+		if _, err := s.st.DB().ExecContext(ctx,
+			`INSERT INTO squad_role (id,squad_id,name,description,created_at) VALUES (?,?,?,?,?)`,
+			id, squadID, name, description, now()); err != nil {
+			return nil, fmt.Errorf("insert squad_role: %w", err)
+		}
+	case err != nil:
+		return nil, fmt.Errorf("lookup squad_role: %w", err)
+	default:
+		if _, err := s.st.DB().ExecContext(ctx,
+			`UPDATE squad_role SET description=? WHERE id=?`, description, id); err != nil {
+			return nil, fmt.Errorf("update squad_role: %w", err)
+		}
+	}
+	s.bus.Publish(ctx, events.Event{Topic: "squad:role_registered",
+		Payload: map[string]string{"squad_id": squadID, "role": name}})
+	return s.getRole(ctx, id)
+}
+
+func (s *SquadService) getRole(ctx context.Context, id string) (*SquadRole, error) {
+	var r SquadRole
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id,squad_id,name,description,created_at FROM squad_role WHERE id=?`, id).
+		Scan(&r.ID, &r.SquadID, &r.Name, &r.Description, &r.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// RemoveRole drops a word from the vocabulary. Refused while any member still
+// carries it — the registry and the roster must not drift apart.
+func (s *SquadService) RemoveRole(ctx context.Context, squadID, name string) error {
+	name = normalizeRole(name)
+	var n int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM squad_member WHERE squad_id=? AND LOWER(TRIM(role))=?`, squadID, name).Scan(&n); err != nil {
+		return fmt.Errorf("check members carrying role: %w", err)
+	}
+	if n > 0 {
+		return NewValidationError(fmt.Sprintf(
+			"role %q is still carried by %d member(s): reassign or remove them first", name, n))
+	}
+	res, err := s.st.DB().ExecContext(ctx,
+		`DELETE FROM squad_role WHERE squad_id=? AND name=?`, squadID, name)
+	if err != nil {
+		return fmt.Errorf("delete squad_role: %w", err)
+	}
+	if ra, _ := res.RowsAffected(); ra == 0 {
+		return ErrNotFound
+	}
+	s.bus.Publish(ctx, events.Event{Topic: "squad:role_removed",
+		Payload: map[string]string{"squad_id": squadID, "role": name}})
+	return nil
+}
+
+// ListRoles returns the squad's registered vocabulary, ordered by word.
+func (s *SquadService) ListRoles(ctx context.Context, squadID string) ([]SquadRole, error) {
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT id,squad_id,name,description,created_at FROM squad_role WHERE squad_id=? ORDER BY name`, squadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SquadRole{}
+	for rows.Next() {
+		var r SquadRole
+		if err := rows.Scan(&r.ID, &r.SquadID, &r.Name, &r.Description, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListAllRoles returns every registered word across all squads, joined with
+// squad names — the cross-squad vocabulary the blueprint author reads so
+// "capability:" references and squad definitions stay aligned (§11.8).
+func (s *SquadService) ListAllRoles(ctx context.Context) ([]SquadRoleView, error) {
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT r.squad_id, sq.name, r.name, r.description, r.created_at
+		 FROM squad_role r JOIN squad sq ON sq.id = r.squad_id
+		 ORDER BY sq.name, r.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SquadRoleView{}
+	for rows.Next() {
+		var v SquadRoleView
+		if err := rows.Scan(&v.SquadID, &v.SquadName, &v.Name, &v.Description, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 func (s *SquadService) ListMembers(ctx context.Context, squadID string) ([]SquadMember, error) {

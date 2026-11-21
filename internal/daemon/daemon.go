@@ -147,6 +147,7 @@ type Daemon struct {
 	teamImportSvc *service.TeamImportService // team-import processor run lifecycle
 	domainSvc     *service.DomainService     // intake: domain CRUD (NL-driven)
 	skillSvc      *service.SkillService      // intake: skill CRUD (NL-driven)
+	blueprintSvc  *service.BlueprintService  // intake: blueprint creation (NL-driven)
 	rsi           *service.RSIService        // trace collection + training analysis (optional)
 
 	mu          sync.Mutex
@@ -253,6 +254,12 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 	// to avoid a Daemon↔GoalService cycle.
 	goalSvc.SetStaleConflictResolver(&staleConflictResolver{st: st})
 	bus.Subscribe("agent:created", d.onAgentCreated)
+	// agent:updated carries a full agent row when the platform changes an
+	// agent outside the Update API (e.g. the steward's built-in skills being
+	// (re)attached at boot). The worker set is keyed by agent id, so
+	// re-ensuring is idempotent; new topics must also be added to the Web
+	// socket whitelist (internal/server/ws/hub.go).
+	bus.Subscribe("agent:updated", d.onAgentCreated)
 	bus.Subscribe("agent:deleted", d.onAgentDeleted)
 	bus.Subscribe("domain:deleted", d.onDomainDeleted)
 	// run.terminal → ReconcileGoal (决策 6-4): the latch's second edge — any
@@ -292,6 +299,10 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 	// cancelled goal must not keep an agent burning compute on work that is
 	// already decided dead. Same stop mechanism as StopRun.
 	bus.Subscribe("goal:finished", d.onGoalFinished)
+	// Phase C §12.4 涌现固化: every DONE goal passes the infer-shape recorder
+	// (unbound goals only — RecordInferShape re-checks status/pin itself).
+	// 3 consecutive isomorphic shapes in one domain → auto-draft blueprint v1.
+	bus.Subscribe("goal:finished", d.onInferShapeRecorder)
 	// Delete likewise: the goal:deleted payload carries the running run ids
 	// captured before the cascade removed their rows (the DB can no longer
 	// answer the query by the time this handler fires).
@@ -389,6 +400,14 @@ func (d *Daemon) SetSkillService(svc *service.SkillService) {
 	d.skillSvc = svc
 }
 
+// SetBlueprintService wires the blueprint layer into the intake dispatcher so
+// "create blueprint" can go through the same conversation/need-fields path as
+// the other create intents. Optional: a nil service makes the intent reply
+// that blueprint creation is unavailable instead of panicking.
+func (d *Daemon) SetBlueprintService(svc *service.BlueprintService) {
+	d.blueprintSvc = svc
+}
+
 // Run starts the dispatch loop. Blocks until ctx is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
 	d.ctx = ctx
@@ -425,6 +444,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// cadence: one re-dispatch, then a human park, plus the stale alarm.
 	d.sweepVerifyingSubGoals(ctx)
 	go d.runVerifySweeper(ctx)
+	// Blueprint gate timeouts (Phase B-3, §4.2): a held gate whose clock ran
+	// past its declared timeout auto-resolves with the timeout action. Sweep
+	// once at startup (a restart must not extend a gate's deadline), then on a
+	// 1-minute cadence.
+	d.sweepBlueprintGates(ctx)
+	go d.runGateSweeper(ctx)
 	// Option B recovery (Event≠Truth on the review window): the ready
 	// trigger, the fallback timers and the fired flags are all in-memory — a
 	// crash between a window's park and its ready publish leaves the human's
@@ -1979,7 +2004,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			ACPSpawn: args, Env: dispatchEnv,
 			ArtifactFiles:    artifactFiles,
 			ProjectSkillsDir: d.projectSkillsDirFor(ctx, runtimeMachineID, args),
-			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection),
+			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID),
 			PriorSessionID:   priorSession,
 			PriorWorkDir:     priorWorkdir,
 			McpServers:       d.extraMcpServers(ctx, q.AgentID),

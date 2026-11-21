@@ -12,10 +12,12 @@ export interface ProbeCLI {
 // Skill is a platform-managed skill package (CLI 分支 Phase 4).
 export interface Skill {
   id: string;
-  name: string;
+  name: string; // 机器身份（目录名 / agent.skills 里存的 id），如 agentwork-chat-create
+  title?: string; // 中文展示名（SKILL.md frontmatter 的 title），可能为空
   description: string;
   created_at: string;
   source?: SkillSource | null;
+  builtin?: boolean; // 平台随 daemon 二进制发布的内置技能（启动时自动刷新，不能手删）
 }
 
 // SkillSource is a skill's remote repository binding (Feature A). It is
@@ -245,6 +247,7 @@ export interface Goal {
   content_capture?: string; // none|redacted|full（train 模式）
   budget_usd?: number; // 分析预算（train 模式默认 2）
   sample_rate?: number; // 采样率 0..1（train 模式默认 1）
+  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 蓝本驱动（Activate 编译 + guard 计数）
 }
 
 export interface GateRule {
@@ -484,6 +487,27 @@ export interface SquadMember {
   member_type: string; // agent | human
   member_id: string;
   role: string;
+  created_at: string;
+}
+
+// Role vocabulary registry word (BLUEPRINT-PROPOSAL §11.8): name is the
+// capability slug blueprint "capability:<name>" resolves against;
+// description is the job spec (岗位说明书).
+export interface SquadRole {
+  id: string;
+  squad_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+// Registry word joined with squad name — the cross-squad listing the
+// blueprint author reads so capability: references stay aligned.
+export interface SquadRoleView {
+  squad_id: string;
+  squad_name: string;
+  name: string;
+  description: string;
   created_at: string;
 }
 
@@ -879,14 +903,30 @@ export interface RsiTrendPoint {
 }
 
 // ── 编排图（goal 终态时冻结；训练详情读冻结版，goal 详情读 live 版） ──
-export type WorkflowNodeKind = "goal" | "agent" | "verify" | "review" | "consult" | "integrate";
+// Spec-only kinds (task/condition/router/gate/spawn/end) render a blueprint
+// version's normative graph through the same WorkflowGraph shape (Phase A,
+// docs/BLUEPRINT-PROPOSAL.md §4.12) — one renderer, two graph flavors.
+export type WorkflowNodeKind =
+  | "goal"
+  | "agent"
+  | "verify"
+  | "review"
+  | "consult"
+  | "integrate"
+  | "task"
+  | "condition"
+  | "router"
+  | "gate"
+  | "spawn"
+  | "end";
 export type WorkflowEdgeKind =
   | "created"
   | "depends_on"
   | "seq"
   | "verified_by"
   | "consult"
-  | "integrated";
+  | "integrated"
+  | "spec";
 
 export interface WorkflowNode {
   key: string;
@@ -951,4 +991,126 @@ export interface RsiOverview {
   findings: number;
   /** 旧后端可能没有该字段；页面必须容忍 undefined/空数组。 */
   trend?: RsiTrendPoint[];
+}
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// goal.blueprint_version_id 钉住一个 published 版本；Activate 时编译成
+// gated sub_goal（拍 1 建结构，拍 2 释放时填 brief）。规范图经
+// /workflows/blueprints/{versionId} 以 WorkflowGraph 形状渲染。
+
+export interface Blueprint {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  latest_version_id: string; // 最新「已发布」版本 id；'' = 尚未发布任何版本
+  version_count: number; // 版本总数（含草稿）
+  latest_version: number; // 最新版本号（含草稿）；0 = 还没有版本
+  latest_version_status: "" | "draft" | "published"; // 最新版本的状态
+}
+
+export type BlueprintVersionStatus = "draft" | "published";
+
+export interface BlueprintVersion {
+  id: string;
+  blueprint_id: string;
+  version: number; // 从 1 递增
+  status: BlueprintVersionStatus;
+  content: string; // 规范图 JSON（发布后不可变）
+  content_hash: string; // sha256(content)，读取时校验
+  changelog: string;
+  created_at: string;
+  published_at: string; // RFC3339；未发布为 ''
+}
+
+export interface BlueprintDetail {
+  blueprint: Blueprint;
+  versions: BlueprintVersion[];
+}
+
+// ── 蓝本人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
+// 只列 OPEN 的门（已持门、等人拍板）；held_since 起超时
+// timeout_after 后 sweeper 自动执行 timeout_action（decided_by=system）。
+export interface HeldGateAction {
+  id: string;
+  label: string;
+}
+
+export interface HeldGate {
+  node_key: string;
+  title: string;
+  prompt: string; // {{node.*}} 已在持门时解析
+  actions: HeldGateAction[];
+  held_since?: string;
+  timeout_after?: string;
+  timeout_action?: string;
+  sub_goal_id: string;
+}
+
+// ── 蓝本提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
+// 批准 = 开新草稿（changelog=hypothesis），永不自动发布。
+export type BlueprintPatchOp =
+  | "add_node"
+  | "update_node"
+  | "delete_node"
+  | "add_edge"
+  | "delete_edge";
+
+export interface BlueprintPatch {
+  op: BlueprintPatchOp;
+  id?: string;
+  node?: { id: string; type: string; title: string; [k: string]: unknown };
+  edge?: { source: string; source_handle?: string; target: string };
+}
+
+export interface BlueprintProposal {
+  id: string;
+  blueprint_id: string;
+  base_version_id: string;
+  title: string;
+  hypothesis: string;
+  expected_metric: string;
+  expected_direction: string; // up|down|""
+  patches: BlueprintPatch[];
+  finding_id: string;
+  status: "pending" | "approved" | "rejected";
+  applied_version_id: string;
+  decided_at: string;
+  created_by_type: string;
+  created_at: string;
+}
+
+export interface DiffNode {
+  id: string;
+  kind: string;
+  base: Record<string, unknown>;
+  patched: Record<string, unknown>;
+}
+
+export interface BlueprintProposalDiff {
+  proposal_id: string;
+  base_version_id: string;
+  base: WorkflowGraph;
+  patched: WorkflowGraph;
+  patched_content: string;
+  nodes_added: string[];
+  nodes_removed: string[];
+  nodes_changed: DiffNode[];
+  edges_added: string[];
+  edges_removed: string[];
+}
+
+export interface ABGoalFace {
+  goal_id: string;
+  goal_title: string;
+  status: string;
+  blueprint_version_id: string;
+  metrics: Record<string, number | string>;
+}
+
+export interface ABCompareResult {
+  goal_a: ABGoalFace;
+  goal_b: ABGoalFace;
+  deltas: Record<string, number>;
+  notes?: string[];
 }

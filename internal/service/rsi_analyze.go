@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -177,7 +178,262 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	s.bus.Publish(ctx, events.Event{Topic: "rsi:ready", Payload: map[string]any{
 		"session_id": sessionID, "goal_id": goalID, "findings": len(findings), "round_no": roundNo,
 	}})
+	// Phase D (proposal §13): deterministic finding→proposal translation.
+	// LLM+P split — the RSI rule (deterministic) identified a serial_chain;
+	// the translator below (also deterministic) drafts the structural patch;
+	// humans stay the gate (proposal stays pending until approved). Failures
+	// must never break the analysis itself — log-and-continue.
+	s.draftAutoProposals(ctx, goalID, graph, findings)
 	return nil
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase D (proposal §13): 确定性 finding→补丁翻译器.
+//
+// Only serial_chain findings are translated in Phase D, and only the
+// canonical chain→fork transform: a pure task chain t1→t2→…→tk→end means
+// every step waited for its predecessor with no data flowing between them
+// (checked below via {{node.*}} brief references). The transform deletes
+// the k−1 chain edges and wires every step straight to the shared end
+// node, turning the chain into a fork. Deleting only ONE chain edge would
+// orphan the upstream half from the end (V2 rejects it), so the transform
+// is all-or-nothing per chain.
+//
+// Safety rails (all deterministic, no LLM anywhere):
+//   - goal must be blueprint-pinned (infer goals have no spec to patch);
+//   - every chain member's brief must reference NO other member's output
+//     (both directions checked) — a single {{node.X.output}} cross-ref
+//     aborts the whole chain, because the fork would break the reference;
+//   - the drafted proposal still passes the full V1–V6 validator inside
+//     CreateProposal (fail-closed) and stays PENDING until a human
+//     approves it — the translator never publishes, never bypasses the
+//     gate (proposal §12.1);
+//   - dedup by exact title so re-analyzing the same session (or a retry
+//     round) cannot stack duplicate proposals.
+// ═══════════════════════════════════════════════════════════════════════
+
+func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *WorkflowGraph, findings []RsiFinding) {
+	if s.blueprintSvc == nil {
+		return // not wired in main — nothing to translate through
+	}
+	var versionID string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&versionID)
+	if err != nil || versionID == "" {
+		return // infer goal — no spec to patch
+	}
+	// Auto-iteration round cap (§14.2): analysis is never capped — only the
+	// automatic PRODUCTION of optimization artifacts is. Translator
+	// proposals are counted per blueprint via created_by_id='rsi-translator';
+	// human proposals/approvals/publishes are never subject to the cap.
+	if cap := s.autoRoundsCap(ctx); cap >= 0 {
+		var n int
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COUNT(DISTINCT blueprint_id) FROM blueprint_proposal WHERE created_by_id='rsi-translator' AND status IN ('pending','approved')`,
+		).Scan(&n); err != nil {
+			log.Printf("[rsi] auto-proposal cap check failed: %v", err)
+		} else if n >= cap {
+			log.Printf("[rsi] auto-iteration cap %d reached — translator proposal skipped (rsi.max_auto_rounds)", cap)
+			return
+		}
+	}
+	for _, f := range findings {
+		if f.Category != "serial_chain" {
+			continue // Phase D translates exactly one finding category
+		}
+		if err := s.proposeForkForChain(ctx, goalID, versionID, g, f); err != nil {
+			log.Printf("[rsi] auto-proposal for goal %s: %v", goalID, err)
+			continue
+		}
+		// One chain-fork proposal per analysis: overlapping serial_chain
+		// findings describe the same chain shape; further passes would only
+		// produce duplicate titles (the dedup check would skip them anyway —
+		// but not racing this analysis' own earlier insert).
+		break
+	}
+}
+
+// proposeForkForChain extracts the maximal pure task chain from the
+// execution graph's critical path, verifies it maps 1:1 onto spec task
+// nodes ending directly at one end node, and drafts the chain→fork patch.
+func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID string, g *WorkflowGraph, f RsiFinding) error {
+	// 1. Execution-graph side: walk the critical path, keep the maximal
+	//    run of consecutive agent nodes linked by explicit depends_on edges.
+	chain := criticalTaskChain(g)
+	if len(chain) < 2 {
+		return nil // single-task chain: nothing to parallelize
+	}
+
+	// 2. Map execution nodes (sg:<id>) to spec node keys via blueprint_node.
+	keyBySG := map[string]string{}
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT sub_goal_id, node_key FROM blueprint_node WHERE goal_id=? AND COALESCE(sub_goal_id,'')!=''`, goalID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var sgID, nodeKey string
+		if err := rows.Scan(&sgID, &nodeKey); err != nil {
+			rows.Close()
+			return err
+		}
+		keyBySG[sgID] = nodeKey
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	specKeys := make([]string, 0, len(chain))
+	for _, nodeKey := range chain {
+		sk, ok := keyBySG[strings.TrimPrefix(nodeKey, "sg:")]
+		if !ok {
+			return nil // chain member not spec-mapped (spawn child etc.) — bail out
+		}
+		specKeys = append(specKeys, sk)
+	}
+
+	// 3. Load the pinned spec and check the chain is a pure task chain whose
+	//    last member flows directly into ONE shared end node.
+	version, err := s.blueprintSvc.getVersion(ctx, versionID)
+	if err != nil {
+		return fmt.Errorf("load pinned version: %w", err)
+	}
+	spec, err := parseSpecContent(version)
+	if err != nil {
+		return fmt.Errorf("parse pinned version: %w", err)
+	}
+	byID := map[string]*SpecNode{}
+	for i := range spec.Nodes {
+		byID[spec.Nodes[i].ID] = &spec.Nodes[i]
+	}
+	endKey := ""
+	for _, sk := range specKeys {
+		n := byID[sk]
+		if n == nil || n.Type != "task" {
+			return nil // only pure task chains are translated
+		}
+	}
+	// The last chain member's sole outbound must be a done-edge into an end node.
+	for _, e := range spec.Edges {
+		if e.Source == specKeys[len(specKeys)-1] && e.SourceHandle == "done" {
+			if t := byID[e.Target]; t != nil && t.Type == "end" {
+				if endKey != "" && endKey != e.Target {
+					return nil // forked into multiple ends — not the canonical shape
+				}
+				endKey = e.Target
+			}
+		}
+	}
+	if endKey == "" {
+		return nil // chain does not end directly at an end node
+	}
+
+	// 4. Data-flow check: no chain member's brief may reference another
+	//    member's output. One cross-reference aborts the whole transform —
+	//    the fork would silently break the reference (拍2 resolves only
+	//    from ancestors).
+	for _, a := range specKeys {
+		nA := byID[a]
+		for _, b := range specKeys {
+			if a == b {
+				continue
+			}
+			if strings.Contains(nA.Task.Brief, "{{node."+b+".") {
+				return nil
+			}
+		}
+	}
+
+	// 5. Verify each adjacent pair really is a done→depends chain edge in
+	//    the spec (the execution graph said depends_on; the spec is truth).
+	for i := 0; i+1 < len(specKeys); i++ {
+		found := false
+		for _, e := range spec.Edges {
+			if e.Source == specKeys[i] && e.SourceHandle == "done" && e.Target == specKeys[i+1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil // spec shape diverged from execution — refuse to guess
+		}
+	}
+
+	// 6. Compose the chain→fork patches: delete the k−1 chain edges, wire
+	//    every member straight to the shared end.
+	patches := make([]BlueprintPatch, 0, 2*len(specKeys))
+	for i := 0; i+1 < len(specKeys); i++ {
+		patches = append(patches, BlueprintPatch{Op: "delete_edge", Edge: &SpecEdge{
+			Source: specKeys[i], SourceHandle: "done", Target: specKeys[i+1]}})
+		patches = append(patches, BlueprintPatch{Op: "add_edge", Edge: &SpecEdge{
+			Source: specKeys[i], SourceHandle: "done", Target: endKey}})
+	}
+
+	// 7. Dedup by exact title, then draft through the gated pipeline.
+	title := fmt.Sprintf("自动提案：并行化串行链（%s）", strings.Join(specKeys, "‖"))
+	var existing int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
+		 WHERE v.blueprint_id=? AND p.title=?`, version.BlueprintID, title).Scan(&existing); err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+	hypothesis := fmt.Sprintf("串行链 %s 共 %d 步全部经依赖边顺序执行，但 brief 之间没有任何数据引用——"+
+		"fork 后所有步骤可并行，关键路径与 wall 时间应显著下降。本提案由 serial_chain finding 确定性翻译生成（无 LLM），"+
+		"请审查后批准。", strings.Join(specKeys, "→"), len(specKeys))
+	if _, err := s.blueprintSvc.CreateProposal(ctx, version.BlueprintID, versionID, title, hypothesis,
+		"wall_ms", "down", patches, f.ID, "agent", "rsi-translator"); err != nil {
+		// A validation refusal means the transform shape is not acceptable
+		// to the spec rules — that is a legitimate silent skip, not an error
+		// worth failing the analysis for. Real I/O errors still surface.
+		if errors.Is(err, ErrValidation) {
+			log.Printf("[rsi] auto-proposal draft rejected by validator (goal %s): %v", goalID, err)
+			return nil
+		}
+		return fmt.Errorf("create auto-proposal: %w", err)
+	}
+	log.Printf("[rsi] auto-proposal drafted for goal %s: %s", goalID, title)
+	return nil
+}
+
+// criticalTaskChain filters the critical path to agent (task) nodes, then
+// returns the maximal run of consecutive agent nodes linked by explicit
+// depends_on edges. Verify/consult nodes interleaved on the raw path are
+// skipped first — a blueprint chain A→B stays a chain even when the path
+// renders as A,v:A,B.
+func criticalTaskChain(g *WorkflowGraph) []string {
+	adj := map[string]bool{}
+	for _, e := range g.Edges {
+		if e.Kind == "depends_on" && e.Source == "explicit" {
+			adj[e.From+"→"+e.To] = true
+		}
+	}
+	kindOf := map[string]string{}
+	for i := range g.Nodes {
+		kindOf[g.Nodes[i].Key] = g.Nodes[i].Kind
+	}
+	agents := make([]string, 0, len(g.Critical))
+	for _, key := range g.Critical {
+		if kindOf[key] == "agent" {
+			agents = append(agents, key)
+		}
+	}
+	var best, cur []string
+	for _, key := range agents {
+		if len(cur) > 0 && !adj[cur[len(cur)-1]+"→"+key] {
+			if len(cur) > len(best) {
+				best = cur
+			}
+			cur = nil
+		}
+		cur = append(cur, key)
+	}
+	if len(cur) > len(best) {
+		best = cur
+	}
+	return best
 }
 
 // computeRoundDelta compares the insight-panel headline metrics between two

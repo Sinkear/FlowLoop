@@ -49,6 +49,7 @@ func newIntakeDaemon(t *testing.T) (*Daemon, *store.Store) {
 		st: st, bus: bus, goalSvc: goalSvc, runSvc: runSvc, schedSvc: schedSvc,
 		agentSvc: agentSvc, squadSvc: squadSvc, qs: notify.NewSQLQueryStore(st),
 		intakeSvc: intakeSvc, domainSvc: ds, skillSvc: skillSvc,
+		blueprintSvc: service.NewBlueprintService(st, bus),
 	}
 	return d, st
 }
@@ -515,6 +516,7 @@ func TestIntakeRegistryIntents(t *testing.T) {
 		"import_team":   true,
 		"domain_create": true, "domain_list": true, "domain_delete": true,
 		"skill_list": true, "skill_delete": true,
+		"create_blueprint": true,
 	}
 	got := make(map[string]bool)
 	for _, c := range intakeReg.cmds {
@@ -1392,5 +1394,118 @@ func TestIntakeDeleteDomainBatch(t *testing.T) {
 	}
 	if !strings.Contains(reply, "成功 2") || !strings.Contains(reply, "失败 2") {
 		t.Fatalf("must have summary, got %q", reply)
+	}
+}
+
+// blueprintGraphJSON is a minimal SpecGraph that passes the validator: one
+// task that fans into a success end.
+const blueprintGraphJSON = `{"name":"串行","description":"调研后收尾","nodes":[
+ {"id":"t1","type":"task","title":"调研","task":{"assignee":"agent:a1","brief":"围绕目标做调研"}},
+ {"id":"end_ok","type":"end","title":"完成","end":{"outcome":"success"}}],
+ "edges":[{"source":"t1","source_handle":"done","target":"end_ok"}]}`
+
+// TestIntakeCreateBlueprint: the same ask-once contract as the other create
+// intents — missing fields ask instead of failing, a follow-up turn fills the
+// draft, a valid graph lands as draft v1, and an invalid graph reports the
+// validator's reason without creating a row.
+func TestIntakeCreateBlueprint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Missing everything → ask for name + content, hint carries the skeleton
+	// and the agent roster inside a system-reminder block.
+	d, _ := newIntakeDaemon(t)
+	_ = d.intakeSvc.ClearDraft(ctx)
+	ask := d.intakeCreateBlueprint(ctx, intakeAction{Intent: "create_blueprint"})
+	if ask.Status != "need_fields" {
+		t.Fatalf("empty blueprint must ask, got %q", ask.Status)
+	}
+	if !strings.Contains(ask.Message, "名称") || !strings.Contains(ask.Message, "蓝图内容") {
+		t.Fatalf("ask must name the missing fields, got %q", ask.Message)
+	}
+	if !strings.Contains(ask.PlatformHint, "<system-reminder>") ||
+		!strings.Contains(ask.PlatformHint, "end_ok") ||
+		!strings.Contains(ask.PlatformHint, "worker1") {
+		t.Fatalf("hint must carry the spec skeleton and the agent roster, got %q", ask.PlatformHint)
+	}
+
+	// Draft clarification: name first, content on the next turn.
+	d2, st2 := newIntakeDaemon(t)
+	_ = d2.intakeSvc.ClearDraft(ctx)
+	first := d2.intakeCreateBlueprint(ctx, intakeAction{
+		Intent: "create_blueprint", Blueprint: blueprintAction{Name: "分轮蓝图"},
+	})
+	if first.Status != "need_fields" || !strings.Contains(first.Message, "蓝图内容") {
+		t.Fatalf("name-only must ask for content, got %+v", first)
+	}
+	second := d2.intakeCreateBlueprint(ctx, intakeAction{
+		Intent: "create_blueprint", Blueprint: blueprintAction{Content: blueprintGraphJSON},
+	})
+	if second.Status != "created" || !strings.Contains(second.Message, "已创建蓝图") {
+		t.Fatalf("draft continuation must create, got %+v", second)
+	}
+	var name, status string
+	var ver int
+	if err := st2.DB().QueryRowContext(ctx,
+		`SELECT b.name, v.version, v.status FROM blueprint b JOIN blueprint_version v ON v.blueprint_id=b.id`).
+		Scan(&name, &ver, &status); err != nil {
+		t.Fatalf("blueprint row: %v", err)
+	}
+	if name != "分轮蓝图" || ver != 1 || status != "draft" {
+		t.Fatalf("want 分轮蓝图 v1 draft, got %q v%d %s", name, ver, status)
+	}
+
+	// Explicit fields create immediately.
+	d3, st3 := newIntakeDaemon(t)
+	_ = d3.intakeSvc.ClearDraft(ctx)
+	res := d3.intakeCreateBlueprint(ctx, intakeAction{
+		Intent:    "create_blueprint",
+		Blueprint: blueprintAction{Name: "直建", Description: "d", Content: blueprintGraphJSON},
+	})
+	if res.Status != "created" {
+		t.Fatalf("complete blueprint must create, got %+v", res)
+	}
+	var count int
+	if err := st3.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint WHERE name='直建'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("blueprint row must exist, got %d", count)
+	}
+
+	// Invalid graph → validator reason, no row.
+	d4, st4 := newIntakeDaemon(t)
+	_ = d4.intakeSvc.ClearDraft(ctx)
+	bad := d4.intakeCreateBlueprint(ctx, intakeAction{
+		Intent:    "create_blueprint",
+		Blueprint: blueprintAction{Name: "坏图", Content: `{"name":"x","nodes":[],"edges":[]}`},
+	})
+	if bad.Status != "replied" || !strings.Contains(bad.Message, "创建蓝图失败") {
+		t.Fatalf("invalid graph must be rejected with a reason, got %+v", bad)
+	}
+	if err := st4.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected graph must not create a row, got %d", count)
+	}
+
+	// __AGENT_ID__ is filled from agent_id before validation.
+	d5, st5 := newIntakeDaemon(t)
+	_ = d5.intakeSvc.ClearDraft(ctx)
+	tpl := strings.Replace(blueprintGraphJSON, "agent:a1", "agent:__AGENT_ID__", 1)
+	ok := d5.intakeCreateBlueprint(ctx, intakeAction{
+		Intent:    "create_blueprint",
+		Blueprint: blueprintAction{Name: "模板图", Content: tpl, AgentID: "a1"},
+	})
+	if ok.Status != "created" {
+		t.Fatalf("placeholder blueprint must create, got %+v", ok)
+	}
+	var content string
+	if err := st5.DB().QueryRowContext(ctx, `SELECT content FROM blueprint_version ORDER BY created_at DESC LIMIT 1`).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "agent:a1") || strings.Contains(content, "__AGENT_ID__") {
+		t.Fatalf("placeholder must be replaced with the real agent id, got %q", content)
 	}
 }

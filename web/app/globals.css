@@ -24,7 +24,7 @@
   /* ── Ink (light text on dark, primary → muted) ── */
   --color-ink: #f1f5fb;
   --color-ink-2: #b3c2da;
-  --color-ink-3: #8091b0;
+  --color-ink-3: #8b9cbc;
 
   /* ── Lines ── */
   --color-line: #2b3854;
@@ -77,17 +77,21 @@
   --color-surface-3: #e9e9e6; /* active / hover-strong */
 
   --color-ink: #1c1c1a;
-  --color-ink-2: #565652;
-  /* Muted metadata: darkened from #8f8f88 — 11px mono timestamps and hints
-     were below AA contrast on paper and read as "看不清". */
-  --color-ink-3: #6a6a63;
+  --color-ink-2: #4a4a45;
+  /* Muted metadata: darkened from #8f8f88 → #6a6a63 → #5c5c56. Small mono
+     timestamps/hints (10–11px) need the extra step: AA at 11px on paper
+     still read as "字色太淡". */
+  --color-ink-3: #5c5c56;
 
   --color-line: #e9e9e6;
   --color-line-strong: #d6d6d1;
 
-  /* Accent: green-600 — readable on white; hover darkens. */
-  --color-accent: #16a34a;
-  --color-accent-dim: #15803d;
+  /* Accent: 深绿 — 三个面都要过 14px 的 4.5:1：白字压它 6.1:1、纸上正文
+     5.9:1、以及「text-accent 压在 bg-accent/10 的淡绿底上」5.4:1。green-600
+     (#16a34a) 只有 3.3:1（主按钮发灰），green-700 (#15803d) 在白字上够但压
+     淡绿底只有 4.2:1——所以再压一档到 #15703b。 */
+  --color-accent: #15703b;
+  --color-accent-dim: #166534;
   --color-accent-ink: #ffffff; /* text ON green buttons */
   --color-accent-soft: rgba(22, 163, 74, 0.1);
 
@@ -98,14 +102,33 @@
   --color-info: #0284c7;
   --color-review: #7c3aed;
 
-  /* Status family slot remaps: the -300 (badge text) and -400
-     (dots) stops become their dark-on-light equivalents. */
-  --color-green-300: #15803d;  --color-green-400: #16a34a;
+  /* Status family slot remaps: the -200/-300 (badge & banner text) and
+     -400 (dots) stops become their dark-on-light equivalents.
+
+     Why -200 is remapped too: guidance banners and success notes are written
+     with -200 text (readable on a near-black surface). On paper that mint /
+     sand tint lands at ~1.2:1 — invisible. Remapping the slot keeps the
+     component markup unchanged and makes the same classes legible in both
+     themes. */
+  --color-green-200: #166534;  --color-green-300: #15803d;  --color-green-400: #16a34a;
+  --color-emerald-200: #065f46; --color-emerald-300: #047857; --color-emerald-400: #059669;
+  --color-teal-200: #115e59;
+  --color-blue-200: #1e40af;
+  --color-sky-200: #075985;
+  --color-purple-200: #6b21a8;
+  --color-violet-200: #5b21b6;
+  --color-fuchsia-200: #86198f;
+  --color-rose-200: #9f1239;
+  --color-red-200: #991b1b;
+  --color-amber-200: #92400e;
+  --color-orange-200: #9a3412;
+  --color-zinc-200: #3f3f46;
+  --color-zinc-300: #52525b;
   --color-emerald-300: #047857; --color-emerald-400: #059669;
   --color-blue-300: #1d4ed8;   --color-blue-400: #2563eb;
   --color-purple-300: #7e22ce; --color-purple-400: #9333ea;
   --color-red-300: #b91c1c;    --color-red-400: #dc2626;
-  --color-amber-300: #b45309;  --color-amber-400: #d97706;
+  --color-amber-300: #92400e;  --color-amber-400: #b45309;
   --color-teal-300: #0f766e;   --color-teal-400: #0d9488;
   --color-sky-300: #0369a1;    --color-sky-400: #0284c7;
   --color-rose-300: #be123c;   --color-rose-400: #e11d48;

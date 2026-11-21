@@ -1,0 +1,365 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "agentwork 图驱动自迭代 · 总览",
+    "output": ".archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "v-shell",
+        "label": "确定性外壳",
+        "focus": [
+          "goal",
+          "compile",
+          "execute",
+          "guard"
+        ],
+        "note": "声明式计划 → 依赖门控执行 → 全节点终态才收口"
+      },
+      {
+        "id": "v-loop",
+        "label": "优化闭环",
+        "focus": [
+          "graph",
+          "finding",
+          "proposal",
+          "approve",
+          "draft",
+          "validate",
+          "published"
+        ],
+        "note": "执行图 → 结构发现 → 结构化补丁 → 人工批准 → 新版本 v_N+1"
+      },
+      {
+        "id": "v-human",
+        "label": "人始终在环",
+        "focus": [
+          "user",
+          "steward",
+          "approve"
+        ],
+        "note": "入口、拍板、发布：三个位置永属人，机器产出止于 pending"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "entry",
+      "label": "人 · 入口"
+    },
+    {
+      "id": "engine",
+      "label": "引擎 · 确定性外壳"
+    },
+    {
+      "id": "decide",
+      "label": "人 · 拍板权"
+    },
+    {
+      "id": "spec",
+      "label": "蓝本 · 版本链"
+    },
+    {
+      "id": "rsi",
+      "label": "RSI · 优化闭环"
+    }
+  ],
+  "phases": [
+    {
+      "id": "p1",
+      "label": "① 入口",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "p2",
+      "label": "② 绑定冻结",
+      "fromCol": 2,
+      "toCol": 2
+    },
+    {
+      "id": "p3",
+      "label": "③ 编译执行",
+      "fromCol": 3,
+      "toCol": 4
+    },
+    {
+      "id": "p4",
+      "label": "④ 收口度量",
+      "fromCol": 5,
+      "toCol": 5
+    }
+  ],
+  "groups": [
+    {
+      "id": "g-chain",
+      "label": "版本链 v1 → v_N+1",
+      "lane": "spec",
+      "fromCol": 0,
+      "toCol": 2,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "user",
+    "steward",
+    "goal",
+    "compile",
+    "execute",
+    "guard"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "entry",
+      "col": 0,
+      "type": "external",
+      "label": "主人 / Issue",
+      "sublabel": "下达目标 · 定验收",
+      "icon": "person",
+      "width": 124
+    },
+    {
+      "id": "steward",
+      "lane": "entry",
+      "col": 1,
+      "type": "backend",
+      "label": "Steward 管家",
+      "sublabel": "登记 · 澄清 · 建 Goal",
+      "tag": "只进门不编排",
+      "width": 124
+    },
+    {
+      "id": "goal",
+      "lane": "engine",
+      "col": 2,
+      "type": "backend",
+      "label": "Goal · 钉 v_N",
+      "sublabel": "激活 · 编译恰好一次",
+      "tag": "不绑 = infer 模式",
+      "icon": "flag",
+      "width": 112
+    },
+    {
+      "id": "compile",
+      "lane": "engine",
+      "col": 3,
+      "type": "backend",
+      "label": "两拍编译",
+      "sublabel": "拍1 建结构 · 拍2 填参数",
+      "width": 124
+    },
+    {
+      "id": "execute",
+      "lane": "engine",
+      "col": 4,
+      "type": "backend",
+      "label": "依赖门控执行",
+      "sublabel": "verify 链 · 有界重试 ≤3",
+      "icon": "active",
+      "width": 136
+    },
+    {
+      "id": "guard",
+      "lane": "engine",
+      "col": 5,
+      "type": "backend",
+      "label": "Finalization Guard",
+      "sublabel": "全节点终态 → Done",
+      "tag": "漏跑即阻断",
+      "icon": "success",
+      "width": 124
+    },
+    {
+      "id": "approve",
+      "lane": "decide",
+      "col": 3,
+      "type": "security",
+      "label": "批准 · 发布 · 采纳",
+      "sublabel": "机器产出止于 pending",
+      "tag": "蓝本 gate 也在这里等人",
+      "icon": "decision",
+      "width": 124
+    },
+    {
+      "id": "draft",
+      "lane": "spec",
+      "col": 0,
+      "type": "database",
+      "label": "蓝本草稿",
+      "sublabel": "六类节点 JSON · 可编辑",
+      "width": 240
+    },
+    {
+      "id": "validate",
+      "lane": "spec",
+      "col": 1,
+      "type": "security",
+      "label": "V1–V6 校验门",
+      "sublabel": "形状 · 可达 · 端口 · 指名 · hash",
+      "width": 168
+    },
+    {
+      "id": "published",
+      "lane": "spec",
+      "col": 2,
+      "type": "database",
+      "label": "发布版本 v_N",
+      "sublabel": "不可变 · 回滚锚点",
+      "tag": "A/B 控制变量",
+      "width": 132
+    },
+    {
+      "id": "graph",
+      "lane": "rsi",
+      "col": 5,
+      "type": "database",
+      "label": "执行图",
+      "sublabel": "读时装配 · 七项指标",
+      "tag": "只读事实",
+      "width": 124
+    },
+    {
+      "id": "finding",
+      "lane": "rsi",
+      "col": 4,
+      "type": "backend",
+      "label": "RSI 发现",
+      "sublabel": "九类结构分析 · L0/L1 签名",
+      "width": 132
+    },
+    {
+      "id": "proposal",
+      "lane": "rsi",
+      "col": 3,
+      "type": "backend",
+      "label": "结构化补丁提案",
+      "sublabel": "5 种操作符 · 人 / 翻译器",
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-intake",
+      "from": "user",
+      "to": "steward",
+      "label": "下达目标"
+    },
+    {
+      "id": "e-register",
+      "from": "steward",
+      "to": "goal",
+      "label": "登记建 Goal"
+    },
+    {
+      "id": "e-author",
+      "from": "user",
+      "to": "draft",
+      "label": "手写 / 模板",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-pin",
+      "from": "published",
+      "to": "goal",
+      "label": "钉 v_N 激活",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-compile",
+      "from": "goal",
+      "to": "compile",
+      "label": "恰好一次"
+    },
+    {
+      "id": "e-dispatch",
+      "from": "compile",
+      "to": "execute",
+      "label": "sub_goal + depends_on"
+    },
+    {
+      "id": "e-green",
+      "from": "execute",
+      "to": "guard",
+      "label": "verify 全绿"
+    },
+    {
+      "id": "e-assemble",
+      "from": "guard",
+      "to": "graph",
+      "label": "终态装配"
+    },
+    {
+      "id": "e-analyze",
+      "from": "graph",
+      "to": "finding",
+      "label": "九类分析",
+      "role": "return"
+    },
+    {
+      "id": "e-translate",
+      "from": "finding",
+      "to": "proposal",
+      "label": "翻译补丁",
+      "role": "return"
+    },
+    {
+      "id": "e-approve",
+      "from": "proposal",
+      "to": "approve",
+      "label": "pending 待批",
+      "variant": "security"
+    },
+    {
+      "id": "e-newdraft",
+      "from": "approve",
+      "to": "draft",
+      "label": "开新草稿",
+      "variant": "emphasis",
+      "role": "return"
+    },
+    {
+      "id": "e-chain",
+      "from": "draft",
+      "to": "validate"
+    },
+    {
+      "id": "e-publish",
+      "from": "validate",
+      "to": "published",
+      "label": "人工发布",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "读图三件事",
+      "items": [
+        "横向是时间：越往右越晚；纵向是角色：人 → 引擎 → 蓝本 → 闭环",
+        "实线 = 主路径；虚线 = 异步或旁路；加粗 = 关键控制点",
+        "规范图只读展示，执行图只记录事实，二者永不互相回写"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "两条自动通道都有护栏",
+      "items": [
+        "翻译器只翻 serial_chain，且过 {{node.X.output}} 数据流守卫",
+        "涌现固化：同域 3 次同构才起草，只起草不发布",
+        "rsi.max_auto_rounds 默认 10：封自动产出，不封人工动作"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "六类节点 = 确定的形状 + 受控的弹性",
+      "items": [
+        "task / condition / router / gate / spawn / end",
+        "弹性三口袋：节点内部自由、router 只能从枚举里选、spawn 运行时拆解",
+        "gate 没有自动驾驶：要么人拍板，要么按声明的 timeout 动作落地"
+      ]
+    }
+  ]
+}

@@ -43,6 +43,13 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 			isLeader = leaderID == agentID
 		}
 	}
+	// Blueprint pin (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8): a pinned
+	// goal's owner contract swaps the plan-and-dispatch mandate for the
+	// monitor-and-integrate contract — the spec graph, not the owner, is
+	// the order-of-execution authority.
+	var blueprintVersionID string
+	_ = d.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&blueprintVersionID)
 	var b strings.Builder
 	b.WriteString("# Background & Requirements\n")
 	b.WriteString("You are working on agentwork — a multi-agent collaboration platform.\n")
@@ -100,7 +107,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	// natively; the per-run role contract stays here.
 	b.WriteString(self)
 	b.WriteString("\n")
-	b.WriteString(roleContract(runRole, isLeader, squadID))
+	b.WriteString(roleContract(runRole, isLeader, squadID, blueprintVersionID != ""))
 
 	// Identity & instruction ownership (F1, 身份唯一性 + 指令归属): every
 	// run shares its workdir with other agents' runs (executor, verifier,
@@ -153,7 +160,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 // block (platform background, goal, role contract, tool surface) plus the
 // team profile. Shipped in the dispatch payload and merged into the
 // workdir's AGENTS.md at spawn — the user message carries the task only.
-func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection string) string {
+func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID string) string {
 	block := d.buildFixedBlock(ctx, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName)
 	// The public-issue contract + the remote conversation snapshot are
 	// CONTEXT (standing rules for this run), not the task — they ride
@@ -161,7 +168,7 @@ func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName
 	if issueSection != "" {
 		block += "\n\n" + issueSection
 	}
-	if team := d.buildTeamProfile(ctx, goalID, agentID); team != "" {
+	if team := d.buildTeamProfile(ctx, goalID, agentID, subGoalID); team != "" {
 		return block + "\n\n" + team
 	}
 	return block
@@ -172,11 +179,27 @@ func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName
 // workdir's AGENTS.md (shipped in the dispatch payload, merged by the
 // executor at spawn), NOT the prompt: team structure is persona material,
 // stable across a goal's turns. (empty) = solo run.
-func (d *Daemon) buildTeamProfile(ctx context.Context, goalID, agentID string) string {
-	var squadID string
-	if err := d.st.DB().QueryRowContext(ctx,
-		`SELECT COALESCE((SELECT assignee_id FROM goal WHERE id=? AND assignee_type='squad'), '')`, goalID).Scan(&squadID); err != nil || squadID == "" {
-		return ""
+//
+// Phase B (§11.5) node-level briefing: a compiled sub_goal may carry its
+// OWN squad (sub_goal.team_squad_id — set when the spec node's assignee is
+// squad:/capability:, and inherited by spawn-materialized children). The
+// briefing squad resolves sub_goal first, goal second: a cross-squad node
+// run must see THAT squad's roster/playbook, not the goal's. The goal-level
+// owner/leader runs pass subGoalID='' and keep today's behavior.
+func (d *Daemon) buildTeamProfile(ctx context.Context, goalID, agentID, subGoalID string) string {
+	squadID := ""
+	if subGoalID != "" {
+		// Node-scoped: the compiled item's squad, falling back to the goal's.
+		if err := d.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(team_squad_id,'') FROM sub_goal WHERE id=?`, subGoalID).Scan(&squadID); err != nil {
+			squadID = "" // vanished / legacy row — fall through to the goal squad
+		}
+	}
+	if squadID == "" {
+		if err := d.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE((SELECT assignee_id FROM goal WHERE id=? AND assignee_type='squad'), '')`, goalID).Scan(&squadID); err != nil || squadID == "" {
+			return ""
+		}
 	}
 	var leaderID string
 	_ = d.st.DB().QueryRowContext(ctx, `SELECT leader_id FROM squad WHERE id=?`, squadID).Scan(&leaderID)
@@ -277,10 +300,39 @@ func (d *Daemon) agentSkillLine(ctx context.Context, agentID string) string {
 
 // roleContract renders the behavioral contract for the run's role — the
 // output rules that used to ride in AGENTWORK.md (决策 6-22).
-func roleContract(runRole string, isLeader bool, squadID string) string {
+func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven bool) string {
 	leader := isLeader || (squadID != "" && runRole == "owner")
 	switch runRole {
 	case "owner":
+		if blueprintDriven {
+			// Blueprint-driven owner (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8):
+			// the plan is already compiled — sub_goal create is REFUSED for
+			// this goal (structural refusal in the service layer). The owner
+			// is the goal-level heartbeat: monitor progress, integrate
+			// changes, report, answer questions.
+			s := "You are this goal's owner. The work plan is COMPILED from a\n" +
+				"blueprint: the work items and their execution order come from the\n" +
+				"platform, and `agentwork subgoal create` is REFUSED for this goal.\n" +
+				"Your job is the goal level: monitor progress\n" +
+				"(`agentwork subgoal list` shows the compiled work items and their\n" +
+				"verification state), INTEGRATE ready Changes\n" +
+				"(`agentwork change integrate <id>`), report progress and results\n" +
+				"to the user with `agentwork goal comment`, and answer the team's\n" +
+				"questions. Ask the user directly with --ask:\n" +
+				"`agentwork goal comment --text \"your question\" --ask`.\n" +
+				"Park the goal at a HUMAN-AUTHORIZATION gate when the plan says a\n" +
+				"human must approve before a risky next step:\n" +
+				"`agentwork goal authorize --statement \"<what>\"`. Do NOT do the\n" +
+				"work items yourself — each has a compiled assignee; never write\n" +
+				"ids in comments (the feed is read by the user). Completion is\n" +
+				"JUDGED, not declared: the platform counts the blueprint's nodes\n" +
+				"and the user's approval decides — never set the goal's status\n" +
+				"yourself.\n"
+			if leader {
+				s += "\nREVIEWER-ONLY RULE: members with role=\"reviewer\" REVIEW ONLY.\n"
+			}
+			return s
+		}
 		s := "You are this goal's owner. Break the goal into work items and\n" +
 			"dispatch them: `agentwork subgoal create --title T --assignee <agent-id>\n" +
 			"[--description D]` (a sub-goal runs on its own branch with machine\n" +

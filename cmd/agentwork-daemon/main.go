@@ -119,21 +119,40 @@ func main() {
 	commentSvc.SetRunService(runSvc)
 	commentSvc.SetGoalService(goalSvc)
 
-	// Seed the system-internal steward agent (type=steward) — used by team-import
-	// to run the exploration processor task. Binds to the first active runtime;
-	// skipped if no runtime is active yet (ImportTeam reports the error then).
-	if err := agentSvc.SeedSteward(context.Background()); err != nil {
-		logging.Warnf("seed steward agent: %v", err)
-	}
-
 	squadSvc := service.NewSquadService(st, bus)
 	schedSvc := service.NewScheduleService(st, bus)
 	domainSvc := service.NewDomainService(st, bus)
 	domainSvc.SetRunService(runSvc)
 
 	skillSvc := service.NewSkillService(st)
+	// Platform built-in skills (//go:embed under internal/service/assets): the
+	// conversation-first creation skill is installed/refreshed BEFORE the
+	// steward seed, because the steward's agent.skills carries its fixed id.
+	// A failure here is not fatal — the platform works without the skill, and
+	// a later boot retries.
+	if sk, err := service.SeedBuiltinSkills(context.Background(), skillSvc); err != nil {
+		logging.Warnf("seed builtin skills: %v", err)
+	} else {
+		logging.Infof("builtin skill ready: %s (%s)", sk.Name, sk.ID)
+	}
+
+	// Seed the system-internal steward agent (type=steward) — used by team-import
+	// to run the exploration processor task. Binds to the first active runtime;
+	// skipped if no runtime is active yet (ImportTeam reports the error then).
+	// Runs after the builtin skill seed so the steward can reference it.
+	if err := agentSvc.SeedSteward(context.Background()); err != nil {
+		logging.Warnf("seed steward agent: %v", err)
+	}
 	rsiSvc := service.NewRSIService(st, bus)
 	goalSvc.SetRSI(rsiSvc)
+	// Blueprint service (Phase A, docs/BLUEPRINT-PROPOSAL.md): versioned
+	// spec graphs — CRUD + publish gate. GoalService compiles a goal's
+	// pinned version inside Activate; the server exposes the blueprint
+	// CRUD + spec-graph endpoints.
+	blueprintSvc := service.NewBlueprintService(st, bus)
+	// Phase C §12.4: the RSI emergent draft (3-isomorphism trigger) drafts
+	// blueprint v1 through the blueprint validator — wire it.
+	rsiSvc.SetBlueprint(blueprintSvc)
 	teamImportSvc := service.NewTeamImportService(st, bus)
 	teamImportSvc.SetDependencies(runSvc, goalSvc, domainSvc, agentSvc, skillSvc, squadSvc)
 
@@ -186,6 +205,9 @@ func main() {
 	d.SetRSI(rsiSvc)
 	d.SetDomainService(domainSvc)
 	d.SetSkillService(skillSvc)
+	// Intake: create blueprint rides the same ask-once draft path as the other
+	// create intents; the daemon needs the blueprint layer to commit.
+	d.SetBlueprintService(blueprintSvc)
 	// Templates need the daemon's git probe (the create-domain gate) and the
 	// skill/config pusher (so apply ships persona + tools to the machine
 	// immediately, like the HTTP CRUD handlers) — wire both now that the daemon
@@ -209,8 +231,19 @@ func main() {
 		}
 	}()
 
+	// The steward's built-in skill was attached in the seed above; a machine
+	// that was already registered before this boot won't receive it via the
+	// register-time PushMachineSkills, so push once now (no-op when the peer or
+	// the machine is offline — the next register retries).
+	go func() {
+		if a, err := agentSvc.GetSteward(ctx); err == nil {
+			d.PushAgentSkills(ctx, a.ID)
+		}
+	}()
+
 	srv := server.New(st, bus, d, goalSvc, runSvc, commentSvc, squadSvc, schedSvc, domainSvc, imConn, teamImportSvc, skillSvc, intakeSvc)
 	srv.SetRSI(rsiSvc)
+	srv.SetBlueprint(blueprintSvc)
 	srv.SetTemplates(templateSvc, templateApplySvc)
 	srv.SetHooks(hookSvc)
 	if err := srv.ListenAndServe(ctx, *addr); err != nil && !errors.Is(err, context.Canceled) {

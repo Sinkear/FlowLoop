@@ -63,6 +63,11 @@ type Handlers struct {
 	Connection *service.ConnectionService
 	// RSI is the training-session / trace-analysis service (训练分析).
 	RSI *service.RSIService
+	// Blueprint is the spec-graph service (Phase A, docs/BLUEPRINT-PROPOSAL.md):
+	// versioned orchestration blueprints — create/draft/publish + spec-graph
+	// rendering. A goal pins a published version and the compiler turns it
+	// into gated sub_goal rows.
+	Blueprint *service.BlueprintService
 	// Hooks is the lifecycle-hooks registry + bus-subscribed executor
 	// (spec: tmp/hooks-spec.md v0.2). nil-safe: absent = hook endpoints
 	// return 500s and no lifecycle firing (tests may omit it).
@@ -100,6 +105,8 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /goals/{id}/submit-review", h.submitGoalReview)
 	mux.HandleFunc("POST /goals/{id}/reopen", h.reopenGoal)
 	mux.HandleFunc("POST /goals/{id}/activate", h.activateGoal)
+	mux.HandleFunc("GET /goals/{id}/blueprint-gates", h.listBlueprintGates)
+	mux.HandleFunc("POST /goals/{id}/blueprint-gates/{nodeKey}", h.resolveBlueprintGate)
 	mux.HandleFunc("GET /goals/{id}/runs", h.listRuns)
 	mux.HandleFunc("GET /goals/{id}/runs/{runId}/messages", h.listRunMessages)
 	mux.HandleFunc("GET /runs/{runId}/messages", h.listRunMessagesByID)
@@ -123,6 +130,28 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	// squad's recent goals (orchestration visibility, read-only).
 	mux.HandleFunc("GET /workflows/goals/{goalId}", h.goalWorkflow)
 	mux.HandleFunc("GET /workflows/squads/{squadId}", h.squadWorkflows)
+	// Spec graph (Phase A): a blueprint version's normative graph, rendered
+	// in the same shape as the execution graph (workflow-graph component
+	// reuse, proposal §4.12).
+	mux.HandleFunc("GET /workflows/blueprints/{versionId}", h.blueprintVersionGraph)
+
+	// Blueprint CRUD (Phase A): the serialized orchestration authority.
+	mux.HandleFunc("GET /blueprints", h.listBlueprints)
+	mux.HandleFunc("POST /blueprints", h.createBlueprint)
+	mux.HandleFunc("GET /blueprints/{id}", h.getBlueprint)
+	mux.HandleFunc("GET /blueprints/{id}/versions", h.listBlueprintVersions)
+	mux.HandleFunc("POST /blueprints/{id}/versions", h.newBlueprintDraft)
+	mux.HandleFunc("PUT /blueprint-versions/{versionId}", h.updateBlueprintDraft)
+	mux.HandleFunc("POST /blueprint-versions/{versionId}/publish", h.publishBlueprintVersion)
+	mux.HandleFunc("GET /blueprint-versions/{versionId}/graph", h.blueprintVersionGraph)
+	// Phase C (proposal §12): patch proposals + diff + same-issue A/B.
+	mux.HandleFunc("GET /blueprints/{id}/proposals", h.listBlueprintProposals)
+	mux.HandleFunc("POST /blueprints/{id}/proposals", h.createBlueprintProposal)
+	mux.HandleFunc("GET /blueprint-proposals/{proposalId}", h.getBlueprintProposal)
+	mux.HandleFunc("GET /blueprint-proposals/{proposalId}/diff", h.blueprintProposalDiff)
+	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/approve", h.approveBlueprintProposal)
+	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/reject", h.rejectBlueprintProposal)
+	mux.HandleFunc("GET /workflows/blueprints/{id}/ab", h.blueprintABCompare)
 
 	mux.HandleFunc("GET /squads", h.listSquads)
 	mux.HandleFunc("POST /squads", h.createSquad)
@@ -132,6 +161,12 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /squads/{id}/members", h.addSquadMember)
 	mux.HandleFunc("GET /squads/{id}/members", h.listSquadMembers)
 	mux.HandleFunc("DELETE /squads/{id}/members/{memberId}", h.removeSquadMember)
+	// Role vocabulary registry (proposal §11.8): per-squad words + the
+	// cross-squad listing the blueprint author reads for alignment.
+	mux.HandleFunc("GET /squads/{id}/roles", h.listSquadRoles)
+	mux.HandleFunc("POST /squads/{id}/roles", h.registerSquadRole)
+	mux.HandleFunc("DELETE /squads/{id}/roles/{name}", h.removeSquadRole)
+	mux.HandleFunc("GET /squad-roles", h.listAllSquadRoles)
 
 	mux.HandleFunc("GET /schedules", h.listSchedules)
 	mux.HandleFunc("POST /schedules", h.createSchedule)
@@ -445,6 +480,47 @@ func (h *Handlers) resolveGoalReview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, err)
 }
 
+// resolveBlueprintGate records the human decision on a held blueprint gate
+// (Phase B-3, §4.2): settle the holder verified, prune the unchosen
+// branches, release the chosen one. The action must be one the gate
+// declares (ValidationErrors → 400); re-deciding a settled gate is a
+// conflict (409).
+func (h *Handlers) resolveBlueprintGate(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	var body struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := h.Goal.ResolveBlueprintGate(r.Context(), r.PathValue("id"), r.PathValue("nodeKey"), body.Action, body.Reason, "human"); err != nil {
+		writeJSON(w, nil, err) // errors.Is classifies: validation→400, conflict→409, not found→404
+		return
+	}
+	writeJSON(w, map[string]any{"resolved": true, "node_key": r.PathValue("nodeKey"), "action": body.Action}, nil)
+}
+
+// listBlueprintGates returns the goal's open human decision cards (held
+// gates only — pending gates have no decision to make yet, settled ones
+// are history).
+func (h *Handlers) listBlueprintGates(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.ListHeldGates(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]any{"gates": out}, nil)
+}
+
 // submitGoalReview moves an ACTIVE goal into review at the owner's explicit
 // request (task 8.2) — the positive counterpart of the gate park. Returns the
 // updated goal wrapped in {"goal": ...}; an empty body is accepted (default
@@ -466,6 +542,7 @@ func (h *Handlers) submitGoalReview(w http.ResponseWriter, r *http.Request) {
 }
 
 // reopenGoal restarts a failed/cancelled goal (the human take-over path).
+
 func (h *Handlers) reopenGoal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`
@@ -580,6 +657,36 @@ func (h *Handlers) addSquadMember(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) listSquadMembers(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Squad.ListMembers(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+// ── squad role vocabulary registry (proposal §11.8) ──
+
+func (h *Handlers) listSquadRoles(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Squad.ListRoles(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+func (h *Handlers) registerSquadRole(w http.ResponseWriter, r *http.Request) {
+	var role service.SquadRole
+	if err := json.NewDecoder(r.Body).Decode(&role); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	out, err := h.Squad.RegisterRole(r.Context(), r.PathValue("id"), role.Name, role.Description)
+	writeJSON(w, out, err)
+}
+
+func (h *Handlers) removeSquadRole(w http.ResponseWriter, r *http.Request) {
+	if err := h.Squad.RemoveRole(r.Context(), r.PathValue("id"), r.PathValue("name")); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) listAllSquadRoles(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Squad.ListAllRoles(r.Context())
 	writeJSON(w, out, err)
 }
 

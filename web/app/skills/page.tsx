@@ -25,7 +25,7 @@ import {
   StatStrip,
   Toolbar,
 } from "@/components/ui";
-import { relTime } from "@/lib/utils";
+import { relTime, cn } from "@/lib/utils";
 import type {
   Skill,
   SkillSource,
@@ -68,6 +68,26 @@ function repoShort(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\.git$/, "");
 }
 
+// SKILL.md 的 name 是机器身份（目录名 / agent.skills），title 才是给人看
+// 的名字；没填 title 的旧技能回退到 name。
+function skillLabel(sk: Skill): string {
+  return sk.title || sk.name;
+}
+
+// 内置技能：随 daemon 二进制发布，启动时自动刷新，不能手删。
+function BuiltinTag({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent",
+        className
+      )}
+    >
+      内置
+    </span>
+  );
+}
+
 function stateMeta(state?: string) {
   return (
     SYNC_STATE_META[state ?? ""] ?? {
@@ -77,8 +97,9 @@ function stateMeta(state?: string) {
   );
 }
 
-// 平台 Skill 模型只有 id/name/description/created_at：没有分类、大小、
-// updated_at 字段，所以列表不编这些列，只显示真实存在的「上传时间」。
+// 平台 Skill 模型只有 id/name/title/description/created_at/builtin：没有分类、
+// 大小、updated_at 字段，所以列表不编这些列，只显示真实存在的「上传时间」。
+// 展示名优先 title（人读），name 是机器身份，builtin 是平台内置标记。
 // Feature A：source 存在时显示远端仓库摘要与最近同步状态。
 function SkillRow({
   sk,
@@ -98,7 +119,13 @@ function SkillRow({
     <li className={ROW_GRID}>
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-ink">{sk.name}</span>
+          <span
+            className="truncate text-sm font-medium text-ink"
+            title={skillLabel(sk) !== sk.name ? `${skillLabel(sk)}（${sk.name}）` : sk.name}
+          >
+            {skillLabel(sk)}
+          </span>
+          {sk.builtin && <BuiltinTag />}
           <span className="shrink-0 font-mono text-[11px] text-ink-3">{sk.id.slice(0, 8)}</span>
         </div>
         <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
@@ -156,16 +183,19 @@ function SkillRow({
         >
           同步
         </button>
-        <button
-          type="button"
-          disabled={deleting}
-          onClick={() => {
-            if (confirm(`删除 skill「${sk.name}」？`)) onDelete(sk.id);
-          }}
-          className="text-xs text-ink-3 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {deleting ? "删除中…" : "删除"}
-        </button>
+        {/* 内置技能随平台发布、启动时自动刷新，不提供删除入口。 */}
+        {!sk.builtin && (
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={() => {
+              if (confirm(`删除 skill「${skillLabel(sk)}」？`)) onDelete(sk.id);
+            }}
+            className="text-xs text-ink-3 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleting ? "删除中…" : "删除"}
+          </button>
+        )}
       </div>
     </li>
   );
@@ -186,7 +216,12 @@ export default function SkillsPage() {
 
   const visible = (skills ?? []).filter((s) => {
     const q = keyword.trim().toLowerCase();
-    return !q || s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q);
+    return (
+      !q ||
+      s.name.toLowerCase().includes(q) ||
+      s.title?.toLowerCase().includes(q) ||
+      s.description?.toLowerCase().includes(q)
+    );
   });
 
   return (
@@ -213,7 +248,7 @@ export default function SkillsPage() {
           {
             label: "最近上传",
             value: latest ? relTime(latest.created_at) : "—",
-            hint: latest ? latest.name : "还没有技能包",
+            hint: latest ? skillLabel(latest) : "还没有技能包",
           },
         ]}
       />
@@ -393,7 +428,7 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
   };
 
   const unlink = () => {
-    if (!confirm(`解除「${skill.name}」的远端仓库绑定？已保存的 token 也会一并清除。`)) return;
+    if (!confirm(`解除「${skillLabel(skill)}」的远端仓库绑定？已保存的 token 也会一并清除。`)) return;
     clear.mutate(skill.id, {
       onSuccess: () => {
         setSource(null);
@@ -449,12 +484,18 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
 
   return (
     <Dialog
-      title={`同步 · ${skill.name}`}
+      title={`同步 · ${skillLabel(skill)}`}
       onClose={onClose}
       wide
       footer={editing ? editingFooter : configuredFooter}
     >
       <div className="space-y-4">
+        {skill.builtin && (
+          <div className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-[11px] leading-relaxed text-accent">
+            <BuiltinTag />
+            <span>平台内置技能：随 daemon 发布、启动时自动刷新，不能手动删除。</span>
+          </div>
+        )}
         {editing ? (
           <form id="skill-source-form" onSubmit={submitSource} className="space-y-4">
             <p className="text-xs text-ink-3">

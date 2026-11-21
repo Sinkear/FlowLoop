@@ -182,6 +182,108 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE hook_binding ADD COLUMN params TEXT NOT NULL DEFAULT '{}'`,
 		`DROP INDEX IF EXISTS uq_goal_source_ref`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS uq_goal_source_ref_conn ON goal(source_ref, connection_id) WHERE source_ref != ''`,
+
+		// Blueprint Phase A (docs/BLUEPRINT-PROPOSAL.md §5): serialized
+		// orchestration authority. goal.blueprint_version_id pins the spec
+		// version a goal runs ('' = infer mode, unchanged semantics); the
+		// three tables mirror schema.sql for old DBs (double-idempotent:
+		// schema.sql CREATE IF NOT EXISTS + this list).
+		`ALTER TABLE goal ADD COLUMN blueprint_version_id TEXT NOT NULL DEFAULT ''`,
+		// Phase B (proposal §11.5): the squad whose roster this work item's
+		// runs are briefed with ('' = fall back to the goal's own squad).
+		`ALTER TABLE sub_goal ADD COLUMN team_squad_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS blueprint (
+		    id              TEXT PRIMARY KEY,
+		    name            TEXT NOT NULL UNIQUE,
+		    description     TEXT NOT NULL DEFAULT '',
+		    created_by_type TEXT NOT NULL DEFAULT 'human',
+		    created_by_id   TEXT NOT NULL DEFAULT '',
+		    created_at      TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS blueprint_version (
+		    id           TEXT PRIMARY KEY,
+		    blueprint_id TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+		    version      INTEGER NOT NULL,
+		    content      TEXT NOT NULL,
+		    content_hash TEXT NOT NULL,
+		    status       TEXT NOT NULL DEFAULT 'draft',
+		    changelog    TEXT NOT NULL DEFAULT '',
+		    created_at   TEXT NOT NULL,
+		    UNIQUE(blueprint_id, version)
+		)`,
+		`CREATE TABLE IF NOT EXISTS blueprint_node (
+		    id              TEXT PRIMARY KEY,
+		    goal_id         TEXT NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
+		    node_key        TEXT NOT NULL,
+		    parent_key      TEXT NOT NULL DEFAULT '',
+		    node_type       TEXT NOT NULL,
+		    sub_goal_id     TEXT NOT NULL DEFAULT '',
+		    state           TEXT NOT NULL DEFAULT 'pending',
+		    resolved_config TEXT NOT NULL DEFAULT '',
+		    created_at      TEXT NOT NULL,
+		    UNIQUE(goal_id, node_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_node_sub_goal ON blueprint_node(sub_goal_id)`,
+
+		// Phase B-2.1 (proposal §11.8): per-squad role vocabulary registry.
+		// Mirrors schema.sql for old DBs; zero rows = free-text roles kept
+		// (template apply / team import / legacy squads unchanged).
+		`CREATE TABLE IF NOT EXISTS squad_role (
+		    id          TEXT PRIMARY KEY,
+		    squad_id    TEXT NOT NULL REFERENCES squad(id) ON DELETE CASCADE,
+		    name        TEXT NOT NULL,
+		    description TEXT NOT NULL DEFAULT '',
+		    created_at  TEXT NOT NULL,
+		    UNIQUE(squad_id, name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name)`,
+
+		// Phase C (proposal §12): blueprint patch proposals + infer shape
+		// signatures. Mirrors schema.sql for old DBs.
+		`CREATE TABLE IF NOT EXISTS blueprint_proposal (
+		    id                 TEXT PRIMARY KEY,
+		    blueprint_id       TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+		    base_version_id    TEXT NOT NULL REFERENCES blueprint_version(id),
+		    title              TEXT NOT NULL,
+		    hypothesis         TEXT NOT NULL DEFAULT '',
+		    expected_metric    TEXT NOT NULL DEFAULT '',
+		    expected_direction TEXT NOT NULL DEFAULT '',
+		    patches_json       TEXT NOT NULL DEFAULT '[]',
+		    finding_id         TEXT NOT NULL DEFAULT '',
+		    status             TEXT NOT NULL DEFAULT 'pending',
+		    applied_version_id TEXT NOT NULL DEFAULT '',
+		    decided_at         TEXT NOT NULL DEFAULT '',
+		    decided_by_type    TEXT NOT NULL DEFAULT '',
+		    decided_by_id      TEXT NOT NULL DEFAULT '',
+		    created_by_type    TEXT NOT NULL DEFAULT 'human',
+		    created_by_id      TEXT NOT NULL DEFAULT '',
+		    created_at         TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_bp ON blueprint_proposal(blueprint_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_status ON blueprint_proposal(status, created_at)`,
+		`CREATE TABLE IF NOT EXISTS infer_shape (
+		    id         TEXT PRIMARY KEY,
+		    goal_id    TEXT NOT NULL,
+		    domain_id  TEXT NOT NULL DEFAULT '',
+		    squad_id   TEXT NOT NULL DEFAULT '',
+		    signature  TEXT NOT NULL,
+		    skeleton   TEXT NOT NULL DEFAULT '',
+		    node_count INTEGER NOT NULL DEFAULT 0,
+		    drafted    INTEGER NOT NULL DEFAULT 0,
+		    created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at)`,
+		`ALTER TABLE infer_shape ADD COLUMN skeleton TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE infer_shape ADD COLUMN drafted INTEGER NOT NULL DEFAULT 0`,
+
+		// Platform built-in skills (2026-11-20): title is the human-facing
+		// display name from SKILL.md frontmatter; builtin=1 marks a skill
+		// shipped inside the daemon binary (re-seeded every boot, attached to
+		// the steward, delete-refused). Both columns live in schema.sql for
+		// fresh DBs; these ALTERs retrofit existing ones.
+		`ALTER TABLE skill ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE skill ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

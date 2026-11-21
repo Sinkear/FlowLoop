@@ -1,4 +1,4 @@
-import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, Schedule, Domain, Checks, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
+import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, Checks, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
 
 // 默认走同源 /backend/*（Next rewrites 转发到本机 daemon 47813）——反代出
 // 去时浏览器无需直连 daemon。本地直连场景可显式设置 NEXT_PUBLIC_API_URL。
@@ -88,7 +88,6 @@ export const createSkillPullRequest = (id: string, body?: { title?: string; body
     method: "POST",
     body: JSON.stringify(body ?? {}),
   });
-export const getRuntime = (id: string) => api<Runtime>(`/runtimes/${id}`);
 export const createRuntime = (body: Omit<Runtime, "id" | "created_at">) =>
   api<Runtime>("/runtimes", { method: "POST", body: JSON.stringify(body) });
 export const deleteRuntime = (id: string) =>
@@ -96,7 +95,6 @@ export const deleteRuntime = (id: string) =>
 
 // ── Agent ──
 export const listAgents = () => api<Agent[]>("/agents");
-export const getAgent = (id: string) => api<Agent>(`/agents/${id}`);
 export const createAgent = (body: Omit<Agent, "id" | "created_at">) =>
   api<Agent>("/agents", { method: "POST", body: JSON.stringify(body) });
 export const updateAgent = (id: string, body: Record<string, unknown>) =>
@@ -163,6 +161,8 @@ export interface CreateGoalBody {
   content_capture?: "none" | "redacted" | "full";
   budget_usd?: number;
   sample_rate?: number; // 0..1（不是百分数）
+  // Phase A：钉住一个 published 蓝本版本——''/缺省 = infer 模式（动态拆解）。
+  blueprint_version_id?: string;
 }
 export const createGoal = (body: CreateGoalBody) =>
   api<Goal>("/goals", { method: "POST", body: JSON.stringify(body) });
@@ -233,7 +233,6 @@ export const createGoalComment = (
 
 // ── Squad ──
 export const listSquads = () => api<Squad[]>("/squads");
-export const getSquad = (id: string) => api<Squad>(`/squads/${id}`);
 export const createSquad = (body: {
   name: string;
   leader_id: string;
@@ -256,6 +255,20 @@ export const addSquadMember = (
 ) => api<SquadMember>(`/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(body) });
 export const listSquadMembers = (squadId: string) =>
   api<SquadMember[]>(`/squads/${squadId}/members`);
+
+// ── Squad role vocabulary registry (proposal §11.8) ──
+
+export const listSquadRoles = (squadId: string) =>
+  api<SquadRole[]>(`/squads/${squadId}/roles`);
+export const registerSquadRole = (
+  squadId: string,
+  body: { name: string; description?: string }
+) => api<SquadRole>(`/squads/${squadId}/roles`, { method: "POST", body: JSON.stringify(body) });
+export const removeSquadRole = (squadId: string, name: string) =>
+  api<void>(`/squads/${squadId}/roles/${name}`, { method: "DELETE" });
+// Cross-squad vocabulary — the blueprint author's alignment listing.
+export const listAllSquadRoles = () =>
+  api<SquadRoleView[]>(`/squad-roles`);
 
 // ── Domain ──
 export const listDomains = () => api<Domain[]>("/domains");
@@ -403,7 +416,6 @@ export const savePlatformSettings = (body: PlatformSettings) =>
 
 // ── Schedule ──
 export const listSchedules = () => api<Schedule[]>("/schedules");
-export const getSchedule = (id: string) => api<Schedule>(`/schedules/${id}`);
 export const createSchedule = (body: {
   name: string;
   title_template: string;
@@ -491,11 +503,98 @@ export const listSquadWorkflows = (squadId: string, limit = 10) =>
   api<WorkflowGoalSummary[]>(
     `/workflows/squads/${squadId}?limit=${Math.max(1, Math.min(50, Math.trunc(limit)))}`
   );
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md §5）：结构化编排权威 ──
+// 规范图与执行图共用 WorkflowGraph 形状（§4.12），前端零布局改动复用
+// workflow-graph 组件渲染。goal.blueprint_version_id 钉 published 版本，
+// Activate 时编译成 gated sub_goal。
+export const listBlueprints = () =>
+  api<import("./types").Blueprint[]>("/blueprints");
+
+// 创建（web 蓝图编辑器唯一后门之外的正规入口）：content 是完整的规范 JSON
+// 字符串，保存即过 V1–V6 校验，失败 400 带逐条原因。
+export const createBlueprint = (body: {
+  name: string;
+  description?: string;
+  content: string;
+}) =>
+  api<import("./types").Blueprint>("/blueprints", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+// ── 蓝本人工门（B-3，§4.2）：goal 运行中等待人拍板的决策卡 ──
+// held gates = 蓝本节点 type=gate 且已持门（state=running）：只列 OPEN 的，
+// 已决策/被剪掉的不会出现。resolve 即拍板：落库 chosen action + 剪掉未选
+// 分支 + 释放选中分支。
+export const listHeldGates = (goalId: string) =>
+  api<{ gates: import("./types").HeldGate[] }>(`/goals/${goalId}/blueprint-gates`);
+
+export const resolveHeldGate = (
+  goalId: string,
+  nodeKey: string,
+  body: { action: string; reason?: string }
+) =>
+  api<{ resolved: boolean; node_key: string; action: string }>(
+    `/goals/${goalId}/blueprint-gates/${nodeKey}`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
+
+export const getBlueprint = (id: string) =>
+  api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
+
+export const newBlueprintDraft = (id: string, changelog: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprints/${id}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ changelog }),
+  });
+
+export const updateBlueprintDraft = (versionId: string, content: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprint-versions/${versionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+
+export const publishBlueprintVersion = (versionId: string, changelog: string) =>
+  api<import("./types").BlueprintVersion>(`/blueprint-versions/${versionId}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ changelog }),
+  });
+
+export const getBlueprintGraph = (versionId: string) =>
+  api<WorkflowGraph>(`/workflows/blueprints/${versionId}`);
+
+// ── 蓝本提案（Phase C，§12）：结构化补丁 → 人工批准 → 新草稿 ──
+export const listBlueprintProposals = (blueprintId: string) =>
+  api<{ proposals: import("./types").BlueprintProposal[] }>(
+    `/blueprints/${blueprintId}/proposals`
+  );
+
+export const getBlueprintProposalDiff = (proposalId: string) =>
+  api<import("./types").BlueprintProposalDiff>(
+    `/blueprint-proposals/${proposalId}/diff`
+  );
+
+export const approveBlueprintProposal = (proposalId: string) =>
+  api<{ proposal: import("./types").BlueprintProposal; draft: import("./types").BlueprintVersion }>(
+    `/blueprint-proposals/${proposalId}/approve`,
+    { method: "POST" }
+  );
+
+export const rejectBlueprintProposal = (proposalId: string) =>
+  api<import("./types").BlueprintProposal>(`/blueprint-proposals/${proposalId}/reject`, {
+    method: "POST",
+  });
+
+// 同题 A/B（§12.3）：两个 goal 执行指标并排 + delta。
+export const compareBlueprintAB = (blueprintId: string, goalA: string, goalB: string) =>
+  api<import("./types").ABCompareResult>(
+    `/workflows/blueprints/${blueprintId}/ab?goal_a=${goalA}&goal_b=${goalB}`
+  );
+
 // ── Hooks (lifecycle hooks, spec: tmp/hooks-spec.md v0.2 §5.1) ──
 
 export const listHooks = () => api<import("./types").HookListItem[]>("/hooks");
-export const listHookEvents = () =>
-  api<{ events: import("./types").HookEvent[] }>("/hooks/events");
 export const createHook = (body: {
   name: string;
   description?: string;

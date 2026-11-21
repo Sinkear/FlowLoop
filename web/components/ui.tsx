@@ -14,7 +14,7 @@ const BTN_VARIANTS: Record<ButtonVariant, string> = {
   outline:
     "border border-line-strong bg-transparent text-ink-2 hover:border-accent/50 hover:text-ink hover:bg-surface-2",
   ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
-  danger: "bg-red-500/90 text-white hover:bg-red-500",
+  danger: "bg-red-600 text-white hover:bg-red-700",
 };
 
 export function Button({
@@ -55,6 +55,10 @@ const STATUS_COLORS: Record<string, string> = {
   analyzing: "bg-blue-500/10 text-blue-300 dot-blue",
   ready: "bg-emerald-500/10 text-emerald-300 dot-emerald",
   skipped: "bg-zinc-500/10 text-ink-3 dot-zinc",
+  // 蓝本版本状态（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.6）：draft 可改，
+  // published 不可变（goal 只能钉 published）。
+  draft: "bg-amber-500/10 text-amber-300 dot-amber",
+  published: "bg-emerald-500/10 text-emerald-300 dot-emerald",
 };
 
 // 状态的中文显示名：UI 里不再直接暴露 backlog/active 这类枚举值。
@@ -75,6 +79,9 @@ export const STATUS_LABEL: Record<string, string> = {
   online: "在线",
   offline: "离线",
   paused: "已暂停",
+  // 蓝本版本（Phase A）
+  draft: "草稿",
+  published: "已发布",
 };
 
 const STATUS_DOTS: Record<string, string> = {
@@ -356,12 +363,15 @@ export function PageBody({
 // ── Stat strip ──
 // 列表页顶部的概览条：一行 2–4 个数字，等宽字体、不用彩色卡片、不用图标堆叠。
 // 作用是把“这一页现在什么状况”压成一眼可读的一行，而不是让页面只剩一个列表。
+// 统计数字是正文级文字（20px，非粗体），要走 4.5:1 而不是图形的 3:1。
+// 因此用 -300 槽位：暗色主题下是明亮的绿/琥珀，浅色主题会被重映射成
+// 深绿 #047857 / 深琥珀 #b45309（≈5:1）。-400 在浅色主题下只有 3.2–3.8:1。
 const STAT_TONE: Record<string, string> = {
   default: "text-ink",
-  ok: "text-emerald-400",
-  warn: "text-amber-400",
-  err: "text-red-400",
-  info: "text-sky-400",
+  ok: "text-emerald-300",
+  warn: "text-amber-300",
+  err: "text-red-300",
+  info: "text-sky-300",
   muted: "text-ink-3",
 };
 

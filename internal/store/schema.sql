@@ -142,8 +142,14 @@ CREATE TABLE IF NOT EXISTS agent (
 CREATE TABLE IF NOT EXISTS skill (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
+    -- title = human-facing display name (SKILL.md frontmatter `title`); name
+    -- stays the machine identity (library dir / archive / agent.skills).
+    title       TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
+    -- builtin = 1 for skills shipped inside the daemon binary (re-seeded on
+    -- every boot and auto-attached to the steward). User uploads leave it 0.
+    builtin     INTEGER NOT NULL DEFAULT 0,
     -- Remote repository binding (feature: remote skill source). Empty
     -- repo_url = the skill is local-only. repo_token is the git platform
     -- token used for clone/push/PR; never returned by the API.
@@ -188,6 +194,24 @@ CREATE TABLE IF NOT EXISTS squad_member (
     UNIQUE(squad_id, member_type, member_id)
 );
 
+-- squad_role: a squad's role vocabulary registry (BLUEPRINT-PROPOSAL §11.8).
+-- name is the capability slug (^[a-z][a-z0-9_-]*$ normalized form) that
+-- blueprint task.assignee "capability:<name>" resolves against;
+-- description is the job spec this role exists for — the alignment copy the
+-- squad owner, the blueprint author, and the spawn planner all read.
+-- Reserved words 'reviewer' (structural) and 'member' (legacy default) are
+-- always valid and never stored here. Squads with zero rows keep free-text
+-- roles (template apply / team import / legacy squads unchanged).
+CREATE TABLE IF NOT EXISTS squad_role (
+    id          TEXT PRIMARY KEY,
+    squad_id    TEXT NOT NULL REFERENCES squad(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    UNIQUE(squad_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name);
+
 -- goal: a work item (product plane). The sole holder of state authority.
 -- assignee is polymorphic (agent | squad | human).
 -- domain_id: agent-executed goals must belong to a domain — the domain owns
@@ -216,8 +240,104 @@ CREATE TABLE IF NOT EXISTS goal (
     execution_mode   TEXT NOT NULL DEFAULT 'infer', -- RSI: infer | train (train freezes the workflow graph at terminal and analyzes it)
     content_capture  TEXT NOT NULL DEFAULT 'redacted', -- RSI: none | redacted | full
     budget_usd       REAL NOT NULL DEFAULT 2,      -- RSI: analysis budget ceiling (displayed/enforced later)
-    sample_rate      REAL NOT NULL DEFAULT 1       -- RSI: 0..1 trace sampling rate
+    sample_rate      REAL NOT NULL DEFAULT 1,      -- RSI: 0..1 trace sampling rate
+    blueprint_version_id TEXT NOT NULL DEFAULT ''  -- Blueprint Phase A: pinned spec version ('' = infer mode, unchanged semantics)
 );
+
+-- Blueprint (docs/BLUEPRINT-PROPOSAL.md §5): the serialized orchestration
+-- authority. blueprint = named reusable spec; blueprint_version = immutable
+-- content snapshot (publish requires the static validator V1–V6); goal pins
+-- one version so the same version always compiles to the same topology.
+CREATE TABLE IF NOT EXISTS blueprint (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL DEFAULT '',
+    created_by_type TEXT NOT NULL DEFAULT 'human',   -- human | agent (RSI optimizer drafts count as agent)
+    created_by_id   TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS blueprint_version (
+    id            TEXT PRIMARY KEY,
+    blueprint_id  TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+    version       INTEGER NOT NULL,
+    content       TEXT NOT NULL,              -- spec graph JSON (the single source of truth)
+    content_hash  TEXT NOT NULL,              -- sha256(content) — drift guard (V6)
+    status        TEXT NOT NULL DEFAULT 'draft',  -- draft|published|retired
+    changelog     TEXT NOT NULL DEFAULT '',   -- per-version change note; optimizer hypotheses land here
+    created_at    TEXT NOT NULL,
+    UNIQUE(blueprint_id, version)
+);
+
+-- blueprint_node: per-goal instance ledger — the alignment anchor between
+-- the spec graph (node_key) and the execution graph (sub_goal_id). The
+-- all-nodes-terminal completion criterion and RSI per-node attribution both
+-- read this table. State here is the node's OWN lifecycle (the spec graph
+-- never copies execution state; workflow.go still assembles read-time).
+CREATE TABLE IF NOT EXISTS blueprint_node (
+    id              TEXT PRIMARY KEY,
+    goal_id         TEXT NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
+    node_key        TEXT NOT NULL,            -- spec node id; spawn children: '<spawn_key>#<seq>'
+    parent_key      TEXT NOT NULL DEFAULT '', -- set for spawn children (the spawn node's key)
+    node_type       TEXT NOT NULL,            -- task|condition|router|gate|spawn|end
+    sub_goal_id     TEXT NOT NULL DEFAULT '', -- '' until compiled/registered
+    state           TEXT NOT NULL DEFAULT 'pending', -- pending|running|settled|skipped|failed
+    resolved_config TEXT NOT NULL DEFAULT '', -- instantiation snapshot: resolved brief / branch choice
+    created_at      TEXT NOT NULL,
+    UNIQUE(goal_id, node_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_blueprint_node_sub_goal ON blueprint_node(sub_goal_id);
+
+-- blueprint_proposal (Phase C §12.1): one structured patch proposal against a
+-- published base version. patches_json is a JSON array of ops
+-- (add_node|update_node|delete_node|add_edge|delete_edge); approval applies
+-- them to the base content, re-validates (V1-V6), and opens a NEW DRAFT
+-- version (changelog = hypothesis) — never auto-published. applied_version_id
+-- records the draft the approval produced.
+CREATE TABLE IF NOT EXISTS blueprint_proposal (
+    id                 TEXT PRIMARY KEY,
+    blueprint_id       TEXT NOT NULL REFERENCES blueprint(id) ON DELETE CASCADE,
+    base_version_id    TEXT NOT NULL REFERENCES blueprint_version(id),
+    title              TEXT NOT NULL,
+    hypothesis         TEXT NOT NULL DEFAULT '',
+    expected_metric    TEXT NOT NULL DEFAULT '',
+    expected_direction TEXT NOT NULL DEFAULT '',  -- up|down
+    patches_json       TEXT NOT NULL DEFAULT '[]',
+    finding_id         TEXT NOT NULL DEFAULT '',   -- optional link: rsi_finding.id
+    status             TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+    applied_version_id TEXT NOT NULL DEFAULT '',  -- set on approve (the new draft)
+    decided_at         TEXT NOT NULL DEFAULT '',
+    decided_by_type    TEXT NOT NULL DEFAULT '',
+    decided_by_id      TEXT NOT NULL DEFAULT '',
+    created_by_type    TEXT NOT NULL DEFAULT 'human',
+    created_by_id      TEXT NOT NULL DEFAULT '',
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_bp ON blueprint_proposal(blueprint_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_blueprint_proposal_status ON blueprint_proposal(status, created_at);
+
+-- infer_shape (Phase C §12.4, §14.1): shape signature of each finished infer
+-- goal's execution graph, keyed by domain. signature = exact L1 (all
+-- nodes/edges); skeleton = L0 work-skeleton (verify/review/consult nodes and
+-- seq/verified_by/consult edges stripped) for near-miss convergence in
+-- complex scenarios. 3 consecutive equal L1 → 固化 draft; 3 equal L0 with
+-- differing L1 → 近似固化 draft (never auto-published either). drafted=1
+-- marks rows whose shape produced an auto-draft — the per-domain counter
+-- behind the rsi.max_auto_rounds iteration cap (§14.2).
+CREATE TABLE IF NOT EXISTS infer_shape (
+    id         TEXT PRIMARY KEY,
+    goal_id    TEXT NOT NULL,
+    domain_id  TEXT NOT NULL DEFAULT '',
+    squad_id   TEXT NOT NULL DEFAULT '',
+    signature  TEXT NOT NULL,
+    skeleton   TEXT NOT NULL DEFAULT '',
+    node_count INTEGER NOT NULL DEFAULT 0,
+    drafted    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_goal_assignee ON goal(assignee_type, assignee_id);
 CREATE INDEX IF NOT EXISTS idx_goal_status ON goal(status);
@@ -301,6 +421,7 @@ CREATE TABLE IF NOT EXISTS sub_goal (
     quality_iteration INTEGER NOT NULL DEFAULT 0,
     depends_on        TEXT NOT NULL DEFAULT '[]', -- JSON array of sub_goal ids declared by the leader; '' edges are inferred at read time (workflow_edge)
     dispatch_comment_id TEXT NOT NULL DEFAULT '', -- the leader's dispatch comment for THIS work item ('' on legacy rows): a run born LATER (wakeDependentsTx, after the deps verify) carries it as run.trigger_comment_id, so the assignee's report still threads to the dispatch even when the first run was gated
+    team_squad_id     TEXT NOT NULL DEFAULT '',  -- Phase B (§11.5): the squad whose roster/playbook this work item's runs are briefed with; '' = fall back to the goal's own squad (legacy/infer semantics unchanged)
     created_at        TEXT NOT NULL
 );
 
@@ -415,7 +536,7 @@ CREATE INDEX IF NOT EXISTS idx_gate_decision_goal ON gate_decision(goal_id, deci
 CREATE TABLE IF NOT EXISTS comment (
     id          TEXT PRIMARY KEY,
     goal_id     TEXT NOT NULL REFERENCES goal(id),
-    author_type TEXT NOT NULL CHECK (author_type IN ('human', 'agent', 'system')),
+    author_type TEXT NOT NULL CHECK (author_type IN ('human', 'agent', 'system')), -- system subsumes platform actors (blueprint spawn fan-out uses author_id = the spawn sub_goal id)
     author_id   TEXT NOT NULL DEFAULT '',   -- zero id for system rows
     parent_id   TEXT REFERENCES comment(id), -- one level of threading
     content     TEXT NOT NULL,

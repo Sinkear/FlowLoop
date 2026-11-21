@@ -162,10 +162,19 @@ export default function DomainsPage() {
         )}
       </SectionCard>
 
-      <GateHealthTable />
-
-      {/* 平台级参数从「设置」搬到它真正起作用的地方：webhook 签名。 */}
-      <GlobalWebhookSecretCard />
+      {/* 低频面板收进折叠（m03782 精简）：卡点统计与全局 secret 都是
+          管理员偶尔才碰的东西，默认收起，页面首屏只剩仓库列表。 */}
+      <details className="group">
+        <summary className="cursor-pointer select-none rounded-lg border border-line bg-surface-1 px-4 py-2 text-xs text-ink-2 transition-colors hover:bg-surface-2">
+          管理面板（卡点统计 · 全局 webhook secret）
+          <span className="ml-1.5 text-ink-3 group-open:hidden">展开</span>
+          <span className="ml-1.5 text-ink-3 hidden group-open:inline">收起</span>
+        </summary>
+        <div className="mt-3 space-y-5">
+          <GateHealthTable />
+          <GlobalWebhookSecretCard />
+        </div>
+      </details>
 
       {showCreate && <CreateDomainDialog onClose={() => setShowCreate(false)} />}
     </PageBody>

@@ -33,7 +33,7 @@ const ACTION_META: Record<GoalBatchAction, { label: string; btnCls: string }> = 
   activate: { label: "激活", btnCls: "border border-line-strong text-ink-2 hover:border-accent/60 hover:text-ink" },
   cancel: { label: "取消", btnCls: "border border-line-strong text-ink hover:border-amber-500/50 hover:text-amber-300" },
   reopen: { label: "重开", btnCls: "border border-line-strong text-ink hover:border-accent/60 hover:text-accent/80" },
-  delete: { label: "删除", btnCls: "bg-red-500/90 hover:bg-red-500 text-white shadow-sm shadow-black/20" },
+  delete: { label: "删除", btnCls: "bg-red-600 hover:bg-red-700 text-white shadow-sm shadow-black/20" },
 };
 
 export function CheckIcon({ className }: { className?: string }) {

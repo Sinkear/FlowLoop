@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Dialog, Field, inputCls } from "@/components/ui";
-import { useCreateGoal, useHooks } from "@/lib/queries";
+import { useBlueprints, useCreateGoal, useHooks } from "@/lib/queries";
 import { bindGoalHook, type CreateGoalBody } from "@/lib/api";
 import { HOOK_EVENTS, type ExecutionMode, type HookEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,19 @@ export function NewGoalForm({
   onCreated?: () => void;
 }) {
   const createGoal = useCreateGoal();
-  const [title, setTitle] = useState("");
+  // 蓝本（Phase A）：钉住一个 published 版本才能选择；无蓝本时下拉只有
+  // 「不绑定」一项——infer 模式语义完全不变（提案 §2 非目标护栏）。
+  const { data: blueprints } = useBlueprints();
+  const publishedBlueprints = (blueprints ?? []).filter((b) => b.latest_version_id);
+  const [blueprintVersionId, setBlueprintVersionId] = useState("");
+
+  // 深链预选（蓝图详情页「用此版本新建任务」按钮）：/goals/new?blueprint=<versionId>
+  // 直接把版本钉进表单，省得在对话框里再找一遍。读 window.location 而不是
+  // useSearchParams——避开静态预渲染页的 Suspense 边界约束。
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get("blueprint");
+    if (v) setBlueprintVersionId(v);
+  }, []);  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [domainId, setDomainId] = useState("");
   const [domainErr, setDomainErr] = useState("");
@@ -76,6 +88,9 @@ export function NewGoalForm({
     // 运行模式随 goal 一起落库：infer 只记基础指标，train 才建分析会话。
     // （后端缺省也是 infer，这里仍显式传，便于抓包核对。）
     body.execution_mode = executionMode;
+    // 蓝本钉版本（Phase A）：非空时 Activate 编译规范图为 gated sub_goal，
+    // 子任务创建被结构拒绝。后端 Create 校验版本必须 published。
+    if (blueprintVersionId) body.blueprint_version_id = blueprintVersionId;
     if (executionMode === "train") {
       body.content_capture = contentCapture;
       // 数值字段做一次夹取：空输入/非法值回落到默认，不让 NaN 写进库。
@@ -195,6 +210,26 @@ export function NewGoalForm({
           </Field>
         )}
         {/* 运行模式：两栏单选卡片（不是下拉——两个选项各带一句解释，选错代价大）。 */}
+        {/* 蓝本绑定（Phase A）：只在有 published 蓝本时出现，默认不绑。 */}
+        {publishedBlueprints.length > 0 && (
+          <Field
+            label="绑定蓝本"
+            hint="可选：激活时按规范图编译子任务，执行顺序由结构保证；不绑则由 owner 动态拆解（infer 模式）"
+          >
+            <select
+              value={blueprintVersionId}
+              onChange={(e) => setBlueprintVersionId(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">不绑定（owner 动态拆解）</option>
+              {publishedBlueprints.map((b) => (
+                <option key={b.latest_version_id} value={b.latest_version_id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <div className="space-y-1">
           <span className="block text-xs font-medium text-ink-2">运行模式</span>
           <div className="grid grid-cols-2 gap-2">

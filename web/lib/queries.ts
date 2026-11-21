@@ -1,7 +1,17 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
+import {
+  listBlueprintProposals,
+  getBlueprintProposalDiff,
+  approveBlueprintProposal,
+  rejectBlueprintProposal,
+  compareBlueprintAB,
   listRuntimes,
   createRuntime,
   deleteRuntime,
@@ -56,6 +66,10 @@ import {
   deleteSquad,
   addSquadMember,
   listSquadMembers,
+  listSquadRoles,
+  registerSquadRole,
+  removeSquadRole,
+  listAllSquadRoles,
   updateSquad,
   removeSquadMember,
   listSchedules,
@@ -106,6 +120,15 @@ import {
   retryRsiSession,
   getGoalWorkflow,
   listSquadWorkflows,
+  listBlueprints,
+  createBlueprint,
+  getBlueprint,
+  getBlueprintGraph,
+  newBlueprintDraft,
+  updateBlueprintDraft,
+  publishBlueprintVersion,
+  listHeldGates,
+  resolveHeldGate,
 } from "./api";
 import { useWSEvent } from "./ws";
 import type {
@@ -139,9 +162,18 @@ export const qk = {
   goalChanges: (goalId: string) => ["goals", goalId, "changes"] as const,
   subGoalVerifications: (goalId: string, subGoalId: string) =>
     ["goals", goalId, "sub-goals", subGoalId, "verifications"] as const,
+  heldGates: (goalId: string) => ["goals", goalId, "blueprint-gates"] as const,
+  blueprintProposals: (blueprintId: string) =>
+    ["blueprints", blueprintId, "proposals"] as const,
+  blueprintProposalDiff: (proposalId: string) =>
+    ["blueprint-proposals", proposalId, "diff"] as const,
+  blueprintAB: (blueprintId: string, a: string, b: string) =>
+    ["blueprints", blueprintId, "ab", a, b] as const,
   squads: ["squads"] as const,
   squad: (id: string) => ["squads", id] as const,
   squadMembers: (squadId: string) => ["squads", squadId, "members"] as const,
+  squadRoles: (squadId: string) => ["squads", squadId, "roles"] as const,
+  allSquadRoles: ["squad-roles"] as const,
   schedules: ["schedules"] as const,
   domains: ["domains"] as const,
   domain: (id: string) => ["domains", id] as const,
@@ -160,6 +192,10 @@ export const qk = {
   workflowGoal: (goalId: string) => ["workflows", "goals", goalId] as const,
   workflowSquad: (squadId: string, limit: number) =>
     ["workflows", "squads", squadId, limit] as const,
+  // 蓝本（Phase A）：列表 / 单体（含版本） / 规范图。
+  blueprints: ["blueprints"] as const,
+  blueprint: (id: string) => ["blueprints", id] as const,
+  blueprintGraph: (versionId: string) => ["blueprints", "graph", versionId] as const,
   templates: ["templates"] as const,
   templatesByType: (type: string) => ["templates", { type }] as const,
   template: (kind: string, id: string) => ["templates", kind, id] as const,
@@ -668,6 +704,43 @@ export function useAddSquadMember() {
       addSquadMember(squadId, body),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: qk.squadMembers(vars.squadId) });
+    },
+  });
+}
+
+// ── Squad role vocabulary registry (proposal §11.8) ──
+
+export function useSquadRoles(squadId: string) {
+  return useQuery({
+    queryKey: qk.squadRoles(squadId),
+    queryFn: () => listSquadRoles(squadId),
+  });
+}
+export function useAllSquadRoles() {
+  return useQuery({
+    queryKey: qk.allSquadRoles,
+    queryFn: () => listAllSquadRoles(),
+  });
+}
+export function useRegisterSquadRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ squadId, ...body }: { squadId: string; name: string; description?: string }) =>
+      registerSquadRole(squadId, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.squadRoles(vars.squadId) });
+      qc.invalidateQueries({ queryKey: qk.allSquadRoles });
+    },
+  });
+}
+export function useRemoveSquadRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ squadId, name }: { squadId: string; name: string }) =>
+      removeSquadRole(squadId, name),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.squadRoles(vars.squadId) });
+      qc.invalidateQueries({ queryKey: qk.allSquadRoles });
     },
   });
 }
@@ -1185,5 +1258,148 @@ export function useSquadWorkflows(squadId: string, limit = 10) {
     queryKey: qk.workflowSquad(squadId, limit),
     queryFn: () => listSquadWorkflows(squadId, limit),
     enabled: !!squadId,
+  });
+}
+
+// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// 只读查询；写操作（新草稿/改草稿/发布）走 mutation 后失效 blueprints 键。
+
+// 蓝本列表（列表页）。
+export function useBlueprints() {
+  return useQuery({ queryKey: qk.blueprints, queryFn: listBlueprints });
+}
+
+// 创建蓝本（新蓝图页）：保存即校验，服务端 400 的逐条原因原样透传给表单。
+export function useCreateBlueprint() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string; content: string }) =>
+      createBlueprint(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 单个蓝本 + 其版本列表（详情页）。keepPreviousData：发布/开草稿后
+// invalidate 刷新时旧内容保持挂载，不闪骨架屏（m01573「页面刷新了一下」）。
+export function useBlueprint(id: string) {
+  return useQuery({
+    queryKey: qk.blueprint(id),
+    queryFn: () => getBlueprint(id),
+    enabled: !!id,
+    placeholderData: keepPreviousData,
+  });
+}
+
+// 一个版本的规范图（WorkflowGraph 形状，复用 workflow-graph 渲染）。
+// keepPreviousData：切换版本按钮时保留上一张图，避免整图闪空白。
+export function useBlueprintGraph(versionId: string) {
+  return useQuery({
+    queryKey: qk.blueprintGraph(versionId),
+    queryFn: () => getBlueprintGraph(versionId),
+    enabled: !!versionId,
+    placeholderData: keepPreviousData,
+  });
+}
+
+// 开新草稿（从最新版本 fork 出 v+1 draft）。
+export function useNewBlueprintDraft(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (changelog: string) => newBlueprintDraft(id, changelog),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 更新草稿内容（发布门会全量校验 V1–V6）。
+export function useUpdateBlueprintDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { versionId: string; content: string }) =>
+      updateBlueprintDraft(p.versionId, p.content),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 发布（draft → published，内容自此不可变）。
+export function usePublishBlueprintVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { versionId: string; changelog: string }) =>
+      publishBlueprintVersion(p.versionId, p.changelog),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// ── 蓝本人工门（B-3，§4.2）──
+// goal 详情页决策卡：listHeldGates 只列 OPEN 的门（held，等人拍板）；
+// 拍板后失效 goal 全家桶（goal 状态、编排图、子任务、决策卡本身都要刷新
+// —— 被拍板释放的分支会让执行图立刻变化）。
+export function useHeldGates(goalId: string | null) {
+  return useQuery({
+    queryKey: qk.heldGates(goalId!),
+    queryFn: () => listHeldGates(goalId!),
+    enabled: !!goalId,
+  });
+}
+
+export function useResolveHeldGate(goalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { nodeKey: string; action: string; reason?: string }) =>
+      resolveHeldGate(goalId, p.nodeKey, { action: p.action, reason: p.reason }),
+    onSuccess: () => {
+      // 全家桶：goal 状态、编排图、子任务、决策卡本身都要刷新
+      // ——被拍板释放的分支会让执行图立刻变化。
+      qc.invalidateQueries({ queryKey: qk.goal(goalId) });
+      qc.invalidateQueries({ queryKey: qk.workflowGoal(goalId) });
+    },
+  });
+}
+
+
+// ── 蓝本提案（Phase C，§12）：结构化补丁 + 人工批准 + 三色 diff + A/B ──
+export function useBlueprintProposals(blueprintId: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintProposals(blueprintId!),
+    queryFn: () => listBlueprintProposals(blueprintId!),
+    enabled: !!blueprintId,
+  });
+}
+
+export function useBlueprintProposalDiff(proposalId: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintProposalDiff(proposalId!),
+    queryFn: () => getBlueprintProposalDiff(proposalId!),
+    enabled: !!proposalId,
+  });
+}
+
+export function useApproveBlueprintProposal(blueprintId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (proposalId: string) => approveBlueprintProposal(proposalId),
+    onSuccess: () => {
+      // 批准产出新草稿：版本列表、规范图、提案列表全要刷新。
+      qc.invalidateQueries({ queryKey: qk.blueprint(blueprintId) });
+      qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
+    },
+  });
+}
+
+export function useRejectBlueprintProposal(blueprintId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (proposalId: string) => rejectBlueprintProposal(proposalId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
+    },
+  });
+}
+
+export function useBlueprintAB(blueprintId: string | null, goalA: string | null, goalB: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintAB(blueprintId!, goalA!, goalB!),
+    queryFn: () => compareBlueprintAB(blueprintId!, goalA!, goalB!),
+    enabled: !!blueprintId && !!goalA && !!goalB,
   });
 }

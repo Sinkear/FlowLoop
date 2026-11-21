@@ -69,6 +69,8 @@ func main() {
 		domainCmd(os.Args[2:])
 	case "skill":
 		skillCmd(os.Args[2:])
+	case "blueprint":
+		blueprintCmd(os.Args[2:])
 	case "stats":
 		statsCmd(os.Args[2:])
 	case "subgoal":
@@ -832,6 +834,83 @@ func skillDelete(args []string) {
 	})
 }
 
+// ── blueprint ──
+
+// cliBlueprint / cliBlueprintVersion are the minimal shapes `blueprint list`
+// and `blueprint publish` need — the platform returns fuller rows.
+type cliBlueprint struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type cliBlueprintVersion struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Status  string `json:"status"` // draft|published|retired
+}
+
+// blueprintCmd is the steward's read/publish handle on blueprints. Creation
+// goes through `create blueprint` (intake dispatch, ask-once + draft); these
+// are the follow-up steps a conversation needs: show what exists, and publish
+// the draft the user just approved.
+func blueprintCmd(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: agentwork-cli blueprint <list|publish>")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		get(serverURL() + "/blueprints")
+	case "publish":
+		blueprintPublish(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown blueprint subcommand %q\n", args[0])
+		os.Exit(2)
+	}
+}
+
+// blueprintPublish flips the blueprint's DRAFT version to published. It
+// resolves a name to an id (ids pass through), then finds the single draft
+// version among the blueprint's versions — publishing never needs the user to
+// know a version id. A blueprint with no draft (already published, or never
+// created) exits non-zero with the reason instead of guessing.
+func blueprintPublish(args []string) {
+	if len(args) < 1 {
+		fail("usage: agentwork-cli blueprint publish <name|id>")
+	}
+	target := strings.TrimSpace(args[0])
+	var bps []cliBlueprint
+	if err := getJSON(serverURL()+"/blueprints", &bps); err != nil {
+		fail("%v", err)
+	}
+	id := ""
+	for _, bp := range bps {
+		if bp.ID == target || bp.Name == target {
+			id = bp.ID
+			break
+		}
+	}
+	if id == "" {
+		fail("blueprint %q not found (try: agentwork blueprint list)", target)
+	}
+	var versions []cliBlueprintVersion
+	if err := getJSON(serverURL()+"/blueprints/"+id+"/versions", &versions); err != nil {
+		fail("%v", err)
+	}
+	draftID := ""
+	for _, v := range versions {
+		if v.Status == "draft" {
+			draftID = v.ID
+			break
+		}
+	}
+	if draftID == "" {
+		fail("blueprint %q has no draft version to publish (already published?)", target)
+	}
+	post(serverURL()+"/blueprint-versions/"+draftID+"/publish", map[string]any{"changelog": ""})
+}
+
 // ── stats ──
 
 // cliGoal is the minimal goal shape `stats` needs from GET /goals.
@@ -1006,7 +1085,7 @@ func postNoBody(url string, body any) {
 // — used by run-path agents creating sub-goals with all fields known).
 func createCmd(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: agentwork create <goal|agent|squad|domain|schedule|team> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: agentwork create <goal|agent|squad|domain|schedule|team|blueprint> [flags]")
 		os.Exit(2)
 	}
 	kind := args[0]
@@ -1030,6 +1109,8 @@ func intentForKind(kind string) (string, bool) {
 		return "create_schedule", true
 	case "team":
 		return "import_team", true
+	case "blueprint":
+		return "create_blueprint", true
 	default:
 		return "", false
 	}
@@ -1040,7 +1121,7 @@ func intentForKind(kind string) (string, bool) {
 func buildCreateAction(kind string, args []string) map[string]any {
 	intent, ok := intentForKind(kind)
 	if !ok {
-		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team)", kind)
+		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team, blueprint)", kind)
 	}
 	fs := flag.NewFlagSet("create "+kind, flag.ExitOnError)
 	var s1, s2, s3, s4, s5, s6, s7, s8 string
@@ -1110,8 +1191,31 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fs.StringVar(&s3, "credentials", "", "git credentials (private repos)")
 		fs.Parse(args)
 		return map[string]any{"intent": intent, "import_team": map[string]any{"git_url": s1, "branch": s2, "credentials": s3}}
+	case "blueprint":
+		// The spec JSON is the hard part for an LLM to inline, so either flag
+		// is accepted: --content takes the JSON text, --content-file reads it
+		// from disk. Omitting BOTH is legal and deliberate: the request goes
+		// out with empty content and the platform answers need_fields with the
+		// skeleton — that is the "ask first" path, not a client-side error.
+		fs.StringVar(&s1, "name", "", "blueprint name (required)")
+		fs.StringVar(&s2, "description", "", "blueprint description")
+		fs.StringVar(&s3, "content", "", "SpecGraph JSON text")
+		fs.StringVar(&s4, "content-file", "", "path to a SpecGraph JSON file (alternative to --content)")
+		fs.StringVar(&s5, "agent", "", "agent id: fills __AGENT_ID__ placeholders in the spec")
+		fs.Parse(args)
+		if strings.TrimSpace(s4) != "" {
+			if strings.TrimSpace(s3) != "" {
+				fail("--content and --content-file are mutually exclusive")
+			}
+			raw, err := os.ReadFile(strings.TrimSpace(s4))
+			if err != nil {
+				fail("read --content-file: %v", err)
+			}
+			s3 = string(raw)
+		}
+		return map[string]any{"intent": intent, "blueprint": map[string]any{"name": s1, "description": s2, "content": s3, "agent_id": s5}}
 	default:
-		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team)", kind)
+		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team, blueprint)", kind)
 	}
 	return nil
 }

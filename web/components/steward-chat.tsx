@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Trash2, Send, Square } from "lucide-react";
+import { Trash2, Send, Square, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui";
 import { StewardSetup } from "@/components/steward-setup";
@@ -9,8 +9,8 @@ import { AcpChatClient, ChatEvent, PermissionRequest } from "@/lib/acp";
 import { describeStewardFailure } from "@/lib/steward";
 import { StreamCards } from "@/lib/run-messages";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
-import { listAgents } from "@/lib/api";
-import type { Agent } from "@/lib/types";
+import { listAgents, listSkills } from "@/lib/api";
+import type { Agent, Skill } from "@/lib/types";
 
 // StewardChat — 「对话」页面的主体。默认跟管家（steward）聊，
 // 也可以用头部的「切换引擎」下拉换任何一个 agent——每个 agent 绑定
@@ -99,6 +99,23 @@ export function StewardChat({ className }: { className?: string }) {
   const selected = agents.find((a) => a.id === selectedId) ?? null;
   const isStewardChat = selected?.type === "steward";
 
+  // 已加载技能：agent.skills 只存 skill id，这里拉一次技能库把 id 解释成
+  // 人能看懂的标题/描述。技能库读不到时静默降级为短 id，不打扰对话。
+  const [skillMeta, setSkillMeta] = useState<Record<string, Skill>>({});
+  const skillFetched = useRef(false);
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
+  const skillsBarRef = useRef<HTMLDivElement>(null);
+
+  const loadedSkills = (selected?.skills ?? []).map((id) => {
+    const meta = skillMeta[id];
+    return {
+      id,
+      label: meta ? meta.title || meta.name : id.slice(0, 8),
+      description: meta?.description ?? "",
+      builtin: Boolean(meta?.builtin),
+    };
+  });
+
   // 拉一次 agent 列表：默认选管家；没有管家但有别的 agent 也能聊。
   useEffect(() => {
     if (agents.length || noAgents) return;
@@ -114,6 +131,32 @@ export function StewardChat({ className }: { className?: string }) {
       })
       .catch(() => setNoAgents(true));
   }, [agents.length, noAgents]);
+
+  // 技能元数据只在挂载时拉一次（列表随 agent 切换在渲染层重算）。
+  useEffect(() => {
+    if (skillFetched.current) return;
+    skillFetched.current = true;
+    listSkills()
+      .then((list) => {
+        const map: Record<string, Skill> = {};
+        for (const s of list) map[s.id] = s;
+        setSkillMeta(map);
+      })
+      .catch(() => {
+        // 静默：chip 仍按 id 显示，说明浮层只少描述。
+      });
+  }, []);
+
+  // 换对话对象收起浮层；点功能栏外面也收起。
+  useEffect(() => { setOpenSkill(null); }, [selectedId]);
+  useEffect(() => {
+    if (!openSkill) return;
+    const onDown = (e: MouseEvent) => {
+      if (skillsBarRef.current && !skillsBarRef.current.contains(e.target as Node)) setOpenSkill(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [openSkill]);
 
   const push = useCallback((ev: ChatEvent) => {
     msgID.current += 1;
@@ -358,6 +401,54 @@ export function StewardChat({ className }: { className?: string }) {
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
+
+      {/* 功能栏：把当前对话对象已加载的技能摊在输入区上方——
+          平台内置技能也在这里可见，点开看它是什么、为什么自动加载。 */}
+      {loadedSkills.length > 0 && (
+        <div ref={skillsBarRef} className="flex items-center gap-2 border-t border-line bg-surface-0/40 px-4 py-2">
+          <span className="shrink-0 text-[11px] text-ink-3">已加载技能</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {loadedSkills.map((sk) => (
+              <div key={sk.id} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setOpenSkill((cur) => (cur === sk.id ? null : sk.id))}
+                  aria-expanded={openSkill === sk.id}
+                  title={sk.description || sk.label}
+                  className={cn(
+                    "flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                    openSkill === sk.id
+                      ? "border-accent/50 bg-accent/10 text-accent"
+                      : "border-line bg-surface-2 text-ink-2 hover:border-accent/40 hover:text-ink"
+                  )}
+                >
+                  <Sparkles className="h-3 w-3 shrink-0" />
+                  <span className="max-w-[180px] truncate">{sk.label}</span>
+                </button>
+                {openSkill === sk.id && (
+                  <div className="absolute bottom-full left-0 z-30 mb-1.5 w-64 rounded-lg border border-line bg-surface-1 p-3 shadow-xl shadow-black/30">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent" />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{sk.label}</span>
+                      {sk.builtin && (
+                        <span className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                          内置
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-ink-2">
+                      {sk.description || "（无描述）"}
+                    </p>
+                    <p className="mt-2 border-t border-line pt-1.5 text-[10px] text-ink-3">
+                      随本次对话自动加载，不用手动选
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2 border-t border-line bg-surface-0/40 px-4 py-3">
         <input

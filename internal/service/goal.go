@@ -69,6 +69,13 @@ type Goal struct {
 	ContentCapture string  `json:"content_capture"` // none|redacted|full
 	BudgetUSD      float64 `json:"budget_usd"`
 	SampleRate     float64 `json:"sample_rate"`
+	// BlueprintVersionID pins a published blueprint version (Phase A,
+	// docs/BLUEPRINT-PROPOSAL.md): '' = infer mode (leader plans freely —
+	// semantics unchanged); non-empty = the goal is spec-driven — Activate
+	// compiles the version's graph into gated sub_goal rows in one
+	// transaction, and the finalization guard counts blueprint_node rows so
+	// a skipped node can never silently pass (漏跑 → structural block).
+	BlueprintVersionID string `json:"blueprint_version_id"`
 }
 
 // goalRunContext is what ReconcileOnRunEnd reasons about. Carried separately
@@ -329,6 +336,23 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 	if g.SampleRate > 1 {
 		return nil, NewValidationError("sample_rate must be in (0,1]")
 	}
+	// Blueprint pin (Phase A): '' = infer mode, unchanged semantics. A
+	// non-empty pin must reference a PUBLISHED version — a draft can be
+	// edited, so compiling it would let the goal run an unfrozen spec.
+	if g.BlueprintVersionID != "" {
+		var status string
+		err := s.st.DB().QueryRowContext(ctx,
+			`SELECT status FROM blueprint_version WHERE id=?`, g.BlueprintVersionID).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q not found", g.BlueprintVersionID))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("check blueprint version: %w", err)
+		}
+		if status != "published" {
+			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q is %s — only a published version can be pinned", g.BlueprintVersionID, status))
+		}
+	}
 	g.ID = newID()
 	g.CreatedAt = now()
 
@@ -343,9 +367,9 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		domainID = g.DomainID
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at,source_ref,connection_id,execution_mode,content_capture,budget_usd,sample_rate)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		g.ID, g.Title, g.Description, domainID, g.AssigneeType, g.AssigneeID, g.Status, g.Category, g.HandoffNote, g.CreatedByType, g.CreatedByID, g.CreatedAt, g.SourceRef, g.ConnectionID, g.ExecutionMode, g.ContentCapture, g.BudgetUSD, g.SampleRate); err != nil {
+		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at,source_ref,connection_id,execution_mode,content_capture,budget_usd,sample_rate,blueprint_version_id)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		g.ID, g.Title, g.Description, domainID, g.AssigneeType, g.AssigneeID, g.Status, g.Category, g.HandoffNote, g.CreatedByType, g.CreatedByID, g.CreatedAt, g.SourceRef, g.ConnectionID, g.ExecutionMode, g.ContentCapture, g.BudgetUSD, g.SampleRate, g.BlueprintVersionID); err != nil {
 		return nil, fmt.Errorf("insert goal: %w", err)
 	}
 	// The creation activity carries the category: the UI timeline reads this
@@ -421,7 +445,7 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 
 func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,
+		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,g.blueprint_version_id,
 		        (SELECT r.agent_id FROM run r WHERE r.goal_id = g.id AND r.status IN ('running','queued') ORDER BY r.created_at DESC LIMIT 1),
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
@@ -436,7 +460,7 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	for rows.Next() {
 		var g Goal
 		var domainID, currentAgent sql.NullString
-		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &currentAgent, &g.ReviewPhase); err != nil {
+		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase); err != nil {
 			return nil, err
 		}
 		g.DomainID = domainID.String
@@ -592,14 +616,14 @@ func (s *GoalService) Get(ctx context.Context, id string) (*Goal, error) {
 	var g Goal
 	var domainID, currentAgent sql.NullString
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,
+		`SELECT g.id,g.title,g.description,g.domain_id,g.assignee_type,g.assignee_id,g.status,g.category,g.handoff_note,g.review_request,g.human_iterations,g.created_by_type,g.created_by_id,g.created_at,g.source_ref,g.connection_id,g.attention,g.execution_mode,g.content_capture,g.budget_usd,g.sample_rate,g.blueprint_version_id,
 		        (SELECT r.agent_id FROM run r WHERE r.goal_id = g.id AND r.status IN ('running','queued') ORDER BY r.created_at DESC LIMIT 1),
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
 		     ELSE 'awaiting_review' END
 		 FROM goal g WHERE g.id=?`, id).
-		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &currentAgent, &g.ReviewPhase)
+		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1563,12 +1587,35 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 			rc.GoalID, rc.RunID).Scan(&pendingAskHuman); err != nil {
 			return fmt.Errorf("count pending ask-human: %w", err)
 		}
-		if pendingSG > 0 || pendingChanges > 0 || pendingConsults > 0 || pendingAskHuman > 0 {
+		// Blueprint guard (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.8): a pinned
+		// goal is done only when every spec node settled, was skipped by a
+		// condition, or failed terminally. The pending sub-goal count above
+		// ALREADY covers task nodes (they ARE sub_goal rows), but end nodes
+		// and the skip/fail ledger are blueprint-only — this count is the
+		// 漏跑 structural block: a compiled task whose sub_goal never got
+		// created, or an end node waiting to settle, keeps the goal open.
+		// Lazy settle runs here too (idempotent): when the count reaches 0,
+		// end nodes flip to settled in the same transaction.
+		pendingBP, err := s.pendingBlueprintNodesTx(ctx, tx, rc.GoalID)
+		if err != nil {
+			return err
+		}
+		if pendingBP == 0 && pendingSG == 0 {
+			// Phase B: ends flip only when the spec ledger is closed AND no
+			// sub_goal is still open — spawn-materialized children are not
+			// blueprint_node rows (they live in the execution plane only,
+			// §11.4 double bookkeeping), so pendingSG is the second half of
+			// the end's own settle condition.
+			if err := s.settleBlueprintEndsTx(ctx, tx, rc.GoalID); err != nil {
+				return err
+			}
+		}
+		if pendingSG > 0 || pendingChanges > 0 || pendingConsults > 0 || pendingAskHuman > 0 || pendingBP > 0 {
 			// A WAIT is open: the run ended but the goal holds active until
 			// the pending work lands — log the hold (otherwise a finished
 			// run with no advancement looks like a hang).
-			logging.Infof("goal: %q run %s done but finalization guard holds (sub-goals=%d changes=%d consults=%d ask-human=%d) — no gate yet",
-				g.Title, rc.RunID, pendingSG, pendingChanges, pendingConsults, pendingAskHuman)
+			logging.Infof("goal: %q run %s done but finalization guard holds (sub-goals=%d changes=%d consults=%d ask-human=%d blueprint=%d) — no gate yet",
+				g.Title, rc.RunID, pendingSG, pendingChanges, pendingConsults, pendingAskHuman, pendingBP)
 			break // stay active — the attention loop owns the next step
 		}
 		// v3 HOOTL (human out of the loop): the human waived the acceptance
@@ -2204,12 +2251,23 @@ func (s *GoalService) Activate(ctx context.Context, goalID string) (*Goal, error
 	if err != nil {
 		return nil, fmt.Errorf("enqueue after activate: %w", err)
 	}
+	// Blueprint beat-1 compile (Phase A, docs/BLUEPRINT-PROPOSAL.md §4.7):
+	// for a pinned goal the spec graph becomes sub_goal rows + gating edges
+	// IN THIS SAME transaction — a rollback discards the whole compile, and
+	// the backlog→active guard above makes it exactly-once. The owner's run
+	// (enqueued above) is still the goal-level heartbeat; the compiled
+	// tasks carry the actual work.
+	var compiledEvs []events.Event
+	if err := s.compileBlueprintTx(ctx, tx, goalID, &compiledEvs); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	if runEv != nil {
 		s.bus.Publish(ctx, *runEv)
 	}
+	s.publishCompiledRuns(ctx, compiledEvs)
 	return s.Get(ctx, goalID)
 }
 

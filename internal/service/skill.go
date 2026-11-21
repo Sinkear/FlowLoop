@@ -21,10 +21,18 @@ import (
 // live on disk under <RunsRoot>/skills/<id>/; the machine receives them
 // via config.push and installs them under agentwork-<name>/.
 type Skill struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Title is the human-facing display name (SKILL.md frontmatter `title`).
+	// Name stays the machine identity (dir / archive / agent.skills), so one
+	// skill can be "agentwork-chat-create" on disk and 「对话式创建」 in the UI.
+	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at"`
+	// Builtin marks a skill the platform ships with the daemon binary: it is
+	// re-seeded on every boot (files refreshed, row updated), auto-attached
+	// to the steward, and cannot be deleted by hand.
+	Builtin bool `json:"builtin,omitempty"`
 	// Source is the optional remote git repository binding (feature: remote
 	// skill source). nil = the skill is local-only. The repo token lives on
 	// Source but is never serialized (json:"-").
@@ -33,7 +41,7 @@ type Skill struct {
 
 // skillSelectColumns is the canonical skill-row projection. Every skill read
 // must use it so the remote-source columns are never forgotten.
-const skillSelectColumns = `id,name,description,created_at,repo_url,repo_provider,repo_branch,repo_path,repo_token,last_synced_at,last_sync_action,last_remote_sha,last_sync_digest`
+const skillSelectColumns = `id,name,title,description,created_at,repo_url,repo_provider,repo_branch,repo_path,repo_token,last_synced_at,last_sync_action,last_remote_sha,last_sync_digest,builtin`
 
 // skillRowScanner is satisfied by *sql.Row and *sql.Rows.
 type skillRowScanner interface {
@@ -47,12 +55,14 @@ func scanSkill(row skillRowScanner) (*Skill, error) {
 		repoURL, provider, branch, path, token      string
 		lastSyncedAt, lastSyncAction, lastRemoteSHA string
 		lastSyncDigest                              string
+		builtin                                     int
 	)
-	if err := row.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.CreatedAt,
+	if err := row.Scan(&sk.ID, &sk.Name, &sk.Title, &sk.Description, &sk.CreatedAt,
 		&repoURL, &provider, &branch, &path, &token,
-		&lastSyncedAt, &lastSyncAction, &lastRemoteSHA, &lastSyncDigest); err != nil {
+		&lastSyncedAt, &lastSyncAction, &lastRemoteSHA, &lastSyncDigest, &builtin); err != nil {
 		return nil, err
 	}
+	sk.Builtin = builtin != 0
 	sk.Source = newSkillSource(repoURL, provider, branch, path, token, lastSyncedAt, lastSyncAction, lastRemoteSHA, lastSyncDigest)
 	return &sk, nil
 }
@@ -124,34 +134,34 @@ func (s *SkillService) CreateFromZip(ctx context.Context, zipData []byte) (*Skil
 	if !ok {
 		return nil, NewValidationError("这不是一个 skill 包：缺少 SKILL.md")
 	}
-	name, description := parseSkillMarkdown(content)
+	name, title, description := parseSkillMarkdown(content)
 	if strings.TrimSpace(name) == "" {
 		return nil, NewValidationError("这不是一个 skill 包：SKILL.md 缺少 name（frontmatter 里需有 `name: <skill 名>`）")
 	}
-	return s.createSkillFromArchive(ctx, name, description, zipData, nil)
+	return s.createSkillFromArchive(ctx, name, title, description, zipData, nil)
 }
 
 // createFromArchive is the legacy text-block upload path: the caller supplies
 // files (path→content) which the platform archives into a zip. The skill's
-// name/description are STILL parsed from the files' SKILL.md — the caller
-// does not supply them either.
+// name/title/description are STILL parsed from the files' SKILL.md — the
+// caller does not supply them either.
 func (s *SkillService) createFromArchive(ctx context.Context, files map[string]string, zipData []byte) (*Skill, error) {
 	content, ok := files["SKILL.md"]
 	if !ok || strings.TrimSpace(content) == "" {
 		return nil, NewValidationError("这不是一个 skill 包：缺少 SKILL.md")
 	}
-	name, description := parseSkillMarkdown(content)
+	name, title, description := parseSkillMarkdown(content)
 	if strings.TrimSpace(name) == "" {
 		return nil, NewValidationError("这不是一个 skill 包：SKILL.md 缺少 name（frontmatter 里需有 `name: <skill 名>`）")
 	}
-	return s.createSkillFromArchive(ctx, name, description, zipData, files)
+	return s.createSkillFromArchive(ctx, name, title, description, zipData, files)
 }
 
 // createSkillFromArchive is the shared DB insert + storage path. It receives
-// the PARSED name/description (from SKILL.md). When files is non-nil the
+// the PARSED name/title/description (from SKILL.md). When files is non-nil the
 // files are written from the map (text-block mode); otherwise the zip is
 // extracted (zip-upload mode).
-func (s *SkillService) createSkillFromArchive(ctx context.Context, name, description string, zipData []byte, files map[string]string) (*Skill, error) {
+func (s *SkillService) createSkillFromArchive(ctx context.Context, name, title, description string, zipData []byte, files map[string]string) (*Skill, error) {
 	name = strings.TrimSpace(name)
 	var n int
 	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM skill WHERE name=?`, name).Scan(&n); err != nil {
@@ -160,10 +170,10 @@ func (s *SkillService) createSkillFromArchive(ctx context.Context, name, descrip
 	if n > 0 {
 		return nil, NewCodedErrorDetail(CodeSkillNameExists, fmt.Sprintf("skill %q already exists", name), map[string]any{"name": name})
 	}
-	sk := &Skill{ID: newID(), Name: name, Description: description, CreatedAt: now()}
+	sk := &Skill{ID: newID(), Name: name, Title: title, Description: description, CreatedAt: now()}
 	if _, err := s.st.DB().ExecContext(ctx,
-		`INSERT INTO skill (id,name,description,created_at) VALUES (?,?,?,?)`,
-		sk.ID, sk.Name, sk.Description, sk.CreatedAt); err != nil {
+		`INSERT INTO skill (id,name,title,description,created_at) VALUES (?,?,?,?,?)`,
+		sk.ID, sk.Name, sk.Title, sk.Description, sk.CreatedAt); err != nil {
 		// The pre-flight COUNT(*) + INSERT is not atomic — two concurrent
 		// creates with the same name can both pass COUNT(n=0) and the second
 		// hits UNIQUE. dupNameCodedError catches the driver conflict and
@@ -201,33 +211,90 @@ func (s *SkillService) createSkillFromArchive(ctx context.Context, name, descrip
 	return sk, nil
 }
 
-// parseSkillMarkdown extracts the skill name and description from a
+// Platform built-in skills. These ship inside the daemon binary (//go:embed
+// under internal/service/assets) and are re-seeded on every boot, so they
+// exist without network access and cannot drift from the binary's UI/docs.
+// The id is a fixed constant (NOT newID) so the steward's agent.skills can
+// reference it as a stable string across restarts and machines.
+const (
+	// BuiltinChatCreateID is the stable skill id of the conversation-first
+	// creation skill (创建任务 / 团队 / 智能体 / 蓝本 by talking to the steward).
+	BuiltinChatCreateID    = "7c1f3d5a9b2e4c8d8a6f0b3e5c7d9a21"
+	BuiltinChatCreateName  = "agentwork-chat-create"
+	BuiltinChatCreateTitle = "对话式创建"
+)
+
+// EnsureBuiltin installs or refreshes one platform-shipped skill: the row is
+// upserted by its fixed id (title/description updated in place, created_at
+// preserved) and the on-disk files are rewritten from the embedded copy every
+// boot. Idempotent by design — callers run it at daemon startup and again when
+// a machine registers, so a fresh install and an upgraded binary converge on
+// the same skill.
+//
+// It refuses to proceed when another (user-created) skill already owns the
+// name: a name collision would make the skill ambiguous in `agentwork skill
+// list` and in agent pickers, so the caller should log and continue rather
+// than hijack the user's row.
+func (s *SkillService) EnsureBuiltin(ctx context.Context, id, name, title, description string, files map[string]string) (*Skill, error) {
+	if strings.TrimSpace(files["SKILL.md"]) == "" {
+		return nil, NewValidationError("内置技能缺少 SKILL.md")
+	}
+	var otherID string
+	_ = s.st.DB().QueryRowContext(ctx, `SELECT id FROM skill WHERE name=?`, name).Scan(&otherID)
+	if otherID != "" && otherID != id {
+		return nil, NewConflictError(fmt.Sprintf("skill name %q is already taken by %s", name, otherID))
+	}
+	var existingID string
+	_ = s.st.DB().QueryRowContext(ctx, `SELECT id FROM skill WHERE id=?`, id).Scan(&existingID)
+	if existingID != "" {
+		if _, err := s.st.DB().ExecContext(ctx,
+			`UPDATE skill SET name=?, title=?, description=?, builtin=1 WHERE id=?`,
+			name, title, description, id); err != nil {
+			return nil, fmt.Errorf("refresh builtin skill %q: %w", name, err)
+		}
+	} else if _, err := s.st.DB().ExecContext(ctx,
+		`INSERT INTO skill (id,name,title,description,created_at,builtin) VALUES (?,?,?,?,?,1)`,
+		id, name, title, description, now()); err != nil {
+		return nil, fmt.Errorf("seed builtin skill %q: %w", name, err)
+	}
+	// Rewrite files from the binary every boot: the embedded copy is the
+	// source of truth, and a half-written dir from a crashed boot must heal.
+	_ = os.RemoveAll(skillDir(id))
+	if err := s.writeSkillFilesAndArchive(id, files); err != nil {
+		return nil, fmt.Errorf("write builtin skill files %q: %w", name, err)
+	}
+	return s.Get(ctx, id)
+}
+
+// parseSkillMarkdown extracts the skill name/title/description from a
 // SKILL.md's YAML frontmatter (the `---`-delimited block at the top). The
 // frontmatter is the Anthropic skill convention:
 //
 //	---
 //	name: code-review-checklist
+//	title: 代码审查清单
 //	description: One-line summary
 //	---
 //	<instructions body>
 //
-// The frontmatter may carry OTHER fields beyond name/description — those are
-// part of the skill's contract but not stored on the platform row; they ride
-// along in SKILL.md (pushed verbatim to the machine). Only name and
-// description are extracted here. Uses gopkg.in/yaml.v3 for robust parsing
-// (quoted values, multi-line, lists, comments) rather than a fragile
-// line-scanner. Mirrors openagent-go/skill/fs/loader.go's parseFrontmatter
-// handling: CRLF normalization, EOF without a trailing newline.
-// Returns ("", "") when there is no frontmatter or no name — the caller
-// rejects that as "not a skill".
-func parseSkillMarkdown(content string) (name, description string) {
+// `title` is optional — it is the human-facing display name; a skill without
+// one falls back to name in the UI. The frontmatter may carry OTHER fields
+// beyond these three — those are part of the skill's contract but not stored
+// on the platform row; they ride along in SKILL.md (pushed verbatim to the
+// machine). Uses gopkg.in/yaml.v3 for robust parsing (quoted values,
+// multi-line, lists, comments) rather than a fragile line-scanner. Mirrors
+// openagent-go/skill/fs/loader.go's parseFrontmatter handling: CRLF
+// normalization, EOF without a trailing newline. Returns ("", "", "") when
+// there is no frontmatter or no name — the caller rejects that as
+// "not a skill".
+func parseSkillMarkdown(content string) (name, title, description string) {
 	// Normalize CRLF → LF so Windows-authored SKILL.md files parse the same.
 	text := strings.ReplaceAll(content, "\r\n", "\n")
 	// A leading BOM (some editors add it) would break the "---\n" prefix
 	// check; strip it.
 	text = strings.TrimPrefix(text, "\ufeff")
 	if !strings.HasPrefix(text, "---\n") && text != "---" {
-		return "", ""
+		return "", "", ""
 	}
 	// Opening delimiter is "---\n" (4 bytes) — find the closing "\n---\n".
 	rest := text[4:]
@@ -238,21 +305,24 @@ func parseSkillMarkdown(content string) (name, description string) {
 		if strings.HasSuffix(rest, "\n---") {
 			idx = len(rest) - 4
 		} else {
-			return "", "" // unclosed frontmatter
+			return "", "", "" // unclosed frontmatter
 		}
 	}
 	yamlBlock := rest[:idx]
 	var fm map[string]any
 	if err := yaml.Unmarshal([]byte(yamlBlock), &fm); err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	if n, ok := fm["name"].(string); ok {
 		name = n
 	}
+	if t, ok := fm["title"].(string); ok {
+		title = t
+	}
 	if d, ok := fm["description"].(string); ok {
 		description = d
 	}
-	return name, description
+	return name, title, description
 }
 
 // PackageZip returns the skill's NORMALIZED (flat) archive for config.push
@@ -317,24 +387,28 @@ func (s *SkillService) UpsertByName(ctx context.Context, name, description strin
 	if files == nil {
 		files = map[string]string{}
 	}
+	title := ""
+	if content := files["SKILL.md"]; strings.TrimSpace(content) != "" {
+		_, title, _ = parseSkillMarkdown(content)
+	}
 	var existingID string
 	_ = s.st.DB().QueryRowContext(ctx, `SELECT id FROM skill WHERE name=?`, name).Scan(&existingID)
 	if existingID != "" {
 		if _, err := s.st.DB().ExecContext(ctx,
-			`UPDATE skill SET description=? WHERE id=?`, description, existingID); err != nil {
+			`UPDATE skill SET description=?, title=? WHERE id=?`, description, title, existingID); err != nil {
 			return nil, fmt.Errorf("update skill %q: %w", name, err)
 		}
 		_ = os.RemoveAll(skillDir(existingID))
 		if err := s.writeSkillFilesAndArchive(existingID, files); err != nil {
 			return nil, err
 		}
-		return &Skill{ID: existingID, Name: name, Description: description}, nil
+		return &Skill{ID: existingID, Name: name, Title: title, Description: description}, nil
 	}
 	zipData, err := zipx.Build(files)
 	if err != nil {
 		return nil, NewValidationError(err.Error())
 	}
-	return s.createSkillFromArchive(ctx, name, description, zipData, files)
+	return s.createSkillFromArchive(ctx, name, title, description, zipData, files)
 }
 
 // writeSkillFilesAndArchive writes the file map to the skill's directory and
@@ -374,6 +448,16 @@ func (s *SkillService) List(ctx context.Context) ([]Skill, error) {
 
 // Delete removes a skill from the library and its files.
 func (s *SkillService) Delete(ctx context.Context, id string) error {
+	// Built-in skills are part of the binary: they are re-seeded on the next
+	// boot anyway, so deleting one would only make the library look wrong
+	// until a restart. Refuse with a message that says what to do instead.
+	var builtin int
+	_ = s.st.DB().QueryRowContext(ctx, `SELECT builtin FROM skill WHERE id=?`, id).Scan(&builtin)
+	if builtin != 0 {
+		var name string
+		_ = s.st.DB().QueryRowContext(ctx, `SELECT name FROM skill WHERE id=?`, id).Scan(&name)
+		return NewValidationError(fmt.Sprintf("技能 %q 是平台内置技能，随版本发布，不能删除", name))
+	}
 	var n int
 	// INSTR + a quoted id for the usage check: a pure substring test with no
 	// wildcard semantics (LIKE also works on the pinned modernc.org/sqlite,
