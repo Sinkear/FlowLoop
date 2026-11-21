@@ -109,8 +109,8 @@ func TestTemplateExportProjectSkipsTerminalAndHumanGoals(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	if _, err := st.DB().ExecContext(ctx,
-		`INSERT INTO domain (id,type,name,default_branch,policy_text,issue_assignee,issue_assignee_type,created_at)
-		 VALUES ('d1','scratch','demo project','main','keep it green',?,'squad','now')`, sq.ID); err != nil {
+		`INSERT INTO domain (id,type,name,default_branch,issue_assignee,issue_assignee_type,created_at)
+		 VALUES ('d1','scratch','demo project','main',?,'squad','now')`, sq.ID); err != nil {
 		t.Fatalf("insert domain: %v", err)
 	}
 	for _, g := range []struct {

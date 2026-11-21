@@ -26,7 +26,7 @@ func noisyShapeGoal(t *testing.T, gs *GoalService, rs *RunService, st *store.Sto
 	worker := seedAgent(t, st, "w3-"+newID()[:8])
 	g, err := gs.Create(context.Background(), Goal{
 		Title: "tn", AssigneeType: "agent", AssigneeID: worker,
-		Status: "active", DomainID: domainID,
+		Status: "active", DomainID: domainID, Category: "hootl",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -166,7 +166,7 @@ func TestHumanConsultDoesNotBlockGate(t *testing.T) {
 	ctx := context.Background()
 	a := seedAgent(t, st, "owner")
 	b := seedAgent(t, st, "guest")
-	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: seedDomain(t, st)})
+	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: seedDomain(t, st), Category: "hootl"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestScratchDomainValidation(t *testing.T) {
 	ds := NewDomainService(st, events.NewBus())
 	ctx := context.Background()
 
-	d, err := ds.Create(ctx, Domain{Name: "research", Type: "scratch", PolicyText: "总结要客观"})
+	d, err := ds.Create(ctx, Domain{Name: "research", Type: "scratch"})
 	if err != nil {
 		t.Fatalf("a scratch domain needs no git_url: %v", err)
 	}
@@ -470,9 +470,9 @@ func TestScratchDomainValidation(t *testing.T) {
 	}
 }
 
-// TestScratchGoalForcesHumanGate: the scratch deliverable is a report — no
-// diff-based gate can ever fire, so the human checkpoint is unconditional
-// (a strong scratch domain with configured gates must NOT auto-done).
+// TestScratchGoalForcesHumanGate: a HITL goal's human checkpoint is
+// unconditional — a scratch deliverable is a report, and completion still
+// parks in review.
 func TestScratchGoalForcesHumanGate(t *testing.T) {
 	gs, rs, _, st := newTestCluster(t)
 	ctx := context.Background()
@@ -480,14 +480,6 @@ func TestScratchGoalForcesHumanGate(t *testing.T) {
 	ds := NewDomainService(st, events.NewBus())
 	d, err := ds.Create(ctx, Domain{Name: "research", Type: "scratch"})
 	if err != nil {
-		t.Fatal(err)
-	}
-	// Strong strength + configured gates — on a repo domain this would
-	// auto-done with no gate hit; on scratch it MUST still park.
-	if _, err := ds.FreezeChecks(ctx, d.ID, Checks{
-		Verify: []string{"test -f report.md"},
-		Gates:  []GateRule{{Name: "merge", When: "人工审批"}},
-	}, "strong"); err != nil {
 		t.Fatal(err)
 	}
 	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: d.ID})
@@ -500,7 +492,7 @@ func TestScratchGoalForcesHumanGate(t *testing.T) {
 	}
 	got, _ := gs.Get(ctx, g.ID)
 	if got.Status != "review" {
-		t.Fatalf("a scratch goal must park in review regardless of strength/gates, got %q", got.Status)
+		t.Fatalf("a HITL scratch goal must park in review, got %q", got.Status)
 	}
 }
 

@@ -78,6 +78,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /runtimes", h.listRuntimes)
 	mux.HandleFunc("POST /runtimes", h.createRuntime)
 	mux.HandleFunc("GET /runtimes/{id}", h.getRuntime)
+	mux.HandleFunc("GET /runtimes/{id}/models", h.getRuntimeModels)
 	mux.HandleFunc("DELETE /runtimes/{id}", h.deleteRuntime)
 
 	mux.HandleFunc("GET /agents", h.listAgents)
@@ -220,9 +221,6 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /domains/{id}", h.getDomain)
 	mux.HandleFunc("PUT /domains/{id}", h.updateDomain)
 	mux.HandleFunc("DELETE /domains/{id}", h.deleteDomain)
-	mux.HandleFunc("POST /domains/{id}/checks", h.freezeDomainChecks)
-	mux.HandleFunc("POST /domains/{id}/compile", h.compileDomainPolicy)
-	mux.HandleFunc("GET /domains/{id}/compile-run", h.compileRunStatus)
 	// Repository-level webhook setup panel (contract §2): read the effective
 	// secret source + host hook registrations + recent deliveries, register
 	// the hook, and rebind the routing assignees straight from the squad page
@@ -233,6 +231,9 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	// (an empty string clears it, falling back to platform.webhook_secret).
 	mux.HandleFunc("PUT /domains/{id}/webhook/secret", h.setDomainWebhookSecret)
 	mux.HandleFunc("PATCH /domains/{id}/assignees", h.patchDomainAssignees)
+	// Project-level acceptance mode (验收级别): the explicit set/clear path
+	// (PUT's empty acceptance_level means "unchanged").
+	mux.HandleFunc("PATCH /domains/{id}/acceptance", h.patchDomainAcceptance)
 
 	// Repository connections (contract §3): every squad↔repo binding has its
 	// OWN /webhooks/{provider}/{connectionID} endpoint + secret, so two
@@ -282,6 +283,10 @@ func (h *Handlers) deleteRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+func (h *Handlers) getRuntimeModels(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Runtime.Models(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
 }
 
 // ── agent ──
@@ -579,9 +584,8 @@ func (h *Handlers) listRunMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, err)
 }
 
-// listRunMessagesByID is the goal-less variant for processor runs (the
-// acceptance-policy compile, intake) — they have no goal to scope under,
-// and the compile progress panel needs their stream.
+// listRunMessagesByID is the goal-less variant for processor runs (intake) —
+// they have no goal to scope under.
 func (h *Handlers) listRunMessagesByID(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Run.ListMessages(r.Context(), r.PathValue("runId"))
 	writeJSON(w, out, err)
@@ -1350,43 +1354,21 @@ func (h *Handlers) patchDomainAssignees(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, out, err)
 }
 
-// compileDomainPolicy starts acceptance-policy compilation for a domain
-// (DESIGN.md §5.3): the processor agent compiles the NL intent into
-// checks, which stay UNFROZEN until the owner confirms via FreezeChecks.
-func (h *Handlers) compileDomainPolicy(w http.ResponseWriter, r *http.Request) {
+// patchDomainAcceptance sets or clears the project-level acceptance mode
+// (验收级别): {"level":"hitl"|"hootl"|""}. It goes through
+// SetAcceptanceLevel — NOT updateDomain — because PUT's empty
+// acceptance_level means "keep the stored value": clearing back to 待定 needs
+// this explicit escape hatch. Returns the full domain so the caller can
+// re-render.
+func (h *Handlers) patchDomainAcceptance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		PolicyText       string `json:"policy_text"`
-		ProcessorAgentID string `json:"processor_agent_id"`
+		Level string `json:"level"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	out, err := h.Domain.CompilePolicy(r.Context(), r.PathValue("id"), body.PolicyText, body.ProcessorAgentID)
-	writeJSON(w, out, err)
-}
-
-// compileRunStatus returns the domain's latest compile processor run (决策
-// 6-23) — the compile panel restores its in-flight banner from this after a
-// page refresh. null when the domain has never compiled.
-func (h *Handlers) compileRunStatus(w http.ResponseWriter, r *http.Request) {
-	out, err := h.Run.LatestCompileRun(r.Context(), r.PathValue("id"))
-	writeJSON(w, out, err)
-}
-
-// freezeDomainChecks stores the compiled acceptance policy after the owner
-// confirms the processor agent's output (DESIGN.md §5.3). The confirmation
-// card is the guard that keeps the "define" role with the human.
-func (h *Handlers) freezeDomainChecks(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Checks               service.Checks `json:"checks"`
-		VerificationStrength string         `json:"verification_strength"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	out, err := h.Domain.FreezeChecks(r.Context(), r.PathValue("id"), body.Checks, body.VerificationStrength)
+	out, err := h.Domain.SetAcceptanceLevel(r.Context(), r.PathValue("id"), body.Level)
 	writeJSON(w, out, err)
 }
 
@@ -1699,10 +1681,10 @@ func (h *Handlers) listSubGoalVerifications(w http.ResponseWriter, r *http.Reque
 
 func (h *Handlers) createSubGoal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		AssigneeID  string `json:"assignee_id"`
-		VerifierID  string `json:"verifier_id"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		AssigneeID  string   `json:"assignee_id"`
+		VerifierID  string   `json:"verifier_id"`
 		DependsOn   []string `json:"depends_on"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

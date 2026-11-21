@@ -74,6 +74,11 @@ func (b *Backend) OpenSession(ctx context.Context, spec proto.SessionSpec) (prot
 	if spec.ClientHandler != nil {
 		sess.SetClientRequestHandler(spec.ClientHandler)
 	}
+	// Apply the dispatch's requested model before the first turn: a
+	// config-option agent (opencode/hermes) gets session/set_config_option,
+	// anything else falls back to session/set_model. Best effort — logged,
+	// never fatal.
+	applyModel(ctx, sess, s.sessionID, spec.Model, newResp.ConfigOptions)
 	return s, nil
 }
 

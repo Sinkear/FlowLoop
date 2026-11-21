@@ -117,7 +117,7 @@ func compileFixture(t *testing.T, gs *GoalService, bs *BlueprintService, st *sto
 	g, err := gs.Create(ctx, Goal{
 		Title: "bp goal", Description: "d", DomainID: domID,
 		AssigneeType: "agent", AssigneeID: owner, Status: "backlog",
-		BlueprintVersionID: v.ID,
+		Category: "hootl", BlueprintVersionID: v.ID,
 	})
 	if err != nil {
 		t.Fatalf("create pinned goal: %v", err)
@@ -458,7 +458,7 @@ func TestInferGoalUnaffectedByBlueprintHooks(t *testing.T) {
 	a := seedAgent(t, st, "a")
 	b := seedAgent(t, st, "b")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "infer", Description: "d", DomainID: domID, AssigneeType: "agent", AssigneeID: a, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "infer", Description: "d", DomainID: domID, AssigneeType: "agent", AssigneeID: a, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

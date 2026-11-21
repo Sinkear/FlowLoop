@@ -81,6 +81,14 @@ func (d *Daemon) recoverPendingDelivers(ctx context.Context) (int, error) {
 	return len(ids), nil
 }
 
+// domainGitIdentity returns the commit identity configured on the domain
+// (falling back to the bot identity).
+func (d *Daemon) domainGitIdentity(ctx context.Context, domainID string) string {
+	var id string
+	_ = d.st.DB().QueryRowContext(ctx, `SELECT git_identity FROM domain WHERE id=?`, domainID).Scan(&id)
+	return id
+}
+
 func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	// The goal TITLE travels with every deliver log line — ids are for the
 	// system, humans read titles.
@@ -100,10 +108,6 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	// no branch-wait (owner runs already ended — the goal parked review on
 	// the owner's completion).
 	if domainType == "scratch" {
-		if reason, ok := d.scratchDeliveryBlocker(ctx, goalID, domainID); !ok {
-			d.finishDeliver(ctx, goalID, false, reason)
-			return
-		}
 		d.finishDeliver(ctx, goalID, true, "无仓库交付——产物在项目目录，按汇报验收", nil)
 		return
 	}
@@ -197,8 +201,8 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 		// No commits on the branch: nothing to merge or push. For a
 		// zero-change run (behavior gate approved, a consult) the human's
 		// approval IS the outcome — closing done is correct, not a failure.
-		// (A real task that produced nothing surfaces through verification
-		// and the human's own review of the evidence before approving.)
+		// (A real task that produced nothing surfaces through the human's own
+		// review of the run report before approving.)
 		// 决策 7-4: this is still a deliver-SUCCESS outcome, so the (possibly
 		// empty) feat branch is garbage — clean it before finishing, same as
 		// the merged and already-merged paths. cleanupGoalBranches tolerates
@@ -243,7 +247,6 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	}()
 	// Post-merge guards measure the merge's own diff (default-branch tip before
 	// the merge .. merge commit).
-	mergeBaseSHA := strings.TrimSpace(mustGitRun(ctx, wt, "rev-parse", "HEAD"))
 
 	// The goal branch's ORIGINAL commits (base..branch) are the human-readable
 	// fix evidence — the close comment must say WHAT was done, not just that
@@ -266,8 +269,8 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	// Merge the goal branch (--no-ff: a merge commit makes the delivered
 	// change an explicit, revertible unit). The merge COMMIT needs a committer
 	// identity — pass it via -c so a machine with no global user.name/user.email
-	// (containers, fresh runners) can still create the merge commit. Same
-	// resolution as commitRunChanges (verify.go); without it git aborts with
+	// (containers, fresh runners) can still create the merge commit. Without
+	// it git aborts with
 	// "Committer identity unknown", which this path used to misreport as a
 	// merge conflict (deliver: merge conflict: …identity unknown…).
 	mergeName, mergeEmail := "agentwork[bot]", "agentwork@local"
@@ -289,24 +292,6 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 		_, _ = gitRunCtx(ctx, wt, "-c", "user.name="+mergeName, "-c", "user.email="+mergeEmail, "merge", "--abort")
 		d.finishDeliver(ctx, goalID, false, "deliver: merge conflict:\n"+mergeOut)
 		return
-	}
-
-	// Re-verify the MERGED state (DESIGN.md §7): what enters the default
-	// branch must be green, not just the branch in isolation. An UNFROZEN
-	// policy runs nothing (the human checkpoint already covered it — the
-	// goal layer only approves a review; unfrozen policies force that
-	// checkpoint by design).
-	checks, timeout, baseline, checksFrozen := d.loadDomainChecks(ctx, domainID)
-	if checksFrozen {
-		verifyReport, ok, _ := runVerification(ctx, wt, checks, timeout)
-		if !ok {
-			d.finishDeliver(ctx, goalID, false, "deliver: post-merge verification failed:\n"+verifyReport)
-			return
-		}
-		if guardReport, ok := checkGuards(ctx, wt, mergeBaseSHA, checks, baseline); !ok {
-			d.finishDeliver(ctx, goalID, false, "deliver: post-merge guards failed:\n"+guardReport)
-			return
-		}
 	}
 
 	// The merge commit lives on the detached HEAD — push it as the default

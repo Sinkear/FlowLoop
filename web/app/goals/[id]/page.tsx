@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useGoal, useAgents, useSquads, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate } from "@/lib/queries";
+import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -117,6 +117,7 @@ function GoalDetailPageInner() {
   const { data: goal, isLoading } = useGoal(id);
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
+  const { data: domains } = useDomains();
   const {
     data: workflow,
     isLoading: workflowLoading,
@@ -166,6 +167,20 @@ function GoalDetailPageInner() {
         </div>
         <p className="text-sm text-ink-3 mt-1">
           分配给：{assigneeLabel}
+        </p>
+        <p className="text-xs text-ink-3 mt-1">
+          验收级别优先级：任务级覆盖 &gt; 项目默认 &gt; 平台默认（HITL）。
+          {(() => {
+            const domain = domains?.find((d) => d.id === goal.domain_id);
+            const source = !domain
+              ? "平台默认"
+              : domain.acceptance_level === goal.category
+                ? "与项目一致"
+                : domain.acceptance_level
+                  ? "任务级覆盖"
+                  : "项目未设置 → 平台默认";
+            return <span className="ml-1 text-ink-2">当前：{source}</span>;
+          })()}
         </p>
         {goal.blueprint_version_id && (
           <p className="text-xs text-ink-3 mt-1">

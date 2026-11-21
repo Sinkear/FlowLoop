@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -19,6 +23,17 @@ import (
 // aborts probing.
 const probeTimeout = 5 * time.Second
 
+// modelsTimeout bounds one model detection (models_cmd run or the ACP
+// initialize+session/new introspection). Longer than probeTimeout because
+// spawning a real ACP server takes seconds, but still short enough that a
+// hung CLI never stalls the probe report (detections run concurrently).
+const modelsTimeout = 15 * time.Second
+
+// modelsCacheTTL is how long a CLI's detected model list is reused. Probe
+// ticks run about once a minute; re-probing every models_cmd / spawning an
+// ACP server for every CLI each tick would be pure waste.
+const modelsCacheTTL = 30 * time.Minute
+
 // probeEntry is one agent CLI probe-table entry (builtin or user-configured
 // via ~/.agentwork/agents.yaml). Each entry maps a CLI to: the probe command
 // (runs fast and prints a version), how to start it as an ACP stdio server,
@@ -29,6 +44,7 @@ const probeTimeout = 5 * time.Second
 type probeEntry struct {
 	Name             string   `yaml:"name"`
 	ProbeCmd         string   `yaml:"probe_cmd"`          // run with sh -c; success = installed
+	ModelsCmd        string   `yaml:"models_cmd"`         // run with sh -c; prints available models (best effort)
 	ACPSpawn         []string `yaml:"acp_spawn"`          // how to start it as an ACP stdio server
 	SkillsDir        string   `yaml:"skills_dir"`         // ~ expanded (global skills)
 	ProjectSkillsDir string   `yaml:"project_skills_dir"` // relative, inside a run workdir
@@ -47,14 +63,16 @@ var builtinProbeTable = []probeEntry{
 	{
 		Name:             "claude",
 		ProbeCmd:         "claude --version",
+		ModelsCmd:        "claude models", // best effort; ACP fallback covers a missing subcommand
 		ACPSpawn:         []string{"claude", "--acp"},
 		SkillsDir:        "~/.claude/skills",
 		ProjectSkillsDir: ".claude/skills",
 		ProfileFiles:     []string{"CLAUDE.md", "AGENTS.md"},
 	},
 	{
-		Name:             "opencode",
-		ProbeCmd:         "opencode --version",
+		Name:      "opencode",
+		ProbeCmd:  "opencode --version",
+		ModelsCmd: "opencode models", // prints one model id per line
 		// v2.2.5 rejects the unknown --pure flag (prints usage, exits → ACP
 		// "transport closed"). Plain `opencode acp` is the correct spawn.
 		ACPSpawn:         []string{"opencode", "acp"},
@@ -242,7 +260,12 @@ func projectSkillsDirs() []string {
 // get a hard timeout derived from ctx (a hung version check must not stall
 // registration; Ctrl+C aborts probing too).
 func probeCLIs(ctx context.Context, scanDirs []string) []link.ProbeCLI {
-	out := []link.ProbeCLI{}
+	type foundCLI struct {
+		probe link.ProbeCLI
+		entry probeEntry
+		path  string // scan dir that resolved the CLI ('' = found on PATH)
+	}
+	found := []foundCLI{}
 	for _, e := range activeProbeTable() {
 		spawn := e.ACPSpawn
 		extraPath := "" // scan dir that resolved the CLI (empty = found on PATH)
@@ -269,16 +292,424 @@ func probeCLIs(ctx context.Context, scanDirs []string) []link.ProbeCLI {
 		if extraPath != "" {
 			spawn = append([]string{filepath.Join(extraPath, e.Name)}, e.ACPSpawn[1:]...)
 		}
-		out = append(out, link.ProbeCLI{
-			Name:             e.Name,
-			Version:          probeVersion(ctx, e.ProbeCmd, extraPath),
-			ACPSpawn:         spawn,
-			SkillsDir:        expandHome(e.SkillsDir),
-			ProjectSkillsDir: e.ProjectSkillsDir,
-			ProfileFiles:     e.ProfileFiles,
+		found = append(found, foundCLI{
+			probe: link.ProbeCLI{
+				Name:             e.Name,
+				Version:          probeVersion(ctx, e.ProbeCmd, extraPath),
+				ACPSpawn:         spawn,
+				SkillsDir:        expandHome(e.SkillsDir),
+				ProjectSkillsDir: e.ProjectSkillsDir,
+				ProfileFiles:     e.ProfileFiles,
+			},
+			entry: e,
+			path:  extraPath,
 		})
 	}
+	// Model detection runs CONCURRENTLY: registration must not serialize
+	// eight CLIs' models_cmd runs / ACP intros behind one slow CLI.
+	out := make([]link.ProbeCLI, len(found))
+	var wg sync.WaitGroup
+	for i, f := range found {
+		wg.Add(1)
+		go func(i int, f foundCLI) {
+			defer wg.Done()
+			f.probe.Models = detectCLIModels(ctx, f.entry, f.probe.ACPSpawn, f.path)
+			out[i] = f.probe
+		}(i, f)
+	}
+	wg.Wait()
 	return out
+}
+
+// detectCLIModels returns the CLI's model list, cached per CLI name for
+// modelsCacheTTL. Strategy: run ModelsCmd when the table configured it and
+// parse its one-model-per-line (or JSON array) output; when that yields
+// nothing (no ModelsCmd, command missing, empty output) fall back to ACP
+// introspection. An empty result is cached too — retrying an ACP spawn for a
+// model-less CLI every probe tick would be waste.
+func detectCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
+	if models, ok := cachedModels(e.Name); ok {
+		return models
+	}
+	// Prefer the ACP handshake when the CLI is spawnable: its session/new
+	// model selector lists the models the CLI will actually accept (opencode
+	// advertises configOptions and rejects registry-only ids). The `models`
+	// subcommand is the fallback for CLIs whose ACP server advertises none.
+	var models []link.ModelInfo
+	if len(spawn) > 0 {
+		models = probeModelsViaACP(ctx, spawn)
+	}
+	if len(models) == 0 && e.ModelsCmd != "" {
+		models = parseModelsOutput(runModelsCmd(ctx, e.ModelsCmd, extraPath))
+	}
+	if models == nil {
+		models = []link.ModelInfo{}
+	}
+	storeModels(e.Name, models)
+	return models
+}
+
+// ── model detection cache ──
+
+type modelsCacheEntry struct {
+	models []link.ModelInfo
+	at     time.Time
+}
+
+var (
+	modelsCacheMu sync.Mutex
+	modelsCache   = map[string]modelsCacheEntry{}
+)
+
+// cachedModels returns a cached detection younger than modelsCacheTTL.
+func cachedModels(name string) ([]link.ModelInfo, bool) {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	ent, ok := modelsCache[name]
+	if !ok || time.Since(ent.at) > modelsCacheTTL {
+		return nil, false
+	}
+	return append([]link.ModelInfo(nil), ent.models...), true
+}
+
+// storeModels caches one CLI's detection result.
+func storeModels(name string, models []link.ModelInfo) {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	modelsCache[name] = modelsCacheEntry{models: append([]link.ModelInfo(nil), models...), at: time.Now()}
+}
+
+// resetModelsCache clears the cache (tests; a config change may also want a
+// fresh detection).
+func resetModelsCache() {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	modelsCache = map[string]modelsCacheEntry{}
+}
+
+// runModelsCmd runs a models_cmd with a hard timeout and returns its
+// combined output (” on failure). extraPath (a --scan dir) is prepended to
+// PATH so a CLI resolved outside PATH still runs.
+func runModelsCmd(ctx context.Context, cmd, extraPath string) string {
+	pctx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+	c := exec.CommandContext(pctx, "sh", "-c", cmd)
+	if extraPath != "" {
+		c.Env = append(os.Environ(), "PATH="+extraPath+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	b, err := c.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// parseModelsOutput parses a models_cmd's output into model infos. Two
+// shapes are accepted: a JSON array (of strings or {id|modelId,name,
+// description} objects) and one model id per line. Lines that are empty,
+// comment-prefixed (#) or a trailing-colon header ("Available models:") are
+// skipped; duplicates are dropped (first wins).
+func parseModelsOutput(raw string) []link.ModelInfo {
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+	if raw == "" {
+		return []link.ModelInfo{}
+	}
+	if strings.HasPrefix(raw, "[") {
+		if models, ok := parseModelJSONArray([]byte(raw)); ok {
+			return models
+		}
+	}
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		id := strings.TrimSpace(line)
+		if id == "" || strings.HasPrefix(id, "#") || strings.HasSuffix(id, ":") {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, link.ModelInfo{ID: id})
+	}
+	return models
+}
+
+func parseModelJSONArray(b []byte) ([]link.ModelInfo, bool) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(b, &items); err != nil {
+		return nil, false
+	}
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	add := func(m link.ModelInfo) {
+		if m.ID == "" || seen[m.ID] {
+			return
+		}
+		seen[m.ID] = true
+		models = append(models, m)
+	}
+	for _, item := range items {
+		var s string
+		if err := json.Unmarshal(item, &s); err == nil {
+			add(link.ModelInfo{ID: strings.TrimSpace(s)})
+			continue
+		}
+		var m acpModel
+		if err := json.Unmarshal(item, &m); err == nil {
+			add(m.info())
+		}
+	}
+	return models, true
+}
+
+// acpModel is one model descriptor as ACP implementations shape it
+// (modelId per spec; id tolerated — some servers use it). Also reused for
+// JSON-array models_cmd output.
+type acpModel struct {
+	ModelID     string `json:"modelId"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (m acpModel) info() link.ModelInfo {
+	id := strings.TrimSpace(m.ModelID)
+	if id == "" {
+		id = strings.TrimSpace(m.ID)
+	}
+	return link.ModelInfo{ID: id, Name: m.Name, Description: m.Description}
+}
+
+func acpModelsToInfos(in []acpModel) []link.ModelInfo {
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	for _, m := range in {
+		info := m.info()
+		if info.ID == "" || seen[info.ID] {
+			continue
+		}
+		seen[info.ID] = true
+		models = append(models, info)
+	}
+	return models
+}
+
+// acpConfigOption is one entry of a session/new result.configOptions array.
+// opencode returns its model selector this way (verified with opencode
+// 2.2.5):
+//
+//	{id:"model", category:"model", type:"select", currentValue:"...",
+//	 options:[{value:"...", name:"...", description:"..."}]}
+//
+// Unknown fields (currentValue, _meta) are ignored.
+type acpConfigOption struct {
+	ID       string              `json:"id"`
+	Category string              `json:"category"`
+	Type     string              `json:"type"`
+	Options  []acpConfigOptValue `json:"options"`
+}
+
+// acpConfigOptValue is one selectable value of a config option.
+type acpConfigOptValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// acpConfigOptionModels maps the model selector's options to ModelInfo:
+// entries whose id OR category is "model" (and that are not boolean
+// toggles). A boolean "model" option has no options list, so it contributes
+// nothing anyway.
+func acpConfigOptionModels(opts []acpConfigOption) []link.ModelInfo {
+	const model = "model"
+	out := []link.ModelInfo{}
+	for _, o := range opts {
+		if o.ID != model && o.Category != model {
+			continue
+		}
+		if o.Type == "boolean" {
+			continue
+		}
+		for _, v := range o.Options {
+			id := strings.TrimSpace(v.Value)
+			if id == "" {
+				continue
+			}
+			out = append(out, link.ModelInfo{ID: id, Name: v.Name, Description: v.Description})
+		}
+	}
+	return out
+}
+
+// mergeModelInfos appends in to dst, skipping empty and already-present ids
+// (first occurrence wins — shape order decides when duplicates disagree).
+func mergeModelInfos(dst, in []link.ModelInfo) []link.ModelInfo {
+	seen := make(map[string]bool, len(dst)+len(in))
+	for _, m := range dst {
+		seen[m.ID] = true
+	}
+	for _, m := range in {
+		if m.ID == "" || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		dst = append(dst, m)
+	}
+	return dst
+}
+
+// parseACPModels extracts the model list from an ACP session/new RESULT
+// payload. Accepted shapes (deduplicated, in order): result.models.
+// availableModels, result.models as an array, top-level availableModels,
+// and result.configOptions entries for the model selector (the shape
+// opencode's `opencode acp` returns; hermes-acp and other ACP-only agents
+// are covered by the same parse).
+func parseACPModels(result json.RawMessage) []link.ModelInfo {
+	out := []link.ModelInfo{}
+	if len(result) == 0 {
+		return out
+	}
+	var top struct {
+		Models          json.RawMessage   `json:"models"`
+		AvailableModels []acpModel        `json:"availableModels"`
+		ConfigOptions   []acpConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(result, &top); err != nil {
+		return out
+	}
+	models := strings.TrimSpace(string(top.Models))
+	if models != "" && models != "null" {
+		if strings.HasPrefix(models, "[") {
+			var arr []acpModel
+			if err := json.Unmarshal([]byte(models), &arr); err == nil {
+				out = mergeModelInfos(out, acpModelsToInfos(arr))
+			}
+		} else {
+			var obj struct {
+				AvailableModels []acpModel `json:"availableModels"`
+			}
+			if err := json.Unmarshal([]byte(models), &obj); err == nil {
+				out = mergeModelInfos(out, acpModelsToInfos(obj.AvailableModels))
+			}
+		}
+	}
+	out = mergeModelInfos(out, acpModelsToInfos(top.AvailableModels))
+	out = mergeModelInfos(out, acpConfigOptionModels(top.ConfigOptions))
+	return out
+}
+
+// probeModelsViaACP introspects a CLI over ACP stdio: spawn ACPSpawn, read
+// its initialize reply, then session/new (empty mcpServers, temp cwd) and
+// parse the model list off the reply — from result.models shapes or the
+// result.configOptions model selector (opencode/hermes). The process is
+// always killed and the temp cwd removed. Returns nil on any failure
+// (caller treats it as "no models").
+func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
+	if len(spawn) == 0 {
+		return nil
+	}
+	cwd, err := os.MkdirTemp("", "agentwork-models-")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(cwd)
+
+	pctx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(pctx, spawn[0], spawn[1:]...)
+	cmd.Dir = cwd
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return nil
+	}
+	defer func() {
+		cancel() // CommandContext kills the process on ctx cancel
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	lines := make(chan []byte, 32)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(make([]byte, 64*1024), 4<<20)
+		for sc.Scan() {
+			line := append([]byte(nil), sc.Bytes()...)
+			select {
+			case lines <- line:
+			case <-pctx.Done():
+				return
+			}
+		}
+	}()
+
+	send := func(id int, method string, params any) bool {
+		frame, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			return false
+		}
+		_, err = stdin.Write(append(frame, '\n'))
+		return err == nil
+	}
+	// call writes one request and waits for the reply with the matching id.
+	call := func(id int, method string, params any) (json.RawMessage, bool) {
+		if !send(id, method, params) {
+			return nil, false
+		}
+		for {
+			select {
+			case <-pctx.Done():
+				return nil, false
+			case line, ok := <-lines:
+				if !ok {
+					return nil, false
+				}
+				var env struct {
+					ID     json.RawMessage `json:"id"`
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if json.Unmarshal(line, &env) != nil {
+					continue
+				}
+				if strings.TrimSpace(string(env.ID)) != strconv.Itoa(id) {
+					continue
+				}
+				if e := strings.TrimSpace(string(env.Error)); e != "" && e != "null" {
+					return nil, false
+				}
+				return env.Result, true
+			}
+		}
+	}
+	if _, ok := call(1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}); !ok {
+		return nil
+	}
+	result, ok := call(2, "session/new", map[string]any{
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if !ok {
+		return nil
+	}
+	models := parseACPModels(result)
+	if len(models) == 0 {
+		return nil
+	}
+	return models
 }
 
 // scanDirsFor expands one --scan argument into concrete directories: ~ is

@@ -5,6 +5,7 @@ import { Button, Dialog, Field, inputCls } from "@/components/ui";
 import { useBlueprints, useCreateGoal, useHooks } from "@/lib/queries";
 import { bindGoalHook, type CreateGoalBody } from "@/lib/api";
 import { HOOK_EVENTS, type ExecutionMode, type HookEvent } from "@/lib/types";
+import { OUTPUT_MARKER, appendOutputTemplate } from "@/lib/task-template";
 import { cn } from "@/lib/utils";
 
 // 新建 Goal 的表单（对话框形态）。
@@ -19,7 +20,7 @@ export function NewGoalForm({
 }: {
   agents?: { id: string; name: string }[];
   squads?: { id: string; name: string }[];
-  domains?: { id: string; name: string }[];
+  domains?: { id: string; name: string; acceptance_level?: string }[];
   onClose: () => void;
   onCreated?: () => void;
 }) {
@@ -40,7 +41,16 @@ export function NewGoalForm({
   const [description, setDescription] = useState("");
   const [domainId, setDomainId] = useState("");
   const [domainErr, setDomainErr] = useState("");
-  const [category, setCategory] = useState<"hitl" | "hootl">("hitl");
+  // 验收级别优先级：任务级 > 项目默认 > 平台默认(HITL)。
+  // 默认模式「跟随项目」在提交时把项目当前级别固化成任务级值——项目之后
+  // 改级别不会回溯已有任务（创建时快照），这样任务页的徽章永远可信。
+  const [categoryMode, setCategoryMode] = useState<"inherit" | "hitl" | "hootl">("inherit");
+  const projectLevel = (() => {
+    const lvl = domains?.find((d) => d.id === domainId)?.acceptance_level;
+    return lvl === "hitl" || lvl === "hootl" ? lvl : "";
+  })();
+  const effectiveCategory: "hitl" | "hootl" =
+    categoryMode === "inherit" ? (projectLevel || "hitl") : categoryMode;
   const [assigneeType, setAssigneeType] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [assigneeErr, setAssigneeErr] = useState("");
@@ -59,7 +69,7 @@ export function NewGoalForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const body: CreateGoalBody = { title, category };
+    const body: CreateGoalBody = { title, category: effectiveCategory };
     if (description) body.description = description;
     if (assigneeType && assigneeId) {
       body.assignee_type = assigneeType;
@@ -83,8 +93,11 @@ export function NewGoalForm({
         setDomainErr("请选择所属项目——agent 执行的 Goal 必须挂在一个项目上（项目提供 worktree 与验收策略）");
         return;
       }
-      body.domain_id = domainId;
     }
+    // 项目归属不只为执行：验收级别默认值也来自项目（任务 > 项目 > HITL）。
+    // 未指定负责人的待办任务只要选了项目，也把 domain_id 带上，否则
+    // 后端只能落到平台默认 HITL，项目级验收级别会被静默丢掉。
+    if (domainId) body.domain_id = domainId;
     // 运行模式随 goal 一起落库：infer 只记基础指标，train 才建分析会话。
     // （后端缺省也是 infer，这里仍显式传，便于抓包核对。）
     body.execution_mode = executionMode;
@@ -140,8 +153,27 @@ export function NewGoalForm({
         <Field label="标题" hint="必填">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} required placeholder="一句话说清要做什么…" />
         </Field>
-        <Field label="描述">
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} rows={3} placeholder="可选：验收标准、约束条件…" />
+        <Field label="描述" hint="Tab 补输出要求">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Tab" &&
+                !e.shiftKey &&
+                !e.metaKey &&
+                !e.ctrlKey &&
+                !e.altKey &&
+                !description.includes(OUTPUT_MARKER)
+              ) {
+                e.preventDefault();
+                setDescription((prev) => appendOutputTemplate(prev));
+              }
+            }}
+            className={inputCls}
+            rows={4}
+            placeholder="可选：交付内容、验收标准、约束条件…（Tab 补一句默认输出要求）"
+          />
         </Field>
         <Field label="所属项目" hint="agent/squad 执行的任务必填">
           <select value={domainId} onChange={(e) => setDomainId(e.target.value)} className={inputCls}>
@@ -153,22 +185,35 @@ export function NewGoalForm({
             ))}
           </select>
         </Field>
-        {/* 验收分类：HITL 结束前走人工审批门禁；HOOTL 跳过复检，完成即结束。 */}
+        {/* 验收级别：优先级 任务 > 项目 > 平台默认。选「跟随项目」时按项目
+            当前级别在创建时固化；显式选 HITL/HOOTL 则覆盖项目默认。 */}
         <Field
-          label="验收分类"
+          label="验收级别"
           hint={
-            category === "hootl"
-              ? "无需人工复检，任务完成即结束"
-              : "结束前进入 review 阶段等待人工审批"
+            categoryMode === "inherit"
+              ? projectLevel === "hootl"
+                ? "跟随项目：HOOTL 免复检（创建时固化，之后改项目不回溯本任务）"
+                : projectLevel === "hitl"
+                  ? "跟随项目：HITL 人工验收（创建时固化）"
+                  : domainId
+                    ? "项目未设置验收级别 → 按 HITL 人工验收"
+                    : "选择项目后继承其验收级别；未选项目默认 HITL"
+              : "任务级覆盖项目默认——只影响本任务"
           }
         >
           <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value === "hootl" ? "hootl" : "hitl")}
+            value={categoryMode}
+            onChange={(e) => {
+              const v = e.target.value;
+              setCategoryMode(v === "inherit" ? "inherit" : v === "hootl" ? "hootl" : "hitl");
+            }}
             className={inputCls}
           >
-            <option value="hitl">HITL · 人工验收</option>
-            <option value="hootl">HOOTL · 免复检</option>
+            <option value="inherit">
+              跟随项目{projectLevel ? `（当前：${projectLevel === "hootl" ? "HOOTL" : "HITL"}）` : domainId ? "（项目未设置 → HITL）" : "（选项目后继承，否则 HITL）"}
+            </option>
+            <option value="hitl">HITL · 人工验收（任务级覆盖）</option>
+            <option value="hootl">HOOTL · 免复检（任务级覆盖）</option>
           </select>
         </Field>
         <Field label="负责人类型">

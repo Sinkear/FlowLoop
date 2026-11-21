@@ -15,6 +15,7 @@ import {
   listRuntimes,
   createRuntime,
   deleteRuntime,
+  getRuntimeModels,
   listMachines,
   listSkills,
   createSkill,
@@ -87,12 +88,10 @@ import {
   createDomain,
   updateDomain,
   deleteDomain,
-  compileDomainPolicy,
-  getDomainCompileRun,
-  freezeDomainChecks,
   getDomainWebhook,
   registerDomainWebhook,
   patchDomainAssignees,
+  setDomainAcceptanceLevel,
   setDomainWebhookSecret,
   listConnections,
   createSquadConnection,
@@ -143,6 +142,7 @@ import type {
 // ── Query keys ──
 export const qk = {
   runtimes: ["runtimes"] as const,
+  runtimeModels: (id: string) => ["runtimes", id, "models"] as const,
   machines: ["machines"] as const,
   skills: ["skills"] as const,
   skillSync: (id: string) => ["skills", id, "sync"] as const,
@@ -177,7 +177,6 @@ export const qk = {
   schedules: ["schedules"] as const,
   domains: ["domains"] as const,
   domain: (id: string) => ["domains", id] as const,
-  domainCompileRun: (id: string) => ["domains", id, "compile-run"] as const,
   domainWebhook: (id: string) => ["domainWebhook", id] as const,
   connections: ["connections"] as const,
   connectionsBySquad: (squadId: string) => ["connections", { squad_id: squadId }] as const,
@@ -216,6 +215,14 @@ export function useSavePlatformSettings() {
 // ── Runtime hooks ──
 export function useRuntimes() {
   return useQuery({ queryKey: qk.runtimes, queryFn: listRuntimes });
+}
+export function useRuntimeModels(id: string) {
+  return useQuery({
+    queryKey: qk.runtimeModels(id),
+    queryFn: () => getRuntimeModels(id),
+    enabled: !!id,
+    staleTime: 60000,
+  });
 }
 export function useMachines() {
   return useQuery({ queryKey: qk.machines, queryFn: listMachines, refetchInterval: 10000 });
@@ -774,15 +781,6 @@ export function useDomains() {
 export function useDomain(id: string) {
   return useQuery({ queryKey: qk.domain(id), queryFn: () => getDomain(id), enabled: !!id });
 }
-// Latest compile processor run for a domain (决策 6-23): the compile panel's
-// refresh-restore source of truth.
-export function useDomainCompileRun(id: string) {
-  return useQuery({
-    queryKey: qk.domainCompileRun(id),
-    queryFn: () => getDomainCompileRun(id),
-    enabled: !!id,
-  });
-}
 export function useCreateDomain() {
   const qc = useQueryClient();
   return useMutation({
@@ -805,24 +803,14 @@ export function useDeleteDomain() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.domains }),
   });
 }
-export function useCompileDomainPolicy() {
+export function useSetDomainAcceptanceLevel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; policy_text: string; processor_agent_id: string }) =>
-      compileDomainPolicy(id, body),
+    mutationFn: ({ id, level }: { id: string; level: string }) =>
+      setDomainAcceptanceLevel(id, level),
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: qk.domain(vars.id) });
-    },
-  });
-}
-export function useFreezeDomainChecks() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; checks: import("./types").Checks; verification_strength: string }) =>
-      freezeDomainChecks(id, body),
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: qk.domain(vars.id) });
       qc.invalidateQueries({ queryKey: qk.domains });
+      qc.invalidateQueries({ queryKey: qk.domain(vars.id) });
     },
   });
 }
@@ -1167,8 +1155,6 @@ export function useGoalEvents() {
   // Domain events
   useWSEvent("domain:created", () => qc.invalidateQueries({ queryKey: qk.domains }));
   useWSEvent("domain:deleted", () => qc.invalidateQueries({ queryKey: qk.domains }));
-  useWSEvent("domain:compiled", () => qc.invalidateQueries({ queryKey: qk.domains }));
-  useWSEvent("domain:compile_failed", () => qc.invalidateQueries({ queryKey: qk.domains }));
   // Team import events
   useWSEvent("team:imported", () => {
     qc.invalidateQueries({ queryKey: qk.agents });

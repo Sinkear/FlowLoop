@@ -1425,9 +1425,9 @@ func (d *Daemon) ensureSharedRepo(ctx context.Context, domainID, gitURL, gitCred
 	// Fetch ONCE under the new refspec — until this runs, refs/remotes/
 	// origin/* is EMPTY (the clone mirror wrote to refs/heads/*), and any
 	// path that checks out origin/<branch> before a worker-run fetch would
-	// fail "invalid reference" — the acceptance-policy compile being the
-	// usual first operation on a fresh domain (live: fixing a typo'd
-	// default_branch and recompiling "took no effect").
+	// fail "invalid reference" — a fresh domain's first worker run is the
+	// usual first operation (live: fixing a typo'd default_branch "took no
+	// effect" on the first run).
 	start = time.Now()
 	logging.Infof("git: domain %s: first fetch ...", domainID)
 	if out, err := exec.CommandContext(ctx, "git", "-C", repo, "fetch", "origin").CombinedOutput(); err != nil {
@@ -1753,18 +1753,18 @@ func fetchSourceComments(ctx context.Context, client issue.Provider, kind issue.
 // runTask opens a transport, hands it to the protocol backend for one Prompt,
 // drains events into chat_message + WS, and finishes the run (which triggers
 // goal-layer reconciliation). Processor runs (no goal — run_kind=processor,
-// e.g. the acceptance-policy compiler) take the runProcessorTask path.
+// the intake pipeline) take the runProcessorTask path.
 func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	if q.GoalID == "" {
 		d.runProcessorTask(ctx, q)
 		return
 	}
 	var title, desc, handoff, domainID, gitURL, defaultBranch, domainType, domainName, systemPrompt, argsJSON, rtEnvJSON, sourceRef, gitCredentials, gitIdentity, runtimeMachineID string
-	var agentName, triggerAuthorName string
+	var agentName, agentModel, triggerAuthorName string
 	var triggerAuthor, triggerCommentID, triggerCommentContent, runRole, subGoalID, wakeNote, wakeAnchorID, reviewRequest string
 	var maxConcurrent, maxRunDuration int
 	err := d.st.DB().QueryRowContext(ctx,
-		`SELECT g.title, g.description, g.handoff_note, d.id, d.git_url, d.default_branch, COALESCE(d.type,''), COALESCE(d.name,''), a.system_prompt, a.name, d.git_identity,
+		`SELECT g.title, g.description, g.handoff_note, d.id, d.git_url, d.default_branch, COALESCE(d.type,''), COALESCE(d.name,''), a.system_prompt, a.name, a.model, d.git_identity,
 		        r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent, d.max_run_duration,
 		        g.source_ref, d.git_credentials, COALESCE(g.review_request,''),
 		        r2.trigger_comment_id, COALESCE(c.author_type, ''), COALESCE(c.content, ''), COALESCE(ca.name,''), r2.role, r2.sub_goal_id, r2.wake_note, COALESCE(r2.wake_anchor,'')
@@ -1776,7 +1776,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		 LEFT JOIN comment c ON c.id = r2.trigger_comment_id
 		 LEFT JOIN agent ca ON ca.id = c.author_id
 		 WHERE r2.id = ?`, q.RunID).
-		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
+		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &agentModel, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
 	// Claim visibility: which run, which agent, which role — the panel's
 	// answer to "who is doing what right now". The TITLE travels with the
 	// id: ids are for the system, humans read titles.
@@ -1793,8 +1793,8 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	subGoalRun := runRole == "subgoal"
 	verifyRun := runRole == "verify"
 	// READ-ONLY runs (consult/review/verify) skip the whole machine-judgment
-	// pipeline — they produce opinions, not work, and the platform's
-	// verification judges work (决策 5-3/6-5). Declared early: the scratch
+	// pipeline — they produce opinions, not work, and the goal's 验收级别 is
+	// the acceptance authority (决策 5-3/6-5). Declared early: the scratch
 	// workdir branch below needs it.
 	if err != nil {
 		d.failRun(ctx, q, fmt.Sprintf("load config: %v", err))
@@ -1900,15 +1900,6 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		issueSection += ib.String()
 	}
 
-	// The domain's acceptance policy in NL (the "what counts as done" the
-	// OWNER defined) — the agent works toward it instead of finding out at
-	// verification time. Only the NL intent is injected; the compiled checks
-	// stay invisible (triangle separation: define stays with the human,
-	// execute with the agent, judge with the machine+human).
-	var policyText string
-	_ = d.st.DB().QueryRowContext(ctx,
-		`SELECT d.policy_text FROM goal g JOIN domain d ON d.id=g.domain_id WHERE g.id=?`, q.GoalID).Scan(&policyText)
-
 	// CLI 分支 Phase 2: machine-owned runtimes execute on their registered
 	// machine — assemble the SAME engineered prompt and dispatch it over
 	// the link. This goroutine's job ends at the ack; the run's lifecycle
@@ -1930,7 +1921,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		}
 		machinePrompt := d.assemblePrompt(ctx, q, promptInputs{
 			agentName: agentName, systemPrompt: systemPrompt, runRole: runRole,
-			goalTitle: goalTitle, policyText: policyText, domainType: domainType, domainName: domainName,
+			goalTitle: goalTitle, domainType: domainType, domainName: domainName,
 			triggerCommentID: triggerCommentID, triggerAuthor: triggerAuthor, triggerAuthorName: triggerAuthorName,
 			triggerCommentContent: triggerCommentContent, title: title, desc: desc, handoff: handoff,
 			wakeNote: wakeNote, wakeAnchorID: wakeAnchorID, subGoalID: subGoalID,
@@ -1983,17 +1974,6 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 				}
 			}
 		}
-		// Scratch acceptance policy travels to the MACHINE: a scratch
-		// deliverable has no git diff to verify, so the domain's frozen
-		// Verify policy must run where the files live. Read-only roles never
-		// carry it (they judge, they don't deliver).
-		var scratchChecks *link.RunChecks
-		if domainType == "scratch" && (runRole == "owner" || runRole == "subgoal") {
-			checks, timeout, _, frozen := d.loadDomainChecks(ctx, domainID)
-			if frozen && len(checks.Verify) > 0 {
-				scratchChecks = &link.RunChecks{Setup: checks.Setup, Verify: checks.Verify, VerifyTimeout: timeout}
-			}
-		}
 		d.dispatchToMachine(ctx, q, link.RunDispatchParams{
 			RunID: q.RunID, GoalID: q.GoalID, AgentID: q.AgentID,
 			Role: runRole, SubGoalID: subGoalID, Attempt: q.Attempt,
@@ -2001,14 +1981,13 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			Scratch: domainType == "scratch", DomainName: domainName,
 			DomainID: domainID, GitURL: gitURL, GitCredentials: gitCredentials,
 			DefaultBranch: defaultBranch, GitIdentity: gitIdentity,
-			ACPSpawn: args, Env: dispatchEnv,
+			ACPSpawn: args, Env: dispatchEnv, Model: agentModel,
 			ArtifactFiles:    artifactFiles,
 			ProjectSkillsDir: d.projectSkillsDirFor(ctx, runtimeMachineID, args),
-			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID),
+			RunProfile:       d.buildRunProfile(ctx, q.GoalID, q.AgentID, agentName, runRole, goalTitle, goalDesc, domainType, domainName, issueSection, subGoalID),
 			PriorSessionID:   priorSession,
 			PriorWorkDir:     priorWorkdir,
 			McpServers:       d.extraMcpServers(ctx, q.AgentID),
-			Checks:           scratchChecks,
 		}, runtimeMachineID)
 		return
 	}
@@ -2019,168 +1998,34 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	d.failRun(ctx, q, "this runtime has no machine — run `agentwork connect` and point the agent at a machine-owned runtime")
 }
 
-// runProcessorTask executes a platform-internal processor run: opens the
-// agent's transport, sends the run's fixed prompt, drains events, and then
-// collects the FILE-based result — the compiled checks.json + strength.txt —
-// from the run workdir and stores it on the associated domain in an UNFROZEN
-// state (checks_compiled_at stays ”), publishing domain:compiled so the
-// frontend can show the owner confirmation card. Structured output is read
-// from files, never parsed from agent stdout (DESIGN.md §5.3, §9).
+// runProcessorTask executes a platform-internal processor run. The only
+// remaining processor run type is the intake pipeline (M3-4): it has no
+// domain — its coalesce key is the inbound message id (see
+// IntakeService.Enqueue) — and is handed to runIntakeTask. The
+// acceptance-policy compile run type is retired with the checks subsystem.
 func (d *Daemon) runProcessorTask(ctx context.Context, q *service.ClaimedRow) {
-	var prompt, runType, domainID, agentID string
+	var prompt, runType, agentID string
 	err := d.st.DB().QueryRowContext(ctx,
-		`SELECT r2.prompt, r2.run_type, r2.domain_id, r2.agent_id FROM run r2 WHERE r2.id=?`, q.RunID).
-		Scan(&prompt, &runType, &domainID, &agentID)
+		`SELECT r2.prompt, r2.run_type, r2.agent_id FROM run r2 WHERE r2.id=?`, q.RunID).
+		Scan(&prompt, &runType, &agentID)
 	if err != nil {
 		logging.Infof("daemon: processor run %s: load config: %v", q.RunID, err)
 		d.failProcessorRun(ctx, q, "load config: "+err.Error())
 		return
 	}
-	// The intake pipeline (M3-4) has no domain — its coalesce key is the
-	// inbound message id (see IntakeService.Enqueue).
 	if runType == "intake" || runType == "intake_web" {
 		d.runIntakeTask(ctx, q, prompt, agentID, runType)
 		return
 	}
-	if prompt == "" || domainID == "" {
-		d.failProcessorRun(ctx, q, "processor run missing prompt or domain_id")
-		return
-	}
-
-	// Compile runs collect checks.json + strength.txt + metrics.json as
-	// artifacts (the only processor run type still using this path — import
-	// is now a worker run; intake is handled above).
-	artifactFiles := []string{"checks.json", "strength.txt", "metrics.json"}
-
-	var argsJSON, rtEnvJSON, procMachineID string
-	var maxConcurrent int
-	err = d.st.DB().QueryRowContext(ctx,
-		`SELECT r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent
-		 FROM agent a JOIN runtime r ON r.id = a.runtime_id WHERE a.id=?`, agentID).
-		Scan(&argsJSON, &rtEnvJSON, &procMachineID, &maxConcurrent)
-	if err != nil {
-		d.failProcessorRun(ctx, q, "load agent runtime: "+err.Error())
-		return
-	}
-	d.ensureWorker(agentID, maxConcurrent)
-
-	// CLI 分支 Phase 2: machine-owned processor runtimes dispatch — the
-	// machine works the proc dir (repo compile: a detached worktree of
-	// origin/<default>) and uploads the artifact files with run.finished.
-	if procMachineID != "" {
-		// Compile runs read git config from the domain row (the only processor
-		// run type reaching here — import is now a worker run).
-		var dType, gitURL, gitCredentials, defaultBranch string
-		_ = d.st.DB().QueryRowContext(ctx,
-			`SELECT COALESCE(type,''), git_url, git_credentials, default_branch FROM domain WHERE id=?`, domainID).
-			Scan(&dType, &gitURL, &gitCredentials, &defaultBranch)
-		var args []string
-		_ = json.Unmarshal([]byte(argsJSON), &args)
-		var rtEnv map[string]string
-		_ = json.Unmarshal([]byte(rtEnvJSON), &rtEnv)
-		agentEnv, _ := d.loadAgentEnv(ctx, agentID)
-		dispatchEnv := map[string]string{}
-		for k, v := range rtEnv {
-			dispatchEnv[k] = v
-		}
-		for k, v := range agentEnv {
-			dispatchEnv[k] = v
-		}
-		d.dispatchToMachine(ctx, q, link.RunDispatchParams{
-			RunID: q.RunID, AgentID: q.AgentID, Attempt: q.Attempt, Token: q.Token,
-			Prompt: prompt, Proc: true, Scratch: dType == "scratch",
-			ArtifactFiles: artifactFiles,
-			DomainID:      domainID, GitURL: gitURL, GitCredentials: gitCredentials, DefaultBranch: defaultBranch,
-			ACPSpawn: args, Env: dispatchEnv,
-			McpServers: d.extraMcpServers(ctx, q.AgentID),
-		}, procMachineID)
-		return
-	}
-
-	// Legacy transports have no executor anymore (the unified model
-	// dispatches everything to machines).
-	d.failProcessorRun(ctx, q, "this runtime has no machine — run `agentwork connect` and point the agent at a machine-owned runtime")
+	d.failProcessorRun(ctx, q, "unknown processor run type: "+runType)
 }
 
-// storeProcessorArtifacts completes a compile run from its FILE artifacts
-// (checks.json + strength.txt + metrics.json) — the shared path for the
-// local execution and the machine-dispatched upload (CLI 分支 Phase 2).
-// The platform reads structured side effects, never agent stdout.
-func (d *Daemon) storeProcessorArtifacts(ctx context.Context, q *service.ClaimedRow, domainID string, files map[string]string, summary string) {
-	if files == nil {
-		files = map[string]string{}
-	}
-	raw, ok := files["checks.json"]
-	if !ok || strings.TrimSpace(raw) == "" {
-		d.failProcessorRun(ctx, q, "checks.json: artifact missing — the compile agent did not produce it")
-		return
-	}
-	var checks service.Checks
-	if err := json.Unmarshal([]byte(raw), &checks); err != nil {
-		d.failProcessorRun(ctx, q, "parse checks.json: "+err.Error())
-		return
-	}
-	if len(checks.Verify) == 0 && len(checks.Guards) == 0 {
-		d.failProcessorRun(ctx, q, "checks.json: no verify or guards produced")
-		return
-	}
-	strength := "medium"
-	if sraw, ok := files["strength.txt"]; ok {
-		if v := strings.TrimSpace(sraw); v == "strong" || v == "medium" || v == "weak" {
-			strength = v
-		}
-	}
-	checksJSON, _ := json.Marshal(checks)
-	// The compiled policy ALWAYS lands (a fresh compile cycle replaces the
-	// previous one wholesale — DESIGN.md §5.3), and resets the freeze
-	// stamp: the domain returns to the pending-confirmation state so the
-	// owner's confirmation card reappears with the NEW product.
-	//
-	// The evolution-metrics baseline (decision 2-15) is recorded alongside
-	// (metrics.json — test count / coverage the processor measured at
-	// compile time). Only the FIRST compile stamps the baseline.
-	baseline := "{}"
-	if raw, ok := files["metrics.json"]; ok {
-		var m struct {
-			TestCount int     `json:"test_count"`
-			Coverage  float64 `json:"coverage"`
-		}
-		if json.Unmarshal([]byte(raw), &m) == nil && (m.TestCount > 0 || m.Coverage > 0) {
-			b, _ := json.Marshal(map[string]any{"test_count": m.TestCount, "coverage": m.Coverage})
-			baseline = string(b)
-		}
-	}
-	if _, err := d.st.DB().ExecContext(ctx,
-		`UPDATE domain SET checks=?, verification_strength=?, checks_compiled_at='',
-		        metrics_baseline=CASE WHEN metrics_baseline='{}' OR metrics_baseline='' THEN ? ELSE metrics_baseline END
-		 WHERE id=?`,
-		string(checksJSON), strength, baseline, domainID); err != nil {
-		d.failProcessorRun(ctx, q, "store compiled checks: "+err.Error())
-		return
-	}
-	if _, err := d.st.DB().ExecContext(ctx,
-		`UPDATE run SET status='completed', result_summary=?, finished_at=? WHERE id=?`,
-		summary, nowStr(), q.RunID); err != nil {
-		logging.Infof("daemon: finish processor run %s: %v", q.RunID, err)
-	}
-	d.bus.Publish(ctx, events.Event{Topic: "domain:compiled", Payload: map[string]any{
-		"domain_id": domainID, "run_id": q.RunID,
-	}})
-	logging.Infof("daemon: domain %s acceptance policy compiled (strength=%s)", domainID, strength)
-}
-
-// failProcessorRun marks a processor run failed and notifies the frontend that
-// compilation did not complete (manual checks input remains the fallback).
+// failProcessorRun marks a processor run failed. The compile-failure event is
+// gone with the compile run type; the log line and the conditional run stamp
+// remain the durable failure record.
 func (d *Daemon) failProcessorRun(ctx context.Context, q *service.ClaimedRow, summary string) {
 	logging.Infof("daemon: processor run %s failed: %s", q.RunID, summary)
-	if !d.stampRunFailed(ctx, q.RunID, summary) {
-		return
-	}
-	var domainID string
-	_ = d.st.DB().QueryRowContext(ctx, `SELECT domain_id FROM run WHERE id=?`, q.RunID).Scan(&domainID)
-	d.bus.Publish(ctx, events.Event{Topic: "domain:compile_failed", Payload: map[string]any{
-		"run_id": q.RunID, "domain_id": domainID, "error": summary,
-	}})
+	d.stampRunFailed(ctx, q.RunID, summary)
 }
 
 // stampRunFailed conditionally marks a run failed: UPDATE run SET status='failed'
@@ -2243,7 +2088,7 @@ func nowStr() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 // exists) returns a zero event — the live stream already saw the call start,
 // and the growing input has no value to show mid-stream; only the FIRST
 // tool_use and the terminal tool_result broadcast. Without this the WS path
-// (domains compile stream) showed every update, duplicating tool calls.
+// (the run stream panel) showed every update, duplicating tool calls.
 func (d *Daemon) persistEvent(ctx context.Context, runID string, ev proto.Event) proto.Event {
 	switch ev.Type {
 	case proto.EventMessage, proto.EventThought:
@@ -2449,8 +2294,7 @@ func (d *Daemon) loadAgentEnv(ctx context.Context, agentID string) (map[string]s
 // failRun records a launch-time failure (before any backend ran). Failed runs
 // still flow through Finish → reconcile so the goal layer can retry/fail the
 // goal authoritatively. For import goals, the team_import row is also flipped
-// to failed + team:import_failed published (the worker path does not go
-// through failProcessorRun's import self-routing).
+// to failed + team:import_failed published.
 func (d *Daemon) failRun(ctx context.Context, q *service.ClaimedRow, summary string) {
 	logging.Infof("daemon: run %s failed at launch: %s", q.RunID, summary)
 	// Import goal launch failures: update team_import + publish the import
@@ -2518,27 +2362,6 @@ func (d *Daemon) leaderSquadFor(ctx context.Context, goalID, agentID string) (st
 		return "", false
 	}
 	return aid, leaderID == agentID
-}
-
-// annotatePolicyIssue posts ONE system comment flagging an objective
-// acceptance-policy defect (a verify command/script that does not exist —
-// POSIX exit 127) — deduped per goal so the retry chain does not spam the
-// same finding. The owner sees it in the feed and fixes the policy; the run
-// still fails normally (a report is not a waiver).
-func (d *Daemon) annotatePolicyIssue(ctx context.Context, goalID string) {
-	// Platform text is English (决策 6-18) — system notifications stay fixed;
-	// the goal's language lives in the MATERIALS (agents' comments follow it
-	// via the LANGUAGE rule).
-	var n int
-	_ = d.st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM comment WHERE goal_id=? AND author_type='system' AND content LIKE '⚠️ Likely acceptance-policy problem%'`, goalID).Scan(&n)
-	if n > 0 {
-		return
-	}
-	content := "⚠️ Likely acceptance-policy problem: a verification command/script does not exist (POSIX exit 127) — check the domain's acceptance policy and fix it, then reopen the task; agents cannot bypass this check."
-	_, _ = d.st.DB().ExecContext(ctx,
-		`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
-		uuid.NewString(), goalID, content, nowStr())
 }
 
 // agentTriggeredRunCount counts the goal's runs triggered by AGENT-authored
@@ -2700,13 +2523,6 @@ func (d *Daemon) reapRunawayRuns(ctx context.Context) {
 			// stays active, the human decides).
 			d.bus.Publish(ctx, events.Event{Topic: "run:cancelled", Payload: map[string]any{
 				"run_id": rr.id, "goal_id": rr.goalID, "reason": "runaway", "reason_code": "runaway",
-			}})
-		} else if rr.domainID != "" {
-			// A runaway COMPILE run must unstick the domain's compile panel
-			// (it waits on domain:compile_failed — the same event the normal
-			// failure path emits).
-			d.bus.Publish(ctx, events.Event{Topic: "domain:compile_failed", Payload: map[string]any{
-				"run_id": rr.id, "domain_id": rr.domainID, "error": "runaway: 编译超过 max_run_duration 被终止",
 			}})
 		}
 	}
@@ -2954,12 +2770,12 @@ func (d *Daemon) advanceScheduleNextRun(ctx context.Context, r scheduleDueRow, p
 
 // promptInputs carries everything the prompt assembly reads.
 type promptInputs struct {
-	agentName, systemPrompt, runRole, goalTitle, policyText, domainType, domainName string
-	triggerCommentID, triggerAuthor, triggerAuthorName, triggerCommentContent       string
-	title, desc, handoff, wakeNote, wakeAnchorID, subGoalID                         string
-	assigneeName                                                                    string
-	reviewRequest                                                                   string
-	consultRun, reviewRun, verifyRun, subGoalRun                                    bool
+	agentName, systemPrompt, runRole, goalTitle, domainType, domainName       string
+	triggerCommentID, triggerAuthor, triggerAuthorName, triggerCommentContent string
+	title, desc, handoff, wakeNote, wakeAnchorID, subGoalID                   string
+	assigneeName                                                              string
+	reviewRequest                                                             string
+	consultRun, reviewRun, verifyRun, subGoalRun                              bool
 }
 
 // assemblePrompt renders the complete run prompt — the fixed block (or, for

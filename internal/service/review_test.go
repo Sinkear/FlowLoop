@@ -9,8 +9,9 @@ import (
 	"github.com/eushing/agentwork/internal/store"
 )
 
-// seedDomainWithGates creates a domain whose acceptance policy includes the
-// merge gate — completed runs park the goal in review (DESIGN.md §4).
+// seedDomainWithGates creates a plain domain. The name is historical: gates
+// and compiled acceptance policy are retired; a HITL goal (the default)
+// parks completed runs in review.
 func seedDomainWithGates(t *testing.T, st *store.Store) string {
 	t.Helper()
 	ctx := context.Background()
@@ -19,35 +20,22 @@ func seedDomainWithGates(t *testing.T, st *store.Store) string {
 	if err != nil {
 		t.Fatalf("create domain: %v", err)
 	}
-	d, err = ds.FreezeChecks(ctx, d.ID, Checks{
-		Verify: []string{"go test ./..."},
-		Gates:  []GateRule{{Name: "merge", When: "合并到主分支前必须人工审批"}},
-	}, "strong")
-	if err != nil {
-		t.Fatalf("freeze checks: %v", err)
-	}
 	return d.ID
 }
 
-// finishWithMergeGate injects the daemon-side gate evaluation result (the
-// unit tests don't run the daemon, which computes gates_hit from the diff)
-// and finishes the run completed — the goal layer then parks in review.
+// finishWithMergeGate finishes the run completed — the HITL checkpoint then
+// parks the goal in review.
 func finishWithMergeGate(t *testing.T, st *store.Store, rs *RunService, run *Run, summary string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := st.DB().ExecContext(ctx,
-		`UPDATE run SET gates_hit=? WHERE id=?`,
-		`["merge: 合并到主分支前必须人工审批"]`, run.ID); err != nil {
-		t.Fatalf("set gates_hit: %v", err)
-	}
 	if err := rs.Finish(ctx, run.ID, "completed", summary); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 }
 
-// TestReconcileParksInReviewWithGates: a completed run in a gated domain parks
+// TestReconcileParksInReviewWithGates: a completed run in a HITL goal parks
 // the goal in review (NOT done) — the checkpoint fires before any promotion.
-// Without gates the same run would promote to done.
+// A HOOTL goal is the auto-complete path.
 func TestReconcileParksInReviewWithGates(t *testing.T) {
 	gs, rs, _, st := newTestCluster(t)
 	ctx := context.Background()
@@ -249,12 +237,10 @@ func TestReviewRecordsRunID(t *testing.T) {
 	}
 }
 
-// TestReviewRecordsActualGateRule: gate_decision.gate_rule records WHICH
-// rule parked the goal (from the evidence run's gates_hit), not a hardcoded
-// "merge" — the health-learning aggregation groups by rule, so a
-// diff_contains decision must be recorded as such (regression: every decision
-// landed as "merge" and corrupted GateStats).
-func TestReviewRecordsActualGateRule(t *testing.T) {
+// TestReviewRecordsGateRule: gate_decision.gate_rule is a stable placeholder
+// ("merge") now that rule evaluation is retired; the health aggregation
+// groups by it and gate_decision itself must keep recording every decision.
+func TestReviewRecordsGateRule(t *testing.T) {
 	gs, rs, _, st := newTestCluster(t)
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "A")
@@ -262,13 +248,6 @@ func TestReviewRecordsActualGateRule(t *testing.T) {
 
 	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
 	run := enqueueFirst(t, rs, g)
-	// The daemon records the fired gate on the run row; the goal layer reads
-	// it (the daemon computes, the goal layer judges).
-	if _, err := st.DB().ExecContext(ctx,
-		`UPDATE run SET gates_hit=? WHERE id=?`,
-		`["diff_contains: 改动含 Go 代码时人工判定测试对应性", "merge: 每次完成需人工审批"]`, run.ID); err != nil {
-		t.Fatal(err)
-	}
 	if err := rs.Finish(ctx, run.ID, "completed", "ok"); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
@@ -280,8 +259,8 @@ func TestReviewRecordsActualGateRule(t *testing.T) {
 		`SELECT gate_rule FROM gate_decision WHERE goal_id=? ORDER BY decided_at DESC LIMIT 1`, g.ID).Scan(&rule); err != nil {
 		t.Fatalf("read gate_decision: %v", err)
 	}
-	if rule != "diff_contains" {
-		t.Fatalf("gate_rule must name the fired rule, got %q", rule)
+	if rule != "merge" {
+		t.Fatalf("gate_rule must be the stable placeholder, got %q", rule)
 	}
 }
 

@@ -186,7 +186,7 @@ func TestBlueprintCapabilityOnAgentGoalRefused(t *testing.T) {
 	domID := seedDomain(t, st)
 	g, err := gs.Create(ctx, Goal{
 		Title: "agent goal", AssigneeType: "agent", AssigneeID: owner,
-		Status: "backlog", DomainID: domID, BlueprintVersionID: versions[0].ID,
+		Status: "backlog", DomainID: domID, Category: "hootl", BlueprintVersionID: versions[0].ID,
 	})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
@@ -234,7 +234,7 @@ func bpSpawnFixture(t *testing.T, gs *GoalService, bs *BlueprintService, st *sto
 	domID := seedDomain(t, st)
 	g, err := gs.Create(ctx, Goal{
 		Title: "spawn goal", AssigneeType: "agent", AssigneeID: owner,
-		Status: "backlog", DomainID: domID, BlueprintVersionID: versions[0].ID,
+		Status: "backlog", DomainID: domID, Category: "hootl", BlueprintVersionID: versions[0].ID,
 	})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)

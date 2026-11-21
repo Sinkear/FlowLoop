@@ -386,6 +386,19 @@ func (s *Session) SetSessionMode(ctx context.Context, req SetSessionModeRequest)
 	return &resp, nil
 }
 
+// SetSessionModel selects the session's model: session/set_model. Some
+// agents (opencode) do not implement it and expose the model as a config
+// option instead — callers should prefer SetSessionConfigOption when
+// session/new advertised a "model" config option and fall back to this
+// method otherwise.
+func (s *Session) SetSessionModel(ctx context.Context, req SetSessionModelRequest) (*SetSessionModelResponse, error) {
+	var resp SetSessionModelResponse
+	if err := s.call(ctx, "session/set_model", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // SetSessionConfigOption changes a config option: session/set_config_option.
 // The agent's response contains the full configOptions array (not a delta).
 func (s *Session) SetSessionConfigOption(ctx context.Context, req SetSessionConfigOptionRequest) (*SetSessionConfigOptionResponse, error) {

@@ -181,6 +181,66 @@ func TestGoalCategoryHOOTLAutoCompletes(t *testing.T) {
 	}
 }
 
+// TestGoalAcceptancePrecedence pins the explicit acceptance precedence:
+// task-level override > project default > platform default (hitl). An empty
+// task category inherits the domain's acceptance_level; an explicit
+// hitl/hootl always wins; a project domain without a level (or no domain at
+// all) falls back to hitl. This is the SINGLE inheritance point — repo
+// issue/PR creation no longer resolves the domain level itself.
+func TestGoalAcceptancePrecedence(t *testing.T) {
+	gs, _, _, st := newTestCluster(t)
+	ctx := context.Background()
+	agent := seedAgent(t, st, "A")
+	ds := NewDomainService(st, events.NewBus())
+	newDomain := func(name, level string) string {
+		d, err := ds.Create(ctx, Domain{Name: name, GitURL: "https://example.com/" + name + ".git", AcceptanceLevel: level})
+		if err != nil {
+			t.Fatalf("seed domain %s: %v", name, err)
+		}
+		return d.ID
+	}
+	hootlDom := newDomain("project-hootl", "hootl")
+	unsetDom := newDomain("project-unset", "")
+
+	cases := []struct{ name, domainID, category, want string }{
+		{"project hootl + empty task", hootlDom, "", "hootl"},
+		{"project unset + empty task", unsetDom, "", "hitl"},
+		{"explicit hitl overrides project hootl", hootlDom, "hitl", "hitl"},
+		{"explicit hootl overrides project unset", unsetDom, "hootl", "hootl"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := gs.Create(ctx, Goal{
+				Title: tc.name, Category: tc.category,
+				AssigneeType: "agent", AssigneeID: agent, Status: "active", DomainID: tc.domainID,
+			})
+			if err != nil {
+				t.Fatalf("create goal: %v", err)
+			}
+			if g.Category != tc.want {
+				t.Fatalf("created category = %q, want %q", g.Category, tc.want)
+			}
+			// Persisted, not just resolved in memory.
+			got, err := gs.Get(ctx, g.ID)
+			if err != nil {
+				t.Fatalf("get goal: %v", err)
+			}
+			if got.Category != tc.want {
+				t.Fatalf("stored category = %q, want %q", got.Category, tc.want)
+			}
+		})
+	}
+
+	// No project at all (unassigned human backlog item) still gets hitl.
+	g, err := gs.Create(ctx, Goal{Title: "manual backlog item", Status: "backlog"})
+	if err != nil {
+		t.Fatalf("create domain-less goal: %v", err)
+	}
+	if g.Category != "hitl" {
+		t.Fatalf("domain-less empty category = %q, want hitl", g.Category)
+	}
+}
+
 // TestGoalCategoryInvalidRejected: only hitl/hootl are legal; a client typo
 // must fail validation instead of silently becoming hitl (it would change
 // whether a human checkpoints the goal).

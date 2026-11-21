@@ -435,11 +435,18 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 	}
 }
 
-// probeSig is the probe report's change-detection fingerprint.
+// probeSig is the probe report's change-detection fingerprint. It includes
+// the detected model ids: a model-list change (or the first successful
+// detection after a cache miss) must push a machine.probe_update, not wait
+// for a CLI version bump.
 func probeSig(clis []link.ProbeCLI) string {
 	parts := make([]string, 0, len(clis))
 	for _, c := range clis {
-		parts = append(parts, c.Name+"@"+c.Version)
+		ids := make([]string, 0, len(c.Models))
+		for _, m := range c.Models {
+			ids = append(ids, m.ID)
+		}
+		parts = append(parts, c.Name+"@"+c.Version+"@"+strings.Join(ids, "|"))
 	}
 	return strings.Join(parts, ",")
 }

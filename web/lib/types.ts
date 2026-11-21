@@ -181,7 +181,26 @@ export interface Runtime {
   args: string[]; // acp_spawn — how the machine starts the CLI
   env: Record<string, string>;
   status: string; // active | absent — absent = the machine's latest probe no longer sees the CLI
+  // Probe-detected model catalog (GET /runtimes/{id}/models) — the runtime
+  // page lists it read-only; agents may pick from it.
+  models?: RuntimeModel[];
+  models_at?: string; // last successful detection ('' = never detected)
   created_at: string;
+}
+
+export interface RuntimeModel {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
+export interface RuntimeModels {
+  runtime_id: string;
+  name: string;
+  cli: string; // CLI type, i.e. the runtime name before '@'
+  machine_id: string;
+  models: RuntimeModel[];
+  detected_at: string;
 }
 
 // McpServer mirrors acp.McpServer: an extra MCP server the agent's runs
@@ -250,31 +269,11 @@ export interface Goal {
   blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 蓝本驱动（Activate 编译 + guard 计数）
 }
 
-export interface GateRule {
-  name: string; // merge | diff_contains | diff_excludes (M2)
-  when: string;
-  pattern: string; // diff_* gates: glob over changed paths
-}
-
 export interface GateStat {
   rule: string;
   total: number;
   approved: number;
   rejected: number;
-}
-
-export interface Guard {
-  type: string; // diff_contains | diff_excludes | coverage_delta
-  pattern: string;
-  min_delta: number;
-}
-
-export interface Checks {
-  setup: string[]; // environment preparation (dependency installs) before verify
-  excludes: string[]; // commit-time exclusion globs (domain-declared, from the repo's .gitignore)
-  verify: string[];
-  guards: Guard[];
-  gates: GateRule[];
 }
 
 export interface Domain {
@@ -285,14 +284,7 @@ export interface Domain {
   default_branch: string;
   git_identity: string;
   git_credentials: string;
-  policy_text: string;
-  checks: Checks;
-  verification_strength: string; // strong|medium|weak
   max_run_duration: number;
-  verify_timeout: number;
-  processor_agent_id: string;
-  checks_compiled_at: string;
-  metrics_baseline: string;
   issue_repo: string; // M4-B: "owner/repo" tracked for issues ('' = none)
   issue_assignee: string; // M4-B: agent|squad handling this repo's issues
   issue_assignee_type: string; // M4-B: agent | squad
@@ -300,6 +292,9 @@ export interface Domain {
   pull_assignee: string; // M4-B PR pull: agent|squad handling this repo's PRs ('' = don't pull PRs)
   pull_assignee_type: string; // M4-B PR pull: agent | squad
   webhook_secret: string; // 仓库级 webhook secret（'' = 用平台 secret）
+  // 项目级验收级别：hitl | hootl | ''（待定）。仓库 webhook 自动建的目标
+  // 继承这个级别；'' 时沿用目标默认（hitl）。
+  acceptance_level: string;
   created_at: string;
   scratch_dir?: string; // scratch 域的项目目录（repo 域无）——人找产物的路径
 }
@@ -618,7 +613,6 @@ export interface TplDomain {
   git_identity?: string;
   issue_assignee?: string;
   issue_assignee_type?: string; // "agent" | "squad"
-  policy_text?: string;
 }
 
 export interface TplAgent {

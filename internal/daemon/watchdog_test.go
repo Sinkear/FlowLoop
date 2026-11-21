@@ -43,7 +43,7 @@ func seedWatchdogCtx(t *testing.T) (*Daemon, *store.Store, string, string, strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	dom, err := service.NewDomainService(st, bus).Create(context.Background(), service.Domain{Name: "d", GitURL: "https://example.com/d.git", PolicyText: "测试能过"})
+	dom, err := service.NewDomainService(st, bus).Create(context.Background(), service.Domain{Name: "d", GitURL: "https://example.com/d.git"})
 	if err != nil {
 		t.Fatal(err)
 	}

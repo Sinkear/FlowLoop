@@ -81,6 +81,10 @@ export interface AcpChatCallbacks {
 const CONNECT_OPEN_TIMEOUT_MS = 15_000;
 const INITIALIZE_TIMEOUT_MS = 20_000;
 const SESSION_LIST_TIMEOUT_MS = 20_000;
+// Model switching is a convenience, not part of the handshake: short so an
+// agent without session/set_model fails fast and the turn proceeds.
+const SESSION_SET_MODEL_TIMEOUT_MS = 10_000;
+
 const SESSION_NEW_TIMEOUT_MS = 30_000;
 
 interface PendingEntry {
@@ -394,6 +398,27 @@ export class AcpChatClient {
       .finally(() => {
         if (this.phase === "session/new") this.phase = "ready";
       });
+  }
+
+  // Best-effort model selection. ACP has two shapes in the wild:
+  //  - a "model" session config option (opencode 2.x advertises
+  //    configOptions[{id:"model"}] and implements ONLY
+  //    session/set_config_option; session/set_model returns -32601),
+  //  - the newer session/set_model method (other agents).
+  // Try the config option first, then fall back to set_model. Callers treat
+  // a rejection as "keep the CLI's own default".
+  setModel(sessionId: string, modelId: string): Promise<void> {
+    return this.send(
+      "session/set_config_option",
+      { sessionId, configId: "model", value: modelId },
+      SESSION_SET_MODEL_TIMEOUT_MS
+    )
+      .then(() => undefined)
+      .catch(() =>
+        this.send("session/set_model", { sessionId, modelId }, SESSION_SET_MODEL_TIMEOUT_MS).then(
+          () => undefined
+        )
+      );
   }
 
   loadSession(sessionId: string, cwd: string): Promise<void> {

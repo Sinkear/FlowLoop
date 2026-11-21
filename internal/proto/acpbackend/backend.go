@@ -104,6 +104,11 @@ func (b *Backend) Execute(ctx context.Context, spec proto.ExecuteSpec) (*proto.R
 		}
 		go fwd.pump()
 
+		// Select the run's requested model on this session before the
+		// prompt (best effort: config option first, session/set_model
+		// fallback — see applyModel).
+		applyModel(ctx, sess, string(newResp.SessionID), spec.Model, newResp.ConfigOptions)
+
 		if _, err := sess.Prompt(ctx, acp.PromptRequest{
 			SessionID: newResp.SessionID,
 			Prompt:    []acp.ContentBlock{{Type: "text", Text: spec.Prompt}},
@@ -300,11 +305,11 @@ func toJSONString(v any) string {
 }
 func (f *eventForwarder) OnPlan(acp.Plan)                                  {}
 func (f *eventForwarder) OnAvailableCommandsUpdate([]acp.AvailableCommand) {}
-func (f *eventForwarder) OnModeUpdate(acp.SessionModeId)                 {}
-func (f *eventForwarder) OnConfigOptionUpdate([]acp.SessionConfigOption) {}
+func (f *eventForwarder) OnModeUpdate(acp.SessionModeId)                   {}
+func (f *eventForwarder) OnConfigOptionUpdate([]acp.SessionConfigOption)   {}
 
 // OnUsageUpdate is a no-op since W-RSI (2026-11-08): usage spans retired —
 // the workflow analyzer reads entity tables only.
 func (f *eventForwarder) OnUsageUpdate(int, int, *acp.Cost) {}
 
-func (f *eventForwarder) OnSessionInfo(string, map[string]any)             {}
+func (f *eventForwarder) OnSessionInfo(string, map[string]any) {}

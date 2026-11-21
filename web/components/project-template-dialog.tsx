@@ -387,9 +387,6 @@ function PreviewBox({ spec }: { spec: ProjectTemplateSpec }) {
     : repo?.create
       ? `在 GitCode 新建${repo.visibility === "public" ? "公开" : "私有"}仓库${repo.auto_init === false ? "" : "（含初始提交）"}并绑定项目。`
       : "使用你提供的已有仓库，绑定项目。";
-  const policySuffix = spec.domain?.policy_text
-    ? "｜验收要求已随模板预置，创建后可在项目卡片上调整并生成验收规则。"
-    : "";
   const team = spec.team;
   const goals = spec.goals ?? [];
 
@@ -399,7 +396,7 @@ function PreviewBox({ spec }: { spec: ProjectTemplateSpec }) {
         <FolderGit2 className="h-3.5 w-3.5" />
         将创建
       </div>
-      <p className="text-xs text-ink-2 leading-relaxed">{repoText}{policySuffix}</p>
+      <p className="text-xs text-ink-2 leading-relaxed">{repoText}</p>
       {team?.squad && (
         <p className="text-xs text-ink-2 flex items-start gap-1.5">
           <Users className="h-3.5 w-3.5 mt-0.5 shrink-0" />

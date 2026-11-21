@@ -178,20 +178,35 @@ func MarshalProbedCLIs(v any) string {
 // upserted and marked active. Rows of THIS machine that are NOT in the
 // report are marked ABSENT (the CLI was uninstalled): the row survives
 // (agents reference it) but the claim gate rejects it and the web shows
-// the absence. Runs assigned to active runtimes dispatch over the
-// machine's /connect link.
+// the absence. The report's detected model list is cached on the row
+// (models/models_at); an empty incoming list never overwrites a known one.
+// Runs assigned to active runtimes dispatch over the machine's /connect link.
 func (s *MachineService) ReconcileProbeRuntimes(ctx context.Context, machineID, machineName string, clis []link.ProbeCLI) error {
 	present := map[string]bool{}
 	for _, c := range clis {
 		argsJSON, _ := json.Marshal(c.ACPSpawn)
+		modelsJSON := "[]"
+		modelsAt := ""
+		// A non-empty detection is authoritative: persist the list and the
+		// detection time. An EMPTY incoming list means detection was
+		// unavailable (no models_cmd / ACP introspection failed) — keep the
+		// previously known list instead of wiping it on a transient failure.
+		if len(c.Models) > 0 {
+			if b, err := json.Marshal(c.Models); err == nil {
+				modelsJSON = string(b)
+				modelsAt = now()
+			}
+		}
 		name := c.Name + "@" + machineName
 		present[name] = true
 		if _, err := s.st.DB().ExecContext(ctx,
-			`INSERT INTO runtime (id,name,machine_id,args,env,status,created_at)
-			 VALUES (?,?,?,?,'{}','active',?)
+			`INSERT INTO runtime (id,name,machine_id,args,env,models,models_at,status,created_at)
+			 VALUES (?,?,?,?,'{}',?,?,'active',?)
 			 ON CONFLICT(name) DO UPDATE SET
-			   args=excluded.args, machine_id=excluded.machine_id, status='active'`,
-			newID(), name, machineID, string(argsJSON), now()); err != nil {
+			   args=excluded.args, machine_id=excluded.machine_id, status='active',
+			   models=CASE WHEN excluded.models != '[]' THEN excluded.models ELSE models END,
+			   models_at=CASE WHEN excluded.models != '[]' THEN excluded.models_at ELSE models_at END`,
+			newID(), name, machineID, string(argsJSON), modelsJSON, modelsAt, now()); err != nil {
 			return fmt.Errorf("upsert probe runtime %s: %w", name, err)
 		}
 	}

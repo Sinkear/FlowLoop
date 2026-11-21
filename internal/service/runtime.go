@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/eushing/agentwork/internal/link"
 	"github.com/eushing/agentwork/internal/store"
 )
 
@@ -17,10 +19,10 @@ import (
 // The wire protocol is the machine's implementation detail (ACP today; a
 // future a2a backend would live in the machine's executor).
 type Runtime struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Args       []string          `json:"args"`
-	Env        map[string]string `json:"env"`
+	ID   string            `json:"id"`
+	Name string            `json:"name"`
+	Args []string          `json:"args"`
+	Env  map[string]string `json:"env"`
 	// MachineID is the registered machine that executes this runtime's
 	// runs (transport='agentwork'; '' = local/legacy transports).
 	MachineID string `json:"machine_id,omitempty"`
@@ -31,6 +33,11 @@ type Runtime struct {
 	// active/absent only, so a reconnect auto-restores without a write.
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+	// Models is the CLI's detected model list (probe-time detection, cached
+	// on the row; [] = never detected or detection unavailable). ModelsAt is
+	// the RFC3339 time of the last successful detection ('' = never).
+	Models   []link.ModelInfo `json:"models"`
+	ModelsAt string           `json:"models_at"`
 }
 
 type RuntimeService struct{ st *store.Store }
@@ -50,13 +57,17 @@ func (s *RuntimeService) Create(ctx context.Context, r Runtime) (*Runtime, error
 	if r.Env == nil {
 		r.Env = map[string]string{}
 	}
+	// Models are PROBE-DETECTED, never caller-supplied: a manually created
+	// runtime starts with an empty list and gets one at the first probe.
+	r.Models = []link.ModelInfo{}
+	r.ModelsAt = ""
 	r.ID = newID()
 	r.CreatedAt = now()
 	argsJSON, _ := json.Marshal(r.Args)
 	envJSON, _ := json.Marshal(r.Env)
 	_, err := s.st.DB().ExecContext(ctx,
-		`INSERT INTO runtime (id,name,machine_id,args,env,created_at) VALUES (?,?,?,?,?,?)`,
-		r.ID, r.Name, r.MachineID, string(argsJSON), string(envJSON), r.CreatedAt)
+		`INSERT INTO runtime (id,name,machine_id,args,env,models,models_at,created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		r.ID, r.Name, r.MachineID, string(argsJSON), string(envJSON), "[]", "", r.CreatedAt)
 	if err != nil {
 		if ve := dupNameCodedError(err, CodeRuntimeNameExists, "runtime", r.Name); ve != nil {
 			return nil, ve
@@ -70,7 +81,7 @@ func (s *RuntimeService) List(ctx context.Context) ([]Runtime, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
 		`SELECT r.id, r.name, r.machine_id, r.args, r.env,
 		        CASE WHEN m.status='offline' THEN 'inactive' ELSE r.status END,
-		        r.created_at
+		        r.created_at, r.models, r.models_at
 		 FROM runtime r
 		 LEFT JOIN machine m ON m.id = r.machine_id
 		 ORDER BY r.created_at`)
@@ -81,12 +92,15 @@ func (s *RuntimeService) List(ctx context.Context) ([]Runtime, error) {
 	out := []Runtime{}
 	for rows.Next() {
 		var r Runtime
-		var argsJSON, envJSON string
-		if err := rows.Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.Status, &r.CreatedAt); err != nil {
+		var argsJSON, envJSON, modelsJSON string
+		if err := rows.Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.Status, &r.CreatedAt, &modelsJSON, &r.ModelsAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &r.Args)
 		_ = json.Unmarshal([]byte(envJSON), &r.Env)
+		if err := json.Unmarshal([]byte(modelsJSON), &r.Models); err != nil || r.Models == nil {
+			r.Models = []link.ModelInfo{}
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -94,10 +108,10 @@ func (s *RuntimeService) List(ctx context.Context) ([]Runtime, error) {
 
 func (s *RuntimeService) Get(ctx context.Context, id string) (*Runtime, error) {
 	var r Runtime
-	var argsJSON, envJSON string
+	var argsJSON, envJSON, modelsJSON string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,name,machine_id,args,env,created_at FROM runtime WHERE id=?`, id).
-		Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.CreatedAt)
+		`SELECT id,name,machine_id,args,env,created_at,models,models_at FROM runtime WHERE id=?`, id).
+		Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.CreatedAt, &modelsJSON, &r.ModelsAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -106,7 +120,50 @@ func (s *RuntimeService) Get(ctx context.Context, id string) (*Runtime, error) {
 	}
 	_ = json.Unmarshal([]byte(argsJSON), &r.Args)
 	_ = json.Unmarshal([]byte(envJSON), &r.Env)
+	if err := json.Unmarshal([]byte(modelsJSON), &r.Models); err != nil || r.Models == nil {
+		r.Models = []link.ModelInfo{}
+	}
 	return &r, nil
+}
+
+// RuntimeModels is the GET /runtimes/{id}/models response: the runtime's
+// identity (name, CLI slug, machine) plus its detected model list and the
+// detection timestamp. cli = the name segment before '@' ("claude" for
+// "claude@host"). detected_at is empty when detection never succeeded.
+type RuntimeModels struct {
+	RuntimeID  string           `json:"runtime_id"`
+	Name       string           `json:"name"`
+	CLI        string           `json:"cli"`
+	MachineID  string           `json:"machine_id"`
+	Models     []link.ModelInfo `json:"models"`
+	DetectedAt string           `json:"detected_at"`
+}
+
+// Models returns the runtime's detected model list (persisted at probe
+// time). [] when detection never succeeded — never nil, so the web's model
+// picker can render an empty state without nil checks.
+func (s *RuntimeService) Models(ctx context.Context, id string) (*RuntimeModels, error) {
+	var out RuntimeModels
+	var modelsJSON string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id,name,machine_id,models,models_at FROM runtime WHERE id=?`, id).
+		Scan(&out.RuntimeID, &out.Name, &out.MachineID, &modelsJSON, &out.DetectedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if i := strings.IndexByte(out.Name, '@'); i >= 0 {
+		out.CLI = out.Name[:i]
+	} else {
+		out.CLI = out.Name
+	}
+	out.Models = []link.ModelInfo{}
+	if err := json.Unmarshal([]byte(modelsJSON), &out.Models); err != nil || out.Models == nil {
+		out.Models = []link.ModelInfo{}
+	}
+	return &out, nil
 }
 
 func (s *RuntimeService) Delete(ctx context.Context, id string) error {

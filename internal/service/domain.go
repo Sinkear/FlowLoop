@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,12 +11,9 @@ import (
 	"github.com/eushing/agentwork/internal/store"
 )
 
-// Domain is an asset/evolution domain: a shared repo + acceptance policy
-// (NL intent + compiled checks) + default gates. M0 implements type=repo.
-// The acceptance policy is the SOURCE of "done": the owner defines it in
-// natural language (PolicyText), the processor agent compiles it into
-// executable Checks, and the owner's confirmation freezes it. See
-// DESIGN.md §5.2 (triangle separation: define ≠ execute ≠ judge).
+// Domain is an asset/evolution domain: a shared repo (or a scratch project
+// directory) plus its routing/acceptance configuration. type=repo is the M0
+// default; type=scratch is a repo-less project directory.
 type Domain struct {
 	ID            string `json:"id"`
 	Type          string `json:"type"` // repo (M0); others deferred
@@ -31,21 +27,19 @@ type Domain struct {
 	// agentwork-bot account's token (GitHub or GitCode — both platforms
 	// render comments under the authenticating account) so the human's own
 	// identity stays clean; commits are separately authored by git_identity.
-	GitCredentials       string `json:"git_credentials"`
-	PolicyText           string `json:"policy_text"`           // NL intent (source of truth)
-	Checks               Checks `json:"checks"`                // compiled, frozen after confirmation
-	VerificationStrength string `json:"verification_strength"` // strong|medium|weak
-	MaxRunDuration       int    `json:"max_run_duration"`      // seconds per run
-	VerifyTimeout        int    `json:"verify_timeout"`        // seconds per verify command
-	ProcessorAgentID     string `json:"processor_agent_id"`    // per-domain override of the global processor agent
-	ChecksCompiledAt     string `json:"checks_compiled_at"`    // '' = not compiled/frozen yet
-	MetricsBaseline      string `json:"metrics_baseline"`      // JSON: test count / coverage at creation
-	IssueRepo            string `json:"issue_repo"`            // M4-B: "owner/repo" whose open issues auto-become goals ('' = none)
-	IssueAssignee        string `json:"issue_assignee"`        // M4-B: agent|squad id handling this repo's issues ('' = don't auto-create)
-	IssueAssigneeType    string `json:"issue_assignee_type"`   // M4-B: agent | squad (default agent)
-	IssueProvider        string `json:"issue_provider"`        // M4-B: github | gitcode (default github)
-	PullAssignee         string `json:"pull_assignee"`         // M4-B PR pull: agent|squad id handling this repo's pull requests ('' = don't pull PRs)
-	PullAssigneeType     string `json:"pull_assignee_type"`    // M4-B PR pull: agent | squad (default agent)
+	GitCredentials    string `json:"git_credentials"`
+	MaxRunDuration    int    `json:"max_run_duration"`    // seconds per run
+	IssueRepo         string `json:"issue_repo"`          // M4-B: "owner/repo" whose open issues auto-become goals ('' = none)
+	IssueAssignee     string `json:"issue_assignee"`      // M4-B: agent|squad id handling this repo's issues ('' = don't auto-create)
+	IssueAssigneeType string `json:"issue_assignee_type"` // M4-B: agent | squad (default agent)
+	IssueProvider     string `json:"issue_provider"`      // M4-B: github | gitcode (default github)
+	PullAssignee      string `json:"pull_assignee"`       // M4-B PR pull: agent|squad id handling this repo's pull requests ('' = don't pull PRs)
+	PullAssigneeType  string `json:"pull_assignee_type"`  // M4-B PR pull: agent | squad (default agent)
+	// AcceptanceLevel is the project-level acceptance mode (验收级别):
+	// "" = 待定/未设置 (unset), "hitl" = human-in-the-loop (park completed
+	// goals in review), "hootl" = human-out-of-the-loop (auto approve).
+	// Repo webhook/poller-created goals inherit it (see issue.Poller).
+	AcceptanceLevel string `json:"acceptance_level"`
 	// WebhookSecret is the repo-level webhook signing secret. '' = fall back
 	// to the platform secret (app_settings platform.webhook_secret).
 	WebhookSecret string `json:"webhook_secret"`
@@ -56,190 +50,34 @@ type Domain struct {
 	ScratchDir string `json:"scratch_dir,omitempty"`
 }
 
-// Checks is the compiled acceptance policy (DESIGN.md §5): the frozen,
-// executable interpretation of the domain owner's NL intent. Produced by the
-// processor agent, frozen by the owner's confirmation — never mutated in
-// place after that.
-type Checks struct {
-	// Setup is the verification environment preparation (M3): dependency
-	// installs and other prerequisites that must run BEFORE verify can judge.
-	// The verification environment is part of the acceptance policy — a
-	// clean worktree has no node_modules, so "npm run build" cannot run until
-	// "npm install" did. Commands must be idempotent (npm install / pip
-	// install are; the worktree keeps its installed state across runs).
-	// Executed in order before verify; any failure = run failed (environment
-	// attribution). Empty = no preparation needed.
-	Setup []string `json:"setup"`
-	// Excludes are path patterns the platform EXCLUDES when committing the
-	// agent's work (git add pathspec excludes, repo-root-relative, globs).
-	// They belong to the domain, NOT to the platform: the processor compiles
-	// them from the repo's own .gitignore / observed dependency directories,
-	// the owner confirms them on the confirmation card — the platform never
-	// hardcodes "what a repo should ignore" (a repo may intentionally track
-	// target/, and new dependency dirs would outgrow any hardcoded list).
-	// The platform's own injected AGENTWORK.md is excluded unconditionally
-	// (platform-owned namespace), everything else comes from here.
-	Excludes []string   `json:"excludes"`
-	Verify   []string   `json:"verify"` // machine verification commands (exit 0 = pass)
-	Guards   []Guard    `json:"guards"` // structural constraints, checked by the daemon
-	Gates    []GateRule `json:"gates"`  // human checkpoint rules
-}
-
-// Guard is a structural constraint — an objective, command-free check on the
-// run's diff (DESIGN.md §5.1, second form).
-type Guard struct {
-	Type     string  `json:"type"`      // diff_contains | diff_excludes | coverage_delta
-	Pattern  string  `json:"pattern"`   // glob matched against changed paths (diff_* guards)
-	MinDelta float64 `json:"min_delta"` // required coverage percentage-point delta
-}
-
-// GateRule names a human checkpoint (DESIGN.md §5). Rule kinds (M2):
-//
-//	merge          — every completed run parks the goal in review (M0 default)
-//	diff_contains  — the run's diff must contain a path matching Pattern
-//	diff_excludes  — the run's diff must not contain a path matching Pattern
-//
-// diff_* conditions are evaluated by the daemon (it owns the git diff) and
-// recorded on the run row (run.gates_hit); the goal layer only reads the
-// result — the daemon computes, the goal layer judges.
-type GateRule struct {
-	Name    string `json:"name"`    // merge | diff_contains | diff_excludes
-	When    string `json:"when"`    // human-readable condition description
-	Pattern string `json:"pattern"` // diff_* gates: glob over changed paths
-}
-
 type DomainService struct {
-	st     *store.Store
-	bus    *events.Bus
-	runSvc *RunService // back-reference for compile-run enqueue (same package)
+	st  *store.Store
+	bus *events.Bus
 }
 
 func NewDomainService(st *store.Store, bus *events.Bus) *DomainService {
 	return &DomainService{st: st, bus: bus}
 }
 
-// SetRunService wires the RunService back-reference (CompilePolicy enqueues a
-// processor run). Explicit setter to avoid a constructor-order cycle.
-func (s *DomainService) SetRunService(rs *RunService) { s.runSvc = rs }
-
-// CompilePolicy kicks off the acceptance-policy compilation for a domain
-// (DESIGN.md §5.3): records the NL intent, enqueues a processor run on the
-// given processor agent. The daemon executes the run, reads checks.json from
-// the run's workdir, and stores the result on the domain in an UNFROZEN state
-// (checks_compiled_at stays ""); the owner's confirmation card then freezes
-// it via FreezeChecks. Returns the processor run.
-// The processor agent falls back to the domain's processor_agent_id, then the
-// system steward (决策 2-17) — the user never has to pick one.
-func (s *DomainService) CompilePolicy(ctx context.Context, domainID, policyText, processorAgentID string) (*Run, error) {
-	if strings.TrimSpace(policyText) == "" {
-		return nil, NewFieldRequiredError("policy_text")
+// validateAcceptanceLevel validates the project-level acceptance mode
+// (验收级别): "" = 待定/未设置, "hitl" = 人工验收, "hootl" = 自动验收.
+// Stored verbatim; an empty level means "unset" — goals created from the
+// domain then fall back to the goal service's default (hitl).
+func validateAcceptanceLevel(level string) error {
+	switch level {
+	case "", "hitl", "hootl":
+		return nil
+	default:
+		return NewValidationError(`acceptance_level must be "" (待定/未设置), hitl, or hootl`)
 	}
-	d, err := s.Get(ctx, domainID)
-	if err != nil {
-		return nil, err
-	}
-	if processorAgentID == "" {
-		processorAgentID = d.ProcessorAgentID
-	}
-	if processorAgentID == "" {
-		processorAgentID, err = s.resolveStewardAgent(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, processorAgentID, "processor agent"); err != nil {
-		return nil, err
-	}
-	if s.runSvc == nil {
-		return nil, errors.New("domainSvc.runSvc not wired")
-	}
-	if _, err := s.st.DB().ExecContext(ctx, `UPDATE domain SET policy_text=? WHERE id=?`, policyText, domainID); err != nil {
-		return nil, fmt.Errorf("update policy_text: %w", err)
-	}
-	return s.runSvc.EnqueueProcessorRun(ctx, "compile", domainID, processorAgentID, compilePrompt(d, policyText))
-}
-
-// resolveStewardAgent returns the system steward agent id — the bootstrap
-// default processor when neither request nor domain names one. Mirrors
-// intake/team_import. Returns a setup-hint error when no steward exists
-// (no machine connected).
-func (s *DomainService) resolveStewardAgent(ctx context.Context) (string, error) {
-	var id string
-	err := s.st.DB().QueryRowContext(ctx, `SELECT id FROM agent WHERE type='steward' LIMIT 1`).Scan(&id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", NewValidationError("no processor agent available — configure one on the domain, or connect a machine and restart the daemon")
-		}
-		return "", fmt.Errorf("resolve steward agent: %w", err)
-	}
-	return id, nil
-}
-
-// compilePrompt builds the instruction for the processor agent. The compiled
-// policy goes to {workdir}/checks.json — a FILE, not stdout: the platform
-// reads structured side effects, never agent output (DESIGN.md §5.3, §9).
-func compilePrompt(d *Domain, policyText string) string {
-	if d.Type == "scratch" {
-		return compilePromptScratch(d, policyText)
-	}
-	var b strings.Builder
-	b.WriteString("你是 agentwork 的验收策略编译器。用户用自然语言描述了这个域的验收要求：\n\n")
-	b.WriteString(policyText)
-	b.WriteString("\n\n请把它编译成结构化验收策略 JSON，写入当前工作目录的 checks.json 文件（不要输出到 stdout——文件即结果）。\n\n")
-	b.WriteString(`checks.json 结构：
-{
-  "setup": ["<验证环境准备命令，幂等，如 cd web && npm install>", ...],
-  "excludes": ["<提交时排除的路径 glob，从仓库自己的 .gitignore / 依赖目录推导，如 **/node_modules/**>", ...],
-  "verify": ["<机器验证命令，exit 0 为通过，如 go test ./...>", ...],
-  "guards": [{"type": "diff_contains|diff_excludes|coverage_delta", "pattern": "<glob，diff_* 必填>", "min_delta": <覆盖率百分点，仅 coverage_delta>}],
-  "gates": [
-    {"name": "merge", "when": "<该卡点触发条件的人话描述>"},
-    {"name": "diff_contains", "when": "<人话描述>", "pattern": "<glob，如 config/*>"},
-    {"name": "diff_excludes", "when": "<人话描述>", "pattern": "<glob，如 *.secret>"}
-  ]
-}`)
-	b.WriteString("\n\n另把验证强度（strong|medium|weak）写入当前工作目录的 strength.txt——判断依据：verify 命令是否真实覆盖了任务的关键风险（echo ok / true 之类是 weak）。\n\n")
-	b.WriteString("再统计当前仓库的演进指标基线，写入当前工作目录的 metrics.json（文件即结果）：\n")
-	b.WriteString(`{"test_count": <测试用例数>, "coverage": <测试覆盖率百分比，数值>}`)
-	b.WriteString("\n（用实际可运行的命令统计：go test -cover ./... 的输出、npm test 的 jest 报告等；无法统计就写 0/null。这是平台自举证明的数据层——基线 vs 后续演进。）\n\n规则：\n")
-	b.WriteString("- setup 是验证环境准备：平台在干净 worktree 上执行验证，依赖不会自己存在。识别技术栈，把需要的依赖安装写进 setup（必须幂等：npm install / pip install -r requirements.txt / go mod download 这类；已安装时秒级跳过）。go/cargo 这类自动拉依赖的可留空。\n")
-	b.WriteString("- excludes 是提交排除：平台在 run 结束后把 agent 的改动提交到 goal 分支（git add），setup 安装的依赖目录（node_modules 等）若仓库的 .gitignore 没覆盖，会被误提交进分支。读仓库的 .gitignore 和实际依赖目录，把需要排除的路径写进 excludes（glob，如 **/node_modules/**）。仓库 .gitignore 已覆盖的可省略。\n")
-	b.WriteString("- verify 里的命令必须真实存在且可执行（结合该仓库技术栈推断），且假定 setup 已执行完\n")
-	b.WriteString("- guards 表达无法用命令表达的结构化约束（禁止路径、diff 必须包含的内容、覆盖率下限）\n")
-	b.WriteString("- gates 表达“机器无法判定、必须人工决策”的要求（如“性能不能下降”）——至少包含一条 merge 卡点\n")
-	fmt.Fprintf(&b, "- 域类型：%s；仓库名：%s\n\n", d.Type, d.Name)
-	b.WriteString("完成后用一句话说明编译依据。")
-	return b.String()
-}
-
-// compilePromptScratch is the scratch-domain variant: there is NO repo for
-// the compiler to inspect — no tech stack, no .gitignore, no diff-based
-// guards/gates. The deliverable is a report; the human checkpoint is forced
-// by the goal layer anyway (gatesForGoal). The compiled checks may still
-// carry setup/verify commands that run in the goal's project directory.
-func compilePromptScratch(d *Domain, policyText string) string {
-	var b strings.Builder
-	b.WriteString("你是 agentwork 的验收策略编译器。用户用自然语言描述了这个无仓库项目（scratch 域）的验收要求：\n\n")
-	b.WriteString(policyText)
-	b.WriteString("\n\n这个项目没有 git 仓库：任务的产物是项目目录里的文件（报告/笔记等），评论区只是协作面；没有代码 diff。请把要求编译成结构化验收策略 JSON，写入当前工作目录的 checks.json 文件（文件即结果，不要输出到 stdout）。\n\n")
-	b.WriteString(`checks.json 结构（无仓库域的子集）：
-{
-  "setup": ["<验证环境准备命令，幂等；不需要就留空数组>", ...],
-  "excludes": [],
-  "verify": ["<机器验证命令，在任务的项目目录里执行，exit 0 为通过；如检查某报告文件存在与否>", ...],
-  "guards": [],
-  "gates": [{"name": "merge", "when": "<该卡点触发条件的人话描述>"}]
-}`)
-	b.WriteString("\n\n另把验证强度（strong|medium|weak）写入当前工作目录的 strength.txt。\n\n再写 metrics.json：{\"test_count\": 0, \"coverage\": 0}（无仓库，无需统计）。\n\n规则：\n")
-	b.WriteString("- setup/verify 是真实可执行的命令；没有客观可验的就留空（平台会强制人工审批兜底）\n")
-	b.WriteString("- 不产出 diff_* guards/gates（无 diff 可判定）\n")
-	b.WriteString("- 完成后用一句话说明编译依据。")
-	return b.String()
 }
 
 func (s *DomainService) Create(ctx context.Context, d Domain) (*Domain, error) {
 	if d.Name == "" {
 		return nil, NewFieldRequiredError("name")
+	}
+	if err := validateAcceptanceLevel(d.AcceptanceLevel); err != nil {
+		return nil, err
 	}
 	if d.Type == "" {
 		d.Type = "repo"
@@ -265,24 +103,8 @@ func (s *DomainService) Create(ctx context.Context, d Domain) (*Domain, error) {
 	if d.IssueRepo == "" && d.GitURL != "" {
 		d.IssueRepo, d.IssueProvider = deriveIssueSource(d.GitURL)
 	}
-	if d.VerificationStrength == "" {
-		d.VerificationStrength = "medium"
-	}
-	switch d.VerificationStrength {
-	case "strong", "medium", "weak":
-	default:
-		return nil, NewValidationError("verification_strength must be strong, medium, or weak")
-	}
 	if d.MaxRunDuration == 0 {
 		d.MaxRunDuration = 7200 // 2h (DESIGN.md §4)
-	}
-	if d.VerifyTimeout == 0 {
-		d.VerifyTimeout = 600 // 10min per verify command
-	}
-	if d.ProcessorAgentID != "" {
-		if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, d.ProcessorAgentID, "processor agent"); err != nil {
-			return nil, err
-		}
 	}
 	// M4-B: issue tracking needs a repo AND an assignee (git_credentials is
 	// independently valid — it also serves commit identity). Reject
@@ -293,11 +115,10 @@ func (s *DomainService) Create(ctx context.Context, d Domain) (*Domain, error) {
 	}
 	d.ID = newID()
 	d.CreatedAt = now()
-	checksJSON, _ := json.Marshal(d.Checks)
 	_, err := s.st.DB().ExecContext(ctx,
-		`INSERT INTO domain (id,type,name,git_url,default_branch,git_identity,git_credentials,policy_text,checks,verification_strength,max_run_duration,verify_timeout,processor_agent_id,checks_compiled_at,metrics_baseline,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		d.ID, d.Type, d.Name, d.GitURL, d.DefaultBranch, d.GitIdentity, d.GitCredentials, d.PolicyText, string(checksJSON), d.VerificationStrength, d.MaxRunDuration, d.VerifyTimeout, d.ProcessorAgentID, d.ChecksCompiledAt, d.MetricsBaseline, d.IssueRepo, d.IssueAssignee, d.IssueAssigneeType, d.IssueProvider, d.PullAssignee, d.PullAssigneeType, d.WebhookSecret, d.CreatedAt)
+		`INSERT INTO domain (id,type,name,git_url,default_branch,git_identity,git_credentials,max_run_duration,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,acceptance_level,created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		d.ID, d.Type, d.Name, d.GitURL, d.DefaultBranch, d.GitIdentity, d.GitCredentials, d.MaxRunDuration, d.IssueRepo, d.IssueAssignee, d.IssueAssigneeType, d.IssueProvider, d.PullAssignee, d.PullAssigneeType, d.WebhookSecret, d.AcceptanceLevel, d.CreatedAt)
 	if err != nil {
 		if ve := dupNameCodedError(err, CodeDomainNameExists, "domain", d.Name); ve != nil {
 			return nil, ve
@@ -317,7 +138,7 @@ func fillScratchDir(d *Domain) {
 
 func (s *DomainService) List(ctx context.Context) ([]Domain, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,type,name,git_url,default_branch,git_identity,git_credentials,policy_text,checks,verification_strength,max_run_duration,verify_timeout,processor_agent_id,checks_compiled_at,metrics_baseline,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,created_at
+		`SELECT id,type,name,git_url,default_branch,git_identity,git_credentials,max_run_duration,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,acceptance_level,created_at
 		 FROM domain ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -326,11 +147,9 @@ func (s *DomainService) List(ctx context.Context) ([]Domain, error) {
 	out := []Domain{}
 	for rows.Next() {
 		var d Domain
-		var checksJSON string
-		if err := rows.Scan(&d.ID, &d.Type, &d.Name, &d.GitURL, &d.DefaultBranch, &d.GitIdentity, &d.GitCredentials, &d.PolicyText, &checksJSON, &d.VerificationStrength, &d.MaxRunDuration, &d.VerifyTimeout, &d.ProcessorAgentID, &d.ChecksCompiledAt, &d.MetricsBaseline, &d.IssueRepo, &d.IssueAssignee, &d.IssueAssigneeType, &d.IssueProvider, &d.PullAssignee, &d.PullAssigneeType, &d.WebhookSecret, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Type, &d.Name, &d.GitURL, &d.DefaultBranch, &d.GitIdentity, &d.GitCredentials, &d.MaxRunDuration, &d.IssueRepo, &d.IssueAssignee, &d.IssueAssigneeType, &d.IssueProvider, &d.PullAssignee, &d.PullAssigneeType, &d.WebhookSecret, &d.AcceptanceLevel, &d.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(checksJSON), &d.Checks)
 		out = append(out, d)
 	}
 	for i := range out {
@@ -341,18 +160,16 @@ func (s *DomainService) List(ctx context.Context) ([]Domain, error) {
 
 func (s *DomainService) Get(ctx context.Context, id string) (*Domain, error) {
 	var d Domain
-	var checksJSON string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,type,name,git_url,default_branch,git_identity,git_credentials,policy_text,checks,verification_strength,max_run_duration,verify_timeout,processor_agent_id,checks_compiled_at,metrics_baseline,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,created_at
+		`SELECT id,type,name,git_url,default_branch,git_identity,git_credentials,max_run_duration,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,acceptance_level,created_at
 		 FROM domain WHERE id=?`, id).
-		Scan(&d.ID, &d.Type, &d.Name, &d.GitURL, &d.DefaultBranch, &d.GitIdentity, &d.GitCredentials, &d.PolicyText, &checksJSON, &d.VerificationStrength, &d.MaxRunDuration, &d.VerifyTimeout, &d.ProcessorAgentID, &d.ChecksCompiledAt, &d.MetricsBaseline, &d.IssueRepo, &d.IssueAssignee, &d.IssueAssigneeType, &d.IssueProvider, &d.PullAssignee, &d.PullAssigneeType, &d.WebhookSecret, &d.CreatedAt)
+		Scan(&d.ID, &d.Type, &d.Name, &d.GitURL, &d.DefaultBranch, &d.GitIdentity, &d.GitCredentials, &d.MaxRunDuration, &d.IssueRepo, &d.IssueAssignee, &d.IssueAssigneeType, &d.IssueProvider, &d.PullAssignee, &d.PullAssigneeType, &d.WebhookSecret, &d.AcceptanceLevel, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	_ = json.Unmarshal([]byte(checksJSON), &d.Checks)
 	fillScratchDir(&d)
 	return &d, nil
 }
@@ -378,8 +195,8 @@ func (s *DomainService) Delete(ctx context.Context, id string) error {
 			map[string]any{"name": name, "count": n})
 	}
 	// Refuse if schedules reference this domain — a schedule.domain_id is a
-	// required execution precondition (fired goals need the domain's
-	// acceptance policy + worktree), so deleting the domain would turn every
+	// required execution precondition (fired goals need the domain's worktree
+	// and execution config), so deleting the domain would turn every
 	// dependent schedule into a zombie that fails its next firing.
 	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM schedule WHERE domain_id=?`, id).Scan(&n); err != nil {
 		return fmt.Errorf("check schedules: %w", err)
@@ -510,8 +327,7 @@ func (s *DomainService) validateIssueTracking(ctx context.Context, d *Domain) er
 
 // Update edits a domain's mutable configuration — the issue handler can be
 // changed after creation (e.g. a single agent → a squad, the whole point of
-// the edit path). Compile artifacts (checks/strength/baseline) are only
-// touched by CompilePolicy/FreezeChecks; policy_text by CompilePolicy.
+// the edit path).
 func (s *DomainService) Update(ctx context.Context, id string, d Domain) (*Domain, error) {
 	// The edit path never changes type — repo/scratch is fixed at creation.
 	// Fetching the old domain both checks existence and yields the DB's real
@@ -528,6 +344,23 @@ func (s *DomainService) Update(ctx context.Context, id string, d Domain) (*Domai
 		return nil, NewValidationError("domain type cannot be changed after creation (repo ↔ scratch is not supported)")
 	}
 	d.Type = old.Type
+	// Name: the edit form may rename a domain. An EMPTY incoming name means
+	// "unchanged" (partial Domains built elsewhere never blank the row); a
+	// non-empty name must stay unique — the UNIQUE constraint is enforced on
+	// UPDATE and surfaces Create's coded duplicate-name error.
+	if d.Name == "" {
+		d.Name = old.Name
+	}
+	// Acceptance level round-trips like webhook_secret: an EMPTY incoming
+	// value means "unchanged", never "clear" — an unrelated edit must not
+	// silently reset the project's 验收级别. Clearing back to 待定 is the
+	// explicit SetAcceptanceLevel endpoint's job.
+	if d.AcceptanceLevel == "" {
+		d.AcceptanceLevel = old.AcceptanceLevel
+	}
+	if err := validateAcceptanceLevel(d.AcceptanceLevel); err != nil {
+		return nil, err
+	}
 	// Webhook secret round-trips through Update, but an EMPTY incoming value
 	// means "unchanged", never "clear": the edit form and the template apply
 	// path build partial Domains that do not carry webhook_secret, so treating
@@ -541,10 +374,37 @@ func (s *DomainService) Update(ctx context.Context, id string, d Domain) (*Domai
 		return nil, err
 	}
 	_, err = s.st.DB().ExecContext(ctx,
-		`UPDATE domain SET git_url=?, default_branch=?, git_identity=?, git_credentials=?, issue_repo=?, issue_assignee=?, issue_assignee_type=?, issue_provider=?, pull_assignee=?, pull_assignee_type=?, webhook_secret=? WHERE id=?`,
-		d.GitURL, d.DefaultBranch, d.GitIdentity, d.GitCredentials, d.IssueRepo, d.IssueAssignee, d.IssueAssigneeType, d.IssueProvider, d.PullAssignee, d.PullAssigneeType, d.WebhookSecret, id)
+		`UPDATE domain SET name=?, git_url=?, default_branch=?, git_identity=?, git_credentials=?, issue_repo=?, issue_assignee=?, issue_assignee_type=?, issue_provider=?, pull_assignee=?, pull_assignee_type=?, webhook_secret=?, acceptance_level=? WHERE id=?`,
+		d.Name, d.GitURL, d.DefaultBranch, d.GitIdentity, d.GitCredentials, d.IssueRepo, d.IssueAssignee, d.IssueAssigneeType, d.IssueProvider, d.PullAssignee, d.PullAssigneeType, d.WebhookSecret, d.AcceptanceLevel, id)
 	if err != nil {
+		if ve := dupNameCodedError(err, CodeDomainNameExists, "domain", d.Name); ve != nil {
+			return nil, ve
+		}
 		return nil, fmt.Errorf("update domain: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// SetAcceptanceLevel is the explicit endpoint for the project-level acceptance
+// mode (验收级别). Unlike Update — where an empty value means "unchanged" —
+// this path can clear the level back to "" (待定/未设置); it is the ONLY way
+// to unset it. A missing domain reports ErrNotFound (the UPDATE's
+// RowsAffected==0). Values are validated before the write.
+func (s *DomainService) SetAcceptanceLevel(ctx context.Context, id, level string) (*Domain, error) {
+	if err := validateAcceptanceLevel(level); err != nil {
+		return nil, err
+	}
+	res, err := s.st.DB().ExecContext(ctx,
+		`UPDATE domain SET acceptance_level=? WHERE id=?`, level, id)
+	if err != nil {
+		return nil, fmt.Errorf("set domain acceptance level: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("set domain acceptance level: %w", err)
+	}
+	if n == 0 {
+		return nil, ErrNotFound
 	}
 	return s.Get(ctx, id)
 }
@@ -655,25 +515,6 @@ func (s *DomainService) SetWebhookSecret(ctx context.Context, id, secret string)
 	}
 	if n == 0 {
 		return nil, ErrNotFound
-	}
-	return s.Get(ctx, id)
-}
-
-// FreezeChecks stores the compiled acceptance policy and stamps it frozen.
-// Called after the owner confirms the processor agent's compilation output
-// (DESIGN.md §5.3). Frozen checks are never mutated in place — a fresh
-// compile cycle replaces them wholesale.
-func (s *DomainService) FreezeChecks(ctx context.Context, id string, checks Checks, strength string) (*Domain, error) {
-	switch strength {
-	case "strong", "medium", "weak":
-	default:
-		return nil, NewValidationError("verification_strength must be strong, medium, or weak")
-	}
-	checksJSON, _ := json.Marshal(checks)
-	if _, err := s.st.DB().ExecContext(ctx,
-		`UPDATE domain SET checks=?, verification_strength=?, checks_compiled_at=? WHERE id=?`,
-		string(checksJSON), strength, now(), id); err != nil {
-		return nil, fmt.Errorf("freeze checks: %w", err)
 	}
 	return s.Get(ctx, id)
 }

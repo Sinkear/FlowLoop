@@ -430,11 +430,10 @@ func (d *Daemon) IngestRunFinished(ctx context.Context, mid string, p link.RunFi
 		logging.Infof("machine: run %s: late terminal report (%s) dropped — run is %s", p.RunID, p.Status, status)
 		return nil
 	}
-	// ACK NOW, process in the background: the completion pipeline
-	// (verification = venv+pip, minutes on a cold cache) ran INSIDE the
-	// link handler and the machine's 30s Call raced it (live: "context
-	// deadline exceeded" stashes on every finish while the daemon was
-	// verifying) — and the daemon's busiest window was exactly when the
+	// ACK NOW, process in the background: the completion pipeline (branch
+	// adoption + fetch retries) ran INSIDE the link handler and the
+	// machine's 30s Call raced it (live: "context deadline exceeded" stashes
+	// on every finish) — and the daemon's busiest window was exactly when the
 	// next dispatch's write timed out. The guards above stay synchronous;
 	// everything below is safe to defer (Finish is conditional and the
 	// completion stamps are idempotent).
@@ -443,8 +442,8 @@ func (d *Daemon) IngestRunFinished(ctx context.Context, mid string, p link.RunFi
 }
 
 // finishMachineRun runs the completion pipeline for an accepted terminal
-// report: processor artifacts OR the verification+gate evaluation+Finish
-// chain. It must never run on the link handler goroutine.
+// report: processor artifacts OR branch adoption + Finish. It must never run
+// on the link handler goroutine.
 func (d *Daemon) finishMachineRun(ctx context.Context, p link.RunFinishedParams, kind, runType, domainID string) {
 	if kind == "processor" {
 		d.ingestProcessorFinished(ctx, p, runType, domainID)
@@ -494,11 +493,10 @@ func (d *Daemon) finishMachineRun(ctx context.Context, p link.RunFinishedParams,
 		}
 	}
 	if p.Status == "completed" {
-		// The platform verifies (invariant 9 — the worker never verifies
-		// its own work): setup+verify+guards run on the adopted branch,
-		// and a red result flips the report to failed (the local path's
-		// semantics: verification failure = run failure + retry chain).
-		if failReport := d.processMachineRunCompletion(ctx, p.RunID, p.Summary, p.HeadSHA, p.Evidence); failReport != "" {
+		// Adopt the transferred branch and validate the pushed tip. The
+		// domain acceptance-policy verification is retired; the goal-level
+		// 验收级别 checkpoint is the acceptance authority.
+		if failReport := d.processMachineRunCompletion(ctx, p.RunID, p.HeadSHA); failReport != "" {
 			p.Status = "failed"
 			p.Summary = failReport
 		}
@@ -530,8 +528,8 @@ func (d *Daemon) finishMachineRun(ctx context.Context, p link.RunFinishedParams,
 }
 
 // ingestProcessorFinished completes a machine-dispatched processor run
-// from its uploaded artifacts (checks.json / intake.json etc.). The
-// caller already validated ownership, token, and status.
+// from its uploaded artifacts (intake.json — the only remaining processor
+// run type). The caller already validated ownership, token, and status.
 func (d *Daemon) ingestProcessorFinished(ctx context.Context, p link.RunFinishedParams, runType, domainID string) *link.RPCError {
 	d.flushRunMessages(ctx, p.RunID)
 	q := &service.ClaimedRow{RunID: p.RunID}
@@ -547,7 +545,7 @@ func (d *Daemon) ingestProcessorFinished(ctx context.Context, p link.RunFinished
 		d.ingestIntakeArtifact(ctx, q, p.Artifacts["intake.json"], runType)
 		return nil
 	}
-	d.storeProcessorArtifacts(ctx, q, domainID, p.Artifacts, p.Summary)
+	d.failProcessorRun(ctx, q, "unknown processor run type: "+runType)
 	return nil
 }
 
@@ -785,18 +783,18 @@ func (d *Daemon) machineWatchdogTick(runID, machineID string, start time.Time, c
 }
 
 // processMachineRunCompletion is the daemon-side completion processing for
-// a machine-executed run: adopt the transferred branch (retrying for the
-// git host's ref-visibility delay), run setup+verify+guards on an ephemeral
-// worktree, evaluate the gates (goal-level), and stamp refs/evidence/
-// gates_hit. Returns a failure report when verification or guards fail —
-// the caller flips the run to failed. The daemon computes, the goal layer
-// judges; the worker never verifies its own work (invariant 9).
+// a machine-executed run: adopt the transferred branch (retrying for the git
+// host's ref-visibility delay) and stamp the run's base/head refs. Returns a
+// failure report when the transfer cannot be adopted — the caller flips the
+// run to failed. The platform no longer runs acceptance checks here (the
+// domain acceptance-policy subsystem is retired; the goal-level 验收级别 is
+// the only acceptance mode).
 //
 // headSHA is the transfer tip the machine reported: when non-empty, the
 // adopted branch must point AT it, and a branch that cannot be adopted at
 // all is a hard failure — a completed run that pushed work must never fall
 // back to the zero-change path (a lost push is not "no changes").
-func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSummary, headSHA, evidence string) string {
+func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, headSHA string) string {
 	var goalID, role, subGoalID, domainID, gitURL, defaultBranch, gitCredentials, domainType string
 	if err := d.st.DB().QueryRowContext(ctx,
 		`SELECT r.goal_id, r.role, r.sub_goal_id, d.id, d.git_url, d.default_branch, d.git_credentials, COALESCE(d.type,'')
@@ -805,32 +803,13 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSu
 		return "" // unknown run / no domain — the goal layer's judgment stands
 	}
 	if domainType == "scratch" {
-		// No diff to verify — but a frozen Verify policy still binds the
-		// DELIVERABLE, and the machine that owns the files already ran it
-		// (cmd/agentwork-cli/scratch_verify.go). Require its bundle and stamp
-		// it on the run for delivery/audit (scratch_gate.go).
-		return d.stampScratchEvidence(ctx, runID, domainID, role, evidence)
+		return "" // no repository and no transfer to adopt
 	}
-	if role == "consult" || role == "review" {
-		return "" // read-only roles: nothing to verify or gate
-	}
-	checks, timeout, baseline, frozen := d.loadDomainChecks(ctx, domainID)
-	if !frozen {
-		// Unfrozen policy: no verification against an unconfirmed definition;
-		// the goal layer forces the human checkpoint.
-		return ""
+	if role == "consult" || role == "review" || role == "verify" {
+		return "" // read-only roles: nothing to adopt or record
 	}
 	subGoalRun := role == "subgoal"
-	verifyRun := role == "verify"
-	if verifyRun {
-		return "" // the verifier's own run has no policy verification
-	}
 
-	// The domain lock covers ONLY the shared-repo git mutations (ensure,
-	// fetch, branch adopt, worktree add) — verification and guards run on
-	// this run's PRIVATE worktree and must not serialize every other run's
-	// completion on the domain (a slow test suite once held the lock for
-	// minutes). Released explicitly before verification below.
 	unlock := d.lockDomain(domainID)
 	repo := domainRepoPath(domainID)
 	if err := d.ensureSharedRepo(ctx, domainID, gitURL, gitCredentials); err != nil {
@@ -889,63 +868,29 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSu
 			return fmt.Sprintf("transfer mismatch: adopted branch tip %s does not match the pushed commit %s", tip, headSHA)
 		}
 	}
-	// Verification target: the adopted branch, or origin/<default> when no
-	// transfer exists (a zero-change run — the state equals the base; the
-	// local path runs verification on zero-change runs too).
-	target := branchName
-	if !adopted {
-		target = "origin/" + defaultBranch
-	}
-	wt := filepath.Join(runsRoot(), "gates", runID)
-	if _, err := gitRun(ctx, repo, "worktree", "add", "--force", "--detach", wt, target); err != nil {
-		unlock()
-		logging.Infof("machine: completion %s: worktree: %v", runID, err)
-		return ""
-	}
-	unlock()
-	defer func() {
-		_, _ = gitRun(context.Background(), repo, "worktree", "remove", "--force", wt)
-	}()
 
-	// The diff base: sub-goal runs measure against the goal branch's tip
-	// (their integration base); goal-level runs against origin/<default>.
+	// The recorded diff base: sub-goal runs measure against the goal
+	// branch's integration base; goal-level runs against origin/<default>.
+	// The head is the adopted transfer tip, or the base itself for a
+	// zero-change run (no transfer was pushed) — the diff is then empty.
 	base := strings.TrimSpace(mustGit(ctx, repo, "rev-parse", "origin/"+defaultBranch))
-	if subGoalRun {
-		if mb, err := gitRun(ctx, wt, "merge-base", "origin/"+defaultBranch, "HEAD"); err == nil && strings.TrimSpace(mb) != "" {
+	head := base
+	if adopted {
+		head = strings.TrimSpace(mustGit(ctx, repo, "rev-parse", "refs/heads/"+branchName))
+	}
+	if subGoalRun && adopted {
+		if mb, err := gitRun(ctx, repo, "merge-base", "origin/"+defaultBranch, head); err == nil && strings.TrimSpace(mb) != "" {
 			base = strings.TrimSpace(mb)
 		}
 	}
+	unlock()
 
-	// Verification + guards — the local path's semantics: red = run failed.
-	var verifyReport, guardReport string
-	verifyReport, ok, policyIssue := runVerification(ctx, wt, checks, timeout)
-	if !ok {
-		if policyIssue {
-			d.annotatePolicyIssue(ctx, goalID)
-		}
-		return "verification failed:\n" + verifyReport
-	}
-	// Guards measure the run's own diff (base..HEAD) — repo-only, and
-	// scratch returned early, so they always run here.
-	guardReport, ok = checkGuards(ctx, wt, base, checks, baseline)
-	if !ok {
-		return "guards failed:\n" + guardReport
-	}
-
-	// Gates (goal-level only, mirroring the local path) + refs + evidence.
-	gatesHit := []string{}
-	if !subGoalRun && !verifyRun {
-		gatesHit = evalGates(ctx, wt, base, checks)
-	}
-	head := strings.TrimSpace(mustGit(ctx, wt, "rev-parse", "HEAD"))
-	ev := buildEvidence(ctx, wt, base, agentSummary, verifyReport, guardReport)
 	if _, err := d.st.DB().ExecContext(ctx,
-		`UPDATE run SET gates_hit=?, base_ref=?, head_ref=?, evidence=? WHERE id=?`,
-		mustJSON(gatesHit), base, head, ev, runID); err != nil {
-		logging.Infof("machine: completion %s: stamp: %v", runID, err)
+		`UPDATE run SET base_ref=?, head_ref=? WHERE id=?`,
+		base, head, runID); err != nil {
+		logging.Infof("machine: completion %s: stamp refs: %v", runID, err)
 		return ""
 	}
-	logging.Infof("machine: completion %s: verified ok, %d gate(s) fired", runID, len(gatesHit))
 	return ""
 }
 

@@ -516,12 +516,8 @@ func TestFinalizationGuardWaitsForConsult(t *testing.T) {
 		t.Fatalf("requester must resume after the answer: %v", err)
 	}
 
-	// The resumed owner finishes with nothing pending — now the gate fires.
-	// (The daemon stamps the fired gate on the run row; simulate it.)
-	if _, err := st.DB().ExecContext(ctx,
-		`UPDATE run SET gates_hit='["merge"]' WHERE id=?`, resumedRun); err != nil {
-		t.Fatal(err)
-	}
+	// The resumed owner finishes with nothing pending — now the HITL
+	// checkpoint fires.
 	if err := rs.Finish(ctx, resumedRun, "completed", "summarized both introductions"); err != nil {
 		t.Fatalf("finish resumed owner: %v", err)
 	}
@@ -587,7 +583,7 @@ func TestWrapUpAttentionAfterNoChangeVerification(t *testing.T) {
 	a := seedAgent(t, st, "owner")
 	b := seedAgent(t, st, "worker")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: domID})
+	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: domID, Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

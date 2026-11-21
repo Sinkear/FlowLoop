@@ -28,7 +28,7 @@ import (
 // intro, goal, the agent's own identity + role contract, and the CLI tool
 // surface. Written in English (platform text is English, 决策 6-18); the
 // MATERIALS (titles, instructions, names) keep their own language.
-func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName string) string {
+func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, domainType, domainName string) string {
 	// The team comes from the goal's own squad assignment (empty = solo). The
 	// leader flag drives the owner contract's reviewer-only rule.
 	var squadID string
@@ -53,8 +53,8 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	var b strings.Builder
 	b.WriteString("# Background & Requirements\n")
 	b.WriteString("You are working on agentwork — a multi-agent collaboration platform.\n")
-	b.WriteString("Goals are executed by agents; the platform judges completion (machine\n")
-	b.WriteString("verification + gates), and the user approves at checkpoints. You\n")
+	b.WriteString("Goals are executed by agents; the platform judges completion at the\n")
+	b.WriteString("goal's 验收级别 checkpoint (hitl = the user approves), and you\n")
 	b.WriteString("coordinate ONLY through the `agentwork` CLI — structured side effects,\n")
 	b.WriteString("never shell, never file edits to communicate intent.\n")
 	b.WriteString("LANGUAGE: write every comment/report in the SAME language as the goal's\n")
@@ -71,9 +71,6 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	b.WriteString("- Title: " + goalTitle + "\n")
 	if s := strings.TrimSpace(goalDesc); s != "" {
 		b.WriteString("- Description: " + s + "\n")
-	}
-	if s := strings.TrimSpace(policyText); s != "" {
-		b.WriteString("- Acceptance policy: " + s + "\n")
 	}
 	if domainType == "scratch" {
 		// The scratch contract (决策 6-16): the project directory IS the
@@ -93,8 +90,8 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 		b.WriteString("evidence. If the work has versioned artifacts, also write\n")
 		b.WriteString("reports/manifest.json: {\"versions\":{\"artifact\":\"...\",\"env\":\"...\",\n")
 		b.WriteString("\"template\":\"...\"}, \"files\":[{\"path\":\"...\",\"sha256\":\"...\"}]}.\n")
-		b.WriteString("It rides the run's verification evidence, so a version mismatch is\n")
-		b.WriteString("visible at delivery instead of hidden in a chat log.\n")
+		b.WriteString("It makes the deliverable's versions and files explicit, so a version\n")
+		b.WriteString("mismatch is visible at delivery instead of hidden in a chat log.\n")
 	}
 
 	b.WriteString("\n# Who You Are\n")
@@ -160,8 +157,8 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 // block (platform background, goal, role contract, tool surface) plus the
 // team profile. Shipped in the dispatch payload and merged into the
 // workdir's AGENTS.md at spawn — the user message carries the task only.
-func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName, issueSection, subGoalID string) string {
-	block := d.buildFixedBlock(ctx, goalID, agentID, agentName, runRole, goalTitle, goalDesc, policyText, domainType, domainName)
+func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName, runRole, goalTitle, goalDesc, domainType, domainName, issueSection, subGoalID string) string {
+	block := d.buildFixedBlock(ctx, goalID, agentID, agentName, runRole, goalTitle, goalDesc, domainType, domainName)
 	// The public-issue contract + the remote conversation snapshot are
 	// CONTEXT (standing rules for this run), not the task — they ride
 	// AGENTS.md like the rest of the profile.
@@ -185,7 +182,7 @@ func (d *Daemon) buildRunProfile(ctx context.Context, goalID, agentID, agentName
 // squad:/capability:, and inherited by spawn-materialized children). The
 // briefing squad resolves sub_goal first, goal second: a cross-squad node
 // run must see THAT squad's roster/playbook, not the goal's. The goal-level
-// owner/leader runs pass subGoalID='' and keep today's behavior.
+// owner/leader runs pass subGoalID=” and keep today's behavior.
 func (d *Daemon) buildTeamProfile(ctx context.Context, goalID, agentID, subGoalID string) string {
 	squadID := ""
 	if subGoalID != "" {
@@ -359,8 +356,8 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 			"comment reaches the feed. never write ids in comments\n" +
 			"(goal/sub-goal/agent/squad ids are system handles, the feed is\n" +
 			"read by the user). Completion is JUDGED, not declared: the\n" +
-			"platform's machine verification + gates + the user's approval\n" +
-			"decide — never set the goal's status yourself.\n"
+			"goal's 验收级别 (HITL/HOOTL) and the human's approval decide —\n" +
+			"never set the goal's status yourself.\n"
 		if leader {
 			s += "\nREVIEWER-ONLY RULE: members with role=\"reviewer\" REVIEW ONLY —\n" +
 				"never dispatch work items to them (subgoal create rejects it).\n" +

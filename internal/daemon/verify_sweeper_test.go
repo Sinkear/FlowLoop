@@ -67,9 +67,6 @@ func newVerifySweeperFixture(t *testing.T) *verifySweeperFixture {
 	if err != nil {
 		t.Fatalf("seed domain: %v", err)
 	}
-	if _, err := ds.FreezeChecks(ctx, dom.ID, service.Checks{}, "medium"); err != nil {
-		t.Fatalf("freeze domain: %v", err)
-	}
 	g, err := gs.Create(ctx, service.Goal{
 		Title: "g", DomainID: dom.ID, AssigneeType: "agent", AssigneeID: owner, Status: "active",
 	})

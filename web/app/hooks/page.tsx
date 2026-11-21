@@ -411,7 +411,7 @@ function HookDetailDialog({ item, onClose }: { item: HookListItem; onClose: () =
           )}
         </div>
         <p className="text-[11px] text-ink-3">
-          绑定关系在「任务详情 / 项目仓库编辑」里管理；此处只读展示脚本与历史。
+          绑定关系在「任务详情」或项目页的「配置」里管理；此处只读展示脚本与历史。
         </p>
       </div>
     </Dialog>
@@ -618,7 +618,7 @@ export default function HooksPage() {
           </div>
         ) : !filtered.length ? (
           <Empty icon={<Webhook className="h-5 w-5" />}>
-            还没有 Hook。上传一个脚本，再到任务详情或项目仓库里把它绑到「任务完成」等事件上。
+            还没有 Hook。上传一个脚本，再到任务详情或项目配置里把它绑到「任务完成」等事件上。
           </Empty>
         ) : (
           <>

@@ -191,9 +191,8 @@ func gitAddExcludeArgs(ctx context.Context, wt string, excludeProfile bool) []st
 	// (add -A skips it silently); the exclude is only for a NON-ignored
 	// path we must keep out of the commit. Applies to EVERY exclude, not
 	// just AGENTS.md — a repo ignoring .claude/ hit the same exit 1 through
-	// the project-skills pathspec. Mirrors the daemon-side
-	// commitRunChanges check-ignore guard, inverted (no --force: the point
-	// is to never name an ignored path).
+	// the project-skills pathspec. No --force: the point is to never name an
+	// ignored path.
 	for _, dir := range projectSkillsDirs() {
 		if !gitIgnored(ctx, wt, dir) {
 			excludes = append(excludes, ":(exclude)"+dir)
