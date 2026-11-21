@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 
 	"github.com/eushing/agentwork/internal/events"
+	"github.com/eushing/agentwork/internal/logging"
 )
 
 // Structure analysis (W-RSI). Input: the assembled WorkflowGraph + entity
@@ -68,6 +68,9 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	findings = append(findings, s.dispatchFindings(ctx, goalID, graph)...)
 	findings = append(findings, s.infoFlowFindings(ctx, goalID, graph)...)
 	findings = append(findings, s.nodeFindings(ctx, goalID, graph, metrics, baseline)...)
+	// Plan-vs-actual is a first-class analysis dimension (BUG-4): a run that
+	// deviated from its compiled spec must enter the training loop.
+	findings = append(findings, s.planAlignmentFindings(ctx, goalID)...)
 	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Score > findings[j].Score })
 	for i := range findings {
 		findings[i].ID = newID()
@@ -213,27 +216,59 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 // ═══════════════════════════════════════════════════════════════════════
 
 func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *WorkflowGraph, findings []RsiFinding) {
-	if s.blueprintSvc == nil {
-		return // not wired in main — nothing to translate through
-	}
 	var versionID string
 	err := s.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&versionID)
-	if err != nil || versionID == "" {
+	if err != nil {
+		logging.Warnf("[rsi] auto-proposal: load blueprint pin for goal %s: %v", goalID, err)
+		return
+	}
+	if versionID == "" {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: no pinned blueprint version (infer mode)", goalID)
 		return // infer goal — no spec to patch
+	}
+	if s.blueprintSvc == nil {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: blueprint service not wired", goalID)
+		return // not wired in main — nothing to translate through
+	}
+	// Direct observable signal for BUG-3: a pinned goal whose spec graph was
+	// never compiled has an empty blueprint_node map, so the translator cannot
+	// map execution nodes back to spec keys and the auto-iteration chain
+	// dead-ends silently. That is exactly the "创建即 active 绕过 Activate"
+	// shape — make it loud instead of a no-op.
+	var nodeCount int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_node WHERE goal_id=?`, goalID).Scan(&nodeCount); err != nil {
+		logging.Warnf("[rsi] auto-proposal: count blueprint_node for goal %s: %v", goalID, err)
+	} else if nodeCount == 0 {
+		logging.Warnf("[rsi] goal %s 绑定蓝本 %s 但未编译（blueprint_node=0）——自动提案跳过", goalID, versionID)
+		return
 	}
 	// Auto-iteration round cap (§14.2): analysis is never capped — only the
 	// automatic PRODUCTION of optimization artifacts is. Translator
 	// proposals are counted per blueprint via created_by_id='rsi-translator';
 	// human proposals/approvals/publishes are never subject to the cap.
 	if cap := s.autoRoundsCap(ctx); cap >= 0 {
+		// The cap is PER BLUEPRINT (rsi.max_auto_rounds), not per platform:
+		// COUNT(DISTINCT blueprint_id) previously let a busy blueprint consume
+		// every other blueprint's budget (BUG-4 P2, findings §三.11).
+		var bpID string
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(blueprint_id,'') FROM blueprint_version WHERE id=?`, versionID).Scan(&bpID); err != nil {
+			// Without the blueprint id the per-blueprint counter would be
+			// computed on '' (every blueprint shares it) — skip drafting rather
+			// than let one broken lookup silently disable the cap.
+			logging.Warnf("[rsi] auto-proposal cap: load blueprint for version %s: %v", versionID, err)
+			return
+		}
 		var n int
 		if err := s.st.DB().QueryRowContext(ctx,
-			`SELECT COUNT(DISTINCT blueprint_id) FROM blueprint_proposal WHERE created_by_id='rsi-translator' AND status IN ('pending','approved')`,
+			`SELECT COUNT(*) FROM blueprint_proposal WHERE blueprint_id=? AND created_by_id='rsi-translator' AND status IN ('pending','approved')`,
+			bpID,
 		).Scan(&n); err != nil {
-			log.Printf("[rsi] auto-proposal cap check failed: %v", err)
+			logging.Warnf("[rsi] auto-proposal cap check failed for goal %s: %v", goalID, err)
 		} else if n >= cap {
-			log.Printf("[rsi] auto-iteration cap %d reached — translator proposal skipped (rsi.max_auto_rounds)", cap)
+			logging.Infof("[rsi] auto-iteration cap %d reached — translator proposal skipped for goal %s (rsi.max_auto_rounds)", cap, goalID)
 			return
 		}
 	}
@@ -242,7 +277,7 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 			continue // Phase D translates exactly one finding category
 		}
 		if err := s.proposeForkForChain(ctx, goalID, versionID, g, f); err != nil {
-			log.Printf("[rsi] auto-proposal for goal %s: %v", goalID, err)
+			logging.Errorf("[rsi] auto-proposal for goal %s: %v", goalID, err)
 			continue
 		}
 		// One chain-fork proposal per analysis: overlapping serial_chain
@@ -261,6 +296,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 	//    run of consecutive agent nodes linked by explicit depends_on edges.
 	chain := criticalTaskChain(g)
 	if len(chain) < 2 {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: critical task chain len=%d (<2) — nothing to fork", goalID, len(chain))
 		return nil // single-task chain: nothing to parallelize
 	}
 
@@ -287,6 +323,8 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 	for _, nodeKey := range chain {
 		sk, ok := keyBySG[strings.TrimPrefix(nodeKey, "sg:")]
 		if !ok {
+			logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain node %q not mapped to a spec node (chain mapped=%d/%d, blueprint_node mapped=%d)",
+				goalID, nodeKey, len(specKeys), len(chain), len(keyBySG))
 			return nil // chain member not spec-mapped (spawn child etc.) — bail out
 		}
 		specKeys = append(specKeys, sk)
@@ -310,6 +348,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 	for _, sk := range specKeys {
 		n := byID[sk]
 		if n == nil || n.Type != "task" {
+			logging.Debugf("[rsi] auto-proposal skipped for goal %s: spec node %q is not a task (only pure task chains are translated)", goalID, sk)
 			return nil // only pure task chains are translated
 		}
 	}
@@ -318,6 +357,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 		if e.Source == specKeys[len(specKeys)-1] && e.SourceHandle == "done" {
 			if t := byID[e.Target]; t != nil && t.Type == "end" {
 				if endKey != "" && endKey != e.Target {
+					logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain forks into multiple end nodes (%q vs %q)", goalID, endKey, e.Target)
 					return nil // forked into multiple ends — not the canonical shape
 				}
 				endKey = e.Target
@@ -325,6 +365,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 		}
 	}
 	if endKey == "" {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain does not end directly at an end node", goalID)
 		return nil // chain does not end directly at an end node
 	}
 
@@ -339,6 +380,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 				continue
 			}
 			if strings.Contains(nA.Task.Brief, "{{node."+b+".") {
+				logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain member %q references %q output — fork would break the data flow", goalID, a, b)
 				return nil
 			}
 		}
@@ -355,6 +397,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 			}
 		}
 		if !found {
+			logging.Debugf("[rsi] auto-proposal skipped for goal %s: spec edge %q→%q missing — spec shape diverged from execution", goalID, specKeys[i], specKeys[i+1])
 			return nil // spec shape diverged from execution — refuse to guess
 		}
 	}
@@ -378,6 +421,7 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 		return err
 	}
 	if existing > 0 {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: proposal %q already exists (dedup)", goalID, title)
 		return nil
 	}
 	hypothesis := fmt.Sprintf("串行链 %s 共 %d 步全部经依赖边顺序执行，但 brief 之间没有任何数据引用——"+
@@ -389,12 +433,12 @@ func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID 
 		// to the spec rules — that is a legitimate silent skip, not an error
 		// worth failing the analysis for. Real I/O errors still surface.
 		if errors.Is(err, ErrValidation) {
-			log.Printf("[rsi] auto-proposal draft rejected by validator (goal %s): %v", goalID, err)
+			logging.Warnf("[rsi] auto-proposal draft rejected by validator (goal %s): %v", goalID, err)
 			return nil
 		}
 		return fmt.Errorf("create auto-proposal: %w", err)
 	}
-	log.Printf("[rsi] auto-proposal drafted for goal %s: %s", goalID, title)
+	logging.Infof("[rsi] auto-proposal drafted for goal %s: %s", goalID, title)
 	return nil
 }
 

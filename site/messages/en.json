@@ -276,7 +276,7 @@
         }
       ],
       "tokenNote": "The per-run token (AGENTWORK_TOKEN) is the ONLY identity — self-reported ids are ignored, and the owner check is enforced server-side.",
-      "fullModel": "Full model in Collaboration.v2.md →"
+      "fullModel": "Full model in docs/design/Collaboration.v2.md →"
     }
   },
   "footer": {

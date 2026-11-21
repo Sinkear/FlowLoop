@@ -77,6 +77,8 @@ func main() {
 		subgoalCmd(os.Args[2:])
 	case "change":
 		changeCmd(os.Args[2:])
+	case "env-change":
+		envChangeCmd(os.Args[2:])
 	case "create":
 		createCmd(os.Args[2:])
 	case "issue":
@@ -202,6 +204,7 @@ Subcommands:
   change list                                the goal's changes (ready/integrating/…)
   change integrate <id>                      merge a change into THIS worktree locally;
                                              conflict → the assignee is woken to rework
+  env-change record|list                     scratch 环境变更账本（版本/快照/结果）
   stats                                      goal/run status statistics (JSON): goal totals
                                              + counts per status (backlog/active/blocked/done/
                                              failed/cancelled) and run totals + counts per status

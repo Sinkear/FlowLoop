@@ -11,6 +11,7 @@ import {
   getBlueprintProposalDiff,
   approveBlueprintProposal,
   rejectBlueprintProposal,
+  startNextRoundFromProposal,
   compareBlueprintAB,
   listRuntimes,
   createRuntime,
@@ -121,12 +122,16 @@ import {
   listSquadWorkflows,
   listBlueprints,
   createBlueprint,
+  deleteBlueprint,
+  deleteBlueprintVersion,
   getBlueprint,
   getBlueprintGraph,
   newBlueprintDraft,
   updateBlueprintDraft,
   publishBlueprintVersion,
   listHeldGates,
+  getPlanAlignment,
+  getEnvChanges,
   resolveHeldGate,
 } from "./api";
 import { useWSEvent } from "./ws";
@@ -163,6 +168,8 @@ export const qk = {
   subGoalVerifications: (goalId: string, subGoalId: string) =>
     ["goals", goalId, "sub-goals", subGoalId, "verifications"] as const,
   heldGates: (goalId: string) => ["goals", goalId, "blueprint-gates"] as const,
+  planAlignment: (goalId: string) => ["goals", goalId, "plan-alignment"] as const,
+  envChanges: (goalId: string) => ["goals", goalId, "env-changes"] as const,
   blueprintProposals: (blueprintId: string) =>
     ["blueprints", blueprintId, "proposals"] as const,
   blueprintProposalDiff: (proposalId: string) =>
@@ -1287,6 +1294,24 @@ export function useBlueprintGraph(versionId: string) {
   });
 }
 
+// 删除蓝本（列表页与详情页共用）：成功后失效整棵 blueprints 键。
+export function useDeleteBlueprint() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteBlueprint(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
+// 删除草稿版本（乱填草稿的清理口）：已发布/被引用的情况由服务端 409 拒绝。
+export function useDeleteBlueprintVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (versionId: string) => deleteBlueprintVersion(versionId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blueprints"] }),
+  });
+}
+
 // 开新草稿（从最新版本 fork 出 v+1 draft）。
 export function useNewBlueprintDraft(id: string) {
   const qc = useQueryClient();
@@ -1324,6 +1349,23 @@ export function useHeldGates(goalId: string | null) {
   return useQuery({
     queryKey: qk.heldGates(goalId!),
     queryFn: () => listHeldGates(goalId!),
+    enabled: !!goalId,
+  });
+}
+
+// 计划 vs 实际对账（BUG-4）：偏离是常态信号，不轮询；goal 事件刷新够用。
+export function usePlanAlignment(goalId: string | null) {
+  return useQuery({
+    queryKey: qk.planAlignment(goalId!),
+    queryFn: () => getPlanAlignment(goalId!),
+    enabled: !!goalId,
+  });
+}
+
+export function useEnvChanges(goalId: string | null) {
+  return useQuery({
+    queryKey: qk.envChanges(goalId!),
+    queryFn: () => getEnvChanges(goalId!),
     enabled: !!goalId,
   });
 }
@@ -1377,6 +1419,20 @@ export function useRejectBlueprintProposal(blueprintId: string) {
   return useMutation({
     mutationFn: (proposalId: string) => rejectBlueprintProposal(proposalId),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
+    },
+  });
+}
+
+export function useStartNextRoundFromProposal(blueprintId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ proposalId, start }: { proposalId: string; start?: boolean }) =>
+      startNextRoundFromProposal(proposalId, start ?? true),
+    onSuccess: () => {
+      // 下一轮 = 新 goal（可能置 review/active）+ 版本发布 + 提案应用版本状态变化。
+      qc.invalidateQueries({ queryKey: qk.goals });
+      qc.invalidateQueries({ queryKey: qk.blueprint(blueprintId) });
       qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
     },
   });

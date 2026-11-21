@@ -171,13 +171,13 @@ func (h *Handlers) createBlueprintProposal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Title             string                 `json:"title"`
-		Hypothesis        string                 `json:"hypothesis"`
-		ExpectedMetric    string                 `json:"expected_metric"`
-		ExpectedDirection string                 `json:"expected_direction"`
+		Title             string                   `json:"title"`
+		Hypothesis        string                   `json:"hypothesis"`
+		ExpectedMetric    string                   `json:"expected_metric"`
+		ExpectedDirection string                   `json:"expected_direction"`
 		Patches           []service.BlueprintPatch `json:"patches"`
-		FindingID         string                 `json:"finding_id"`
-		BaseVersionID     string                 `json:"base_version_id"`
+		FindingID         string                   `json:"finding_id"`
+		BaseVersionID     string                   `json:"base_version_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, service.NewValidationError("invalid JSON body: "+err.Error()))
@@ -220,6 +220,68 @@ func (h *Handlers) approveBlueprintProposal(w http.ResponseWriter, r *http.Reque
 	}
 	p, v, err := h.Blueprint.ApproveProposal(r.Context(), r.PathValue("proposalId"), "human", "")
 	writeJSON(w, map[string]any{"proposal": p, "draft": v}, err)
+}
+
+// deleteBlueprintVersion: DELETE /blueprint-versions/{versionId} — removes a
+// junk DRAFT version. Published versions are the blueprint's authority and
+// history (refused, 409); a draft still referenced by a goal pin or a proposal
+// is refused too, with the counts in the error message.
+func (h *Handlers) deleteBlueprintVersion(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	if err := h.Blueprint.DeleteVersion(r.Context(), r.PathValue("versionId")); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteBlueprint: DELETE /blueprints/{id} — removes the blueprint with its
+// versions and proposals; refused (409) while a non-terminal goal still pins
+// one of its versions. Terminal goals keep their historical pin.
+func (h *Handlers) deleteBlueprint(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		return
+	}
+	if err := h.Blueprint.Delete(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// nextRoundFromProposal: POST /blueprint-proposals/{proposalId}/next-round —
+// the explicit RSI loop closure. Publishes the approved proposal's applied
+// version (if still a draft), clones the origin training goal, pins the new
+// version, and (by default) starts the round immediately. Body:
+//
+//	{"start": false}  → create the next-round goal in backlog instead of active
+//
+// Idempotent: the created goal's source_ref is "rsi-proposal:<id>", so a
+// second call returns the existing goal with created=false.
+func (h *Handlers) nextRoundFromProposal(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("goal service not configured"))
+		return
+	}
+	start := true
+	if r.Body != nil && r.ContentLength != 0 {
+		var body struct {
+			Start *bool `json:"start"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, service.NewValidationError("invalid body: "+err.Error()))
+			return
+		}
+		if body.Start != nil {
+			start = *body.Start
+		}
+	}
+	g, created, err := h.Goal.StartNextRoundFromProposal(r.Context(), r.PathValue("proposalId"), "human", "", start)
+	writeJSON(w, map[string]any{"goal": g, "created": created}, err)
 }
 
 // rejectBlueprintProposal: POST /blueprint-proposals/{proposalId}/reject

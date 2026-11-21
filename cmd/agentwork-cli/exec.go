@@ -109,7 +109,7 @@ func execSessionSpec(p link.RunDispatchParams, conn proto.Conn, workdir string) 
 	return proto.SessionSpec{
 		Conn:          conn,
 		Cwd:           workdir,
-		ClientHandler: newAutopermit(workdir),
+		ClientHandler: newAutopermit(workdir, p.Role == "consult"),
 		McpServers:    p.McpServers,
 		Model:         p.Model,
 	}

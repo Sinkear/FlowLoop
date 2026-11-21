@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eushing/agentwork/internal/events"
@@ -92,6 +93,21 @@ type SpecGate struct { // Phase B
 	Prompt  string           `json:"prompt"`
 	Actions []SpecGateAction `json:"actions"`
 	Timeout *SpecGateTimeout `json:"timeout,omitempty"`
+	// Auto is the runtime escape hatch (BUG-4 §C): when the sealed upstream
+	// evidence matches the rule, the platform resolves the gate itself with
+	// Action — the "minor/低风险 → auto 直通" branch the gate-only vocabulary
+	// could not express. The rule is a single runtime test over ONE upstream
+	// node's immutable output (node.<id>.output <op> "literal"), evaluated by
+	// the gate sweeper; a human still decides whenever the rule misses.
+	Auto *SpecGateAuto `json:"auto,omitempty"`
+}
+
+// SpecGateAuto: When is a runtime node test (see ParseNodeTest); Action is
+// one of the gate's declared action ids. Deterministic by construction —
+// the decision is a pure function of an already-sealed output.
+type SpecGateAuto struct {
+	When   string `json:"when"`
+	Action string `json:"action"`
 }
 
 // ActionIDs returns the gate's registered action ids in declaration order —
@@ -211,7 +227,9 @@ var goalTemplateFields = map[string]bool{
 // declaredPorts returns the outbound port ids a node type declares (V1/V3).
 // task: done|failed (implicit; failed is optional — a leaf task may only
 // carry done); condition: cases[].id + else; router: classes[].id + fallback;
-// gate: actions[].id + timeout.action (mandatory, see V3).
+// gate: actions[].id, plus "timeout" only when a timeout action is declared
+// (an explicit action is the port the sweeper reuses; with no action the
+// deadline PARKS the gate and there is no timeout edge to route).
 func (n *SpecNode) declaredPorts() []string {
 	switch n.Type {
 	case "task":
@@ -233,7 +251,10 @@ func (n *SpecNode) declaredPorts() []string {
 		for _, a := range n.Gate.Actions {
 			ports = append(ports, a.ID)
 		}
-		return append(ports, "timeout")
+		if n.Gate.Timeout != nil && n.Gate.Timeout.Action != "" {
+			ports = append(ports, "timeout")
+		}
+		return ports
 	case "spawn":
 		return []string{"done", "failed"}
 	case "end":
@@ -269,7 +290,10 @@ func (n *SpecNode) mandatoryPorts() []string {
 		for _, a := range n.Gate.Actions {
 			ports = append(ports, a.ID)
 		}
-		return append(ports, "timeout") // V3: gate timeout must go somewhere
+		if n.Gate.Timeout != nil && n.Gate.Timeout.Action != "" {
+			ports = append(ports, "timeout") // V3: an explicit timeout action must go somewhere
+		}
+		return ports
 	}
 	return nil
 }
@@ -440,19 +464,35 @@ func ValidateSpec(g *SpecGraph) []string {
 					add("node %q: action %q: label is required", n.ID, a.ID)
 				}
 			}
-			if n.Gate.Timeout == nil {
-				add("node %q: gate.timeout is required (after + action — the unattended path)", n.ID)
-				break
+			// Timeout policy is OPTIONAL. No timeout object = the gate holds
+			// forever (parked for a human). A timeout WITHOUT an action is the
+			// explicit park form: the deadline marks the gate for attention and
+			// the sweeper records `parked_at`, but it never decides for the
+			// human. An explicit action must be a declared action id — the
+			// unattended path can only be one the author named.
+			if n.Gate.Timeout != nil {
+				if n.Gate.Timeout.After == "" {
+					add("node %q: gate.timeout.after is required when gate.timeout is set (e.g. \"24h\")", n.ID)
+				} else if _, err := time.ParseDuration(n.Gate.Timeout.After); err != nil {
+					add("node %q: gate.timeout.after %q is not a parseable duration: %v", n.ID, n.Gate.Timeout.After, err)
+				}
+				if n.Gate.Timeout.Action != "" && !seenAction[n.Gate.Timeout.Action] {
+					add("node %q: gate.timeout.action %q must be a declared action id", n.ID, n.Gate.Timeout.Action)
+				}
 			}
-			if n.Gate.Timeout.After == "" {
-				add("node %q: gate.timeout.after is required (e.g. \"24h\")", n.ID)
-			} else if _, err := time.ParseDuration(n.Gate.Timeout.After); err != nil {
-				add("node %q: gate.timeout.after %q is not a parseable duration: %v", n.ID, n.Gate.Timeout.After, err)
-			}
-			if n.Gate.Timeout.Action == "" {
-				add("node %q: gate.timeout.action is required — where the flow goes when nobody decides", n.ID)
-			} else if !seenAction[n.Gate.Timeout.Action] {
-				add("node %q: gate.timeout.action %q must be a declared action id", n.ID, n.Gate.Timeout.Action)
+			// Auto rule (runtime branch, BUG-4 §C): ONE upstream-output test
+			// plus an action it may resolve with. Both halves are structural:
+			// the action must be a declared port, and the evidence source must
+			// be a direct upstream node (checked with the edge set below).
+			if n.Gate.Auto != nil {
+				if strings.TrimSpace(n.Gate.Auto.When) == "" {
+					add("node %q: gate.auto.when is required when gate.auto is set", n.ID)
+				} else if _, _, err := ParseNodeTest(n.Gate.Auto.When); err != nil {
+					add("node %q: gate.auto.when is not a runtime node test: %v", n.ID, err)
+				}
+				if n.Gate.Auto.Action == "" || !seenAction[n.Gate.Auto.Action] {
+					add("node %q: gate.auto.action %q must be a declared action id", n.ID, n.Gate.Auto.Action)
+				}
 			}
 		case "end":
 			if n.End != nil && n.End.Outcome != "" && n.End.Outcome != "success" && n.End.Outcome != "failure" {
@@ -514,6 +554,30 @@ func ValidateSpec(g *SpecGraph) []string {
 			if !edgeSeen[n.ID+"\x00"+p] {
 				add("node %q: mandatory port %q has no outbound edge", n.ID, p)
 			}
+		}
+	}
+
+	// Auto rule's evidence source must be a DIRECT upstream node of the gate:
+	// a rule over a node that cannot reach the gate would either never fire or
+	// fire on stale evidence from a different branch.
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Type != "gate" || n.Gate == nil || n.Gate.Auto == nil {
+			continue
+		}
+		key, _, err := ParseNodeTest(n.Gate.Auto.When)
+		if err != nil {
+			continue // already reported above
+		}
+		upstream := false
+		for _, e := range g.Edges {
+			if e.Target == n.ID && e.Source == key {
+				upstream = true
+				break
+			}
+		}
+		if !upstream {
+			add("node %q: gate.auto.when references %q, which is not a direct upstream node of the gate", n.ID, key)
 		}
 	}
 
@@ -753,6 +817,37 @@ func evalCondTest(test string, goal map[string]string) (bool, error) {
 	return ct.eval(goal[ct.Field]), nil
 }
 
+// runtimeNodeTestRe is the runtime (beat-3) test vocabulary: the same
+// operator set as a condition case, but the left side is ONE upstream node's
+// sealed output instead of a goal field. It is deliberately single-clause:
+// a decision that depends on several outputs should be a condition node with
+// declared cases, not an implicit AND hidden inside a gate rule.
+var runtimeNodeTestRe = regexp.MustCompile(`^node\.([a-z][a-z0-9_]{0,63})\.output\s+(==|!=|contains|starts_with|ends_with|exists|empty)\s*(.*)$`)
+
+// ParseNodeTest parses "node.<key>.output <op> \"literal\"" and returns the
+// node key plus the reusable condTest clause (Field holds the node key).
+func ParseNodeTest(test string) (string, condTest, error) {
+	t := strings.TrimSpace(test)
+	m := runtimeNodeTestRe.FindStringSubmatch(t)
+	if m == nil {
+		return "", condTest{}, fmt.Errorf("must look like: node.<id>.output <op> <literal> (got %q)", t)
+	}
+	nodeKey, op, rest := m[1], m[2], strings.TrimSpace(m[3])
+	ct := condTest{Field: nodeKey, Op: op}
+	switch op {
+	case "exists", "empty":
+		if rest != "" {
+			return "", condTest{}, fmt.Errorf("%s takes no literal (got %q)", op, rest)
+		}
+	default:
+		if len(rest) < 2 || (rest[0] != '"' && rest[0] != '\'') || rest[len(rest)-1] != rest[0] {
+			return "", condTest{}, fmt.Errorf("%s needs a quoted literal (got %q)", op, rest)
+		}
+		ct.Literal = rest[1 : len(rest)-1]
+	}
+	return nodeKey, ct, nil
+}
+
 // hashContent is the V6 drift guard: sha256 hex of the canonical content.
 // hashContent: see hook.go — same sha256 hex helper, declared once per package.
 
@@ -960,6 +1055,59 @@ func (s *BlueprintService) Publish(ctx context.Context, versionID, changelog str
 	return s.getVersion(ctx, versionID)
 }
 
+// DeleteVersion removes a DRAFT version — the "I opened a junk draft and want
+// it gone" path. Published versions are the blueprint's authority and history,
+// so they stay; a draft is refused while anything still points at it (a goal
+// pin — including a terminal goal's historical pin — or a proposal's base or
+// applied version). The delete is conditional on status='draft' inside the
+// transaction, so a concurrent publish cannot turn a checked draft into a
+// deleted authority.
+func (s *BlueprintService) DeleteVersion(ctx context.Context, versionID string) error {
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete version: %w", err)
+	}
+	defer tx.Rollback()
+	var version int
+	var status, blueprintID string
+	err = tx.QueryRowContext(ctx,
+		`SELECT version,status,blueprint_id FROM blueprint_version WHERE id=?`, versionID).
+		Scan(&version, &status, &blueprintID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("delete version: load: %w", err)
+	}
+	if status != "draft" {
+		return NewConflictError(fmt.Sprintf("v%d is %s — only draft versions can be deleted (published versions are the blueprint's authority and history; open a new draft instead)", version, status))
+	}
+	var pinned, referenced int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM goal WHERE blueprint_version_id=?`, versionID).Scan(&pinned); err != nil {
+		return fmt.Errorf("delete version: count pinned goals: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_proposal WHERE base_version_id=? OR applied_version_id=?`,
+		versionID, versionID).Scan(&referenced); err != nil {
+		return fmt.Errorf("delete version: count proposals: %w", err)
+	}
+	if pinned > 0 || referenced > 0 {
+		return NewConflictError(fmt.Sprintf("v%d is still referenced (%d goal(s) pinned, %d proposal(s)) — resolve those before deleting it", version, pinned, referenced))
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM blueprint_version WHERE id=? AND status='draft'`, versionID)
+	if err != nil {
+		return fmt.Errorf("delete version: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return NewConflictError(fmt.Sprintf("v%d was published while being deleted — only drafts can be deleted", version))
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete version: commit: %w", err)
+	}
+	logging.Infof("blueprint: deleted draft v%d of %s", version, blueprintID)
+	return nil
+}
+
 // NewDraft opens version N+1 from a published version (the Phase C iteration
 // path — proposals patch content, publish bumps, A/B pins).
 func (s *BlueprintService) NewDraft(ctx context.Context, blueprintID, changelog string) (*BlueprintVersion, error) {
@@ -1092,12 +1240,30 @@ func (s *BlueprintService) Get(ctx context.Context, id string) (*Blueprint, []Bl
 	return &b, versions, nil
 }
 
-// Delete refuses while a non-terminal goal still pins a version of the
-// blueprint (an active blueprint-driven goal must not lose its authority).
-// Terminal goals keep their historical pin — the rows are history.
+// Delete removes a blueprint with its versions and proposals. It refuses
+// while a non-terminal goal still pins a version of the blueprint (an active
+// blueprint-driven goal must not lose its authority). Terminal goals keep
+// their historical pin — those rows are history.
 func (s *BlueprintService) Delete(ctx context.Context, id string) error {
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete blueprint: %w", err)
+	}
+	defer tx.Rollback()
+	// Proposals first: their base_version_id references the version rows that
+	// are about to disappear. Deleting them explicitly avoids depending on
+	// SQLite's sibling-cascade ordering (blueprint cascades versions AND
+	// proposals; the order between the two is not specified).
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blueprint_proposal WHERE blueprint_id=?`, id); err != nil {
+		return fmt.Errorf("delete blueprint proposals: %w", err)
+	}
+	// Count pins INSIDE the transaction, after the write lock is taken: a goal
+	// pinned between a pre-flight count and the delete would otherwise leave a
+	// dangling blueprint_version_id (goal has no FK on that column). With the
+	// lock held, a concurrent Create either already committed (we see it and
+	// refuse) or waits until this transaction settles.
 	var active int
-	if err := s.st.DB().QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM goal g JOIN blueprint_version v ON g.blueprint_version_id=v.id
 		 WHERE v.blueprint_id=? AND g.status IN ('backlog','active','review')`, id).Scan(&active); err != nil {
 		return fmt.Errorf("count pinned goals: %w", err)
@@ -1105,12 +1271,18 @@ func (s *BlueprintService) Delete(ctx context.Context, id string) error {
 	if active > 0 {
 		return NewConflictError(fmt.Sprintf("blueprint is pinned by %d non-terminal goal(s) — resolve them first", active))
 	}
-	res, err := s.st.DB().ExecContext(ctx, `DELETE FROM blueprint WHERE id=?`, id)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blueprint_version WHERE blueprint_id=?`, id); err != nil {
+		return fmt.Errorf("delete blueprint versions: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM blueprint WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("delete blueprint: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete blueprint: %w", err)
 	}
 	return nil
 }
@@ -1204,7 +1376,16 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		return fmt.Errorf("count blueprint nodes: %w", err)
 	}
 	if existing > 0 {
-		logging.Infof("blueprint: goal %s reopened — spec rows exist, manual follow-up mode", goalID)
+		logging.Warnf("blueprint: goal %s reopened — %d spec rows exist, manual follow-up mode (new work is NOT bound to the spec)", goalID, existing)
+		// Make the mode visible on the timeline instead of only in the log:
+		// after a reopen the spec stops being the authority for new work
+		// (BUG-4 缺口 G).
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO activity_log (id, goal_id, actor_type, actor_id, action, detail, created_at)
+			 VALUES (?,?, 'system', '', 'blueprint_manual_followup', ?, ?)`,
+			newID(), goalID, `{"spec_nodes":`+fmt.Sprint(existing)+`}`, now()); err != nil {
+			return fmt.Errorf("record manual follow-up: %w", err)
+		}
 		return nil
 	}
 	var content, hash string
@@ -1395,6 +1576,14 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 	// ancestorTasks' keys are mapped through sgByKey at insert time. (An
 	// early version stored raw keys: the gate treated them as missing
 	// dependencies and cascaded the dependents to failed on first wake.)
+	//
+	// runEvs collects the run:enqueued events for the beat-1 runs created
+	// below: insertSubGoalTx enqueues the run of an ungated executable and
+	// hands its event back to the caller, but the second-pass enqueue coalesces
+	// on that same row and returns no event. Without collecting the first-pass
+	// event here the run starts silently (BUG-3: compiled runs never reached
+	// the event bus).
+	var runEvs []events.Event
 	sgByKey := map[string]string{}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
@@ -1535,9 +1724,12 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			TeamSquadID: teamSquad, // §11.5: '' = fall back to the goal's own squad
 			CreatedAt:   ts0,
 		}
-		sgOut, _, err := s.insertSubGoalTx(ctx, tx, sg, sg.DependsOn, "agent", "")
+		sgOut, runEv, err := s.insertSubGoalTx(ctx, tx, sg, sg.DependsOn, "agent", "")
 		if err != nil {
 			return fmt.Errorf("compile node %q: %w", n.ID, err)
+		}
+		if runEv != nil {
+			runEvs = append(runEvs, *runEv)
 		}
 		sgByKey[n.ID] = sgOut.ID
 		nodeResolved, err := marshalResolved(assigneeSpec, resolvedAgent, teamSquad)
@@ -1560,19 +1752,24 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			// which the sweeper counts. A gated gate re-stamps held_since
 			// at release (wakeDependentsTx).
 			nodeState := "pending"
-			var extra map[string]string
+			extra := map[string]string{}
+			if n.Gate.Timeout != nil {
+				// timeout_action may be "" — the deadline PARKS the gate
+				// (records parked_at) instead of auto-deciding.
+				extra["timeout_after"] = n.Gate.Timeout.After
+				extra["timeout_action"] = n.Gate.Timeout.Action
+			}
+			if n.Gate.Auto != nil {
+				// The runtime branch: the sweeper evaluates auto_when against
+				// the named upstream node's sealed output; a match resolves the
+				// gate as auto_action (decided_by=auto). Stamped here so the
+				// ledger alone is enough to replay why a gate opened.
+				extra["auto_when"] = n.Gate.Auto.When
+				extra["auto_action"] = n.Gate.Auto.Action
+			}
 			if len(depIDs) == 0 {
 				nodeState = "running" // held from the start — no upstream to wait for
-				extra = map[string]string{
-					"held_since":     ts,
-					"timeout_after":  n.Gate.Timeout.After,
-					"timeout_action": n.Gate.Timeout.Action,
-				}
-			} else {
-				extra = map[string]string{
-					"timeout_after":  n.Gate.Timeout.After,
-					"timeout_action": n.Gate.Timeout.Action,
-				}
+				extra["held_since"] = ts
 			}
 			if merged, err := mergeResolved(nodeResolved, extra); err == nil {
 				nodeResolved = merged
@@ -1597,7 +1794,6 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 	// ungated gate is held from compile (state=running, held_since
 	// stamped); a gated gate holds at release (wakeDependentsTx). The
 	// human decision — never a run — is the only thing that settles it.
-	var runEvs []events.Event
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		if n.Type == "gate" {
@@ -1631,6 +1827,42 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 	return nil
 }
 
+// planMaterialization reports whether a goal is blueprint-pinned and how many
+// compiled nodes its ledger holds. pinned=false is infer mode (no spec
+// authority — the invariant does not apply).
+func planMaterialization(ctx context.Context, q rowQueryer, goalID string) (pinned bool, versionID string, nodes int, err error) {
+	if err = q.QueryRowContext(ctx,
+		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&versionID); err != nil {
+		return false, "", 0, fmt.Errorf("load goal blueprint pin: %w", err)
+	}
+	if versionID == "" {
+		return false, "", 0, nil
+	}
+	if err = q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_node WHERE goal_id=?`, goalID).Scan(&nodes); err != nil {
+		return true, versionID, 0, fmt.Errorf("count blueprint nodes: %w", err)
+	}
+	return true, versionID, nodes, nil
+}
+
+// assertPlanMaterializedTx enforces the P0 invariant: a blueprint-pinned goal
+// that enters the execution plane must have a materialized plan. A pinned goal
+// with zero blueprint_node rows is the incident's silent-deviation state — the
+// owner would receive a "COMPILED plan" contract with nothing compiled and the
+// only escape left is consult dispatch. Failing the transition (Create/Activate
+// roll back) is strictly better than letting the run deviate silently.
+func (s *GoalService) assertPlanMaterializedTx(ctx context.Context, tx *sql.Tx, goalID string) error {
+	pinned, versionID, nodes, err := planMaterialization(ctx, tx, goalID)
+	if err != nil {
+		return err
+	}
+	if !pinned || nodes > 0 {
+		return nil
+	}
+	logging.Errorf("blueprint: goal %s pins version %s but blueprint_node=0 — refusing to start the execution plane (plan not materialized)", goalID, versionID)
+	return NewValidationError(fmt.Sprintf("goal is blueprint-driven but its plan was never materialized (blueprint_node=0 for version %q) — activate the pinned goal so the spec compiles", versionID))
+}
+
 // pruneReason records why a node was cut from the executable graph. In
 // Phase A the only pruner is a condition choice (V2 makes structural
 // unreachability a publish error), so the fact of pruning is the ledger
@@ -1656,6 +1888,46 @@ func interpolateGoal(brief string, goal map[string]string) string {
 // publishCompiledRuns publishes beat-1 run events after the caller's commit
 // (Activate). Never called inside the transaction — a rollback must not
 // launch runs.
+// EnsurePlanMaterialized lazily compiles the pinned spec when a run is about
+// to start on a goal whose ledger is still empty (reopen guard keeps the call
+// idempotent). It returns true when it compiled now. This is the dispatch-time
+// backstop for the incident class where a pinned goal reached execution
+// without ever passing Activate.
+// planMaterializeMu serializes the "blueprint_node=0 → compile" decision so
+// two dispatch paths cannot both compile the same goal: the loser's INSERT
+// would hit the ledger's UNIQUE(goal_id,node_key) and fail the whole run.
+// Only unmaterialized goals take this path, so contention is negligible.
+var planMaterializeMu sync.Mutex
+
+func (s *GoalService) EnsurePlanMaterialized(ctx context.Context, goalID string) (bool, error) {
+	planMaterializeMu.Lock()
+	defer planMaterializeMu.Unlock()
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("ensure plan: begin: %w", err)
+	}
+	defer tx.Rollback()
+	pinned, _, nodes, err := planMaterialization(ctx, tx, goalID)
+	if err != nil {
+		return false, err
+	}
+	if !pinned || nodes > 0 {
+		return false, nil
+	}
+	var evs []events.Event
+	if err := s.compileBlueprintTx(ctx, tx, goalID, &evs); err != nil {
+		return false, fmt.Errorf("ensure plan: compile: %w", err)
+	}
+	if err := s.assertPlanMaterializedTx(ctx, tx, goalID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("ensure plan: commit: %w", err)
+	}
+	s.publishCompiledRuns(ctx, evs)
+	return true, nil
+}
+
 func (s *GoalService) publishCompiledRuns(ctx context.Context, evs []events.Event) {
 	for _, ev := range evs {
 		s.bus.Publish(ctx, ev)
@@ -1976,6 +2248,18 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 			return nil, false, fmt.Errorf("materialize spawn child %q: %w", child.Title, err)
 		}
 		childIDs = append(childIDs, sgOut.ID)
+		// Ledger the elastic fan-out (§11.4 double bookkeeping): the schema
+		// reserved node_key '<spawn_key>#<seq>' + parent_key for exactly this,
+		// but no row was ever written — so "which extra work item came from
+		// which spawn" was unanswerable. INSERT OR IGNORE keeps a crash replay
+		// idempotent.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO blueprint_node
+			   (id, goal_id, node_key, parent_key, node_type, sub_goal_id, state, created_at)
+			 VALUES (?,?,?,?, 'task', ?, 'running', ?)`,
+			newID(), goalID, fmt.Sprintf("%s#%d", nodeKey, i+1), nodeKey, sgOut.ID, now()); err != nil {
+			return nil, false, fmt.Errorf("ledger spawn child %q: %w", child.Title, err)
+		}
 		if ev != nil {
 			evs = append(evs, *ev)
 		}
@@ -2477,8 +2761,10 @@ func (s *GoalService) ResolveBlueprintGate(ctx context.Context, goalID, nodeKey,
 }
 
 // SweepBlueprintGates times out held gates (the sweeper's ONE job): every
-// gate node in state running with a held_since older than timeout_after
-// resolves with timeout_action, decidedBy=system. Returns the number
+// gate node in state running with a held_since older than timeout_after.
+// A gate with an explicit timeout_action resolves with it (decidedBy=system);
+// a gate with NO action (or no timeout policy) is PARKED — the deadline only
+// records parked_at, never decides for the human. Returns the number
 // resolved; errors are per-gate (logged, never fatal — the next tick
 // retries).
 func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
@@ -2507,9 +2793,31 @@ func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
 			HeldSince     string `json:"held_since"`
 			TimeoutAfter  string `json:"timeout_after"`
 			TimeoutAction string `json:"timeout_action"`
+			AutoWhen      string `json:"auto_when"`
+			AutoAction    string `json:"auto_action"`
 		}
-		if json.Unmarshal([]byte(h.cfg), &cfg) != nil || cfg.HeldSince == "" || cfg.TimeoutAfter == "" {
-			continue // never held (compile-stamped) or missing policy — skip
+		if json.Unmarshal([]byte(h.cfg), &cfg) != nil || cfg.HeldSince == "" {
+			continue // never held (compile-stamped) — skip
+		}
+		// Runtime branch (BUG-4 §C) FIRST: if the sealed upstream evidence
+		// satisfies the auto rule, the platform decides now — the deadline is
+		// irrelevant. A miss falls through to the human/timeout path.
+		if cfg.AutoWhen != "" {
+			matched, excerpt, err := s.gateAutoMatched(ctx, h.goalID, h.nodeKey, cfg.AutoWhen)
+			if err != nil {
+				logging.Errorf("blueprint: gate auto %s/%s: %v", h.goalID, h.nodeKey, err)
+			} else if matched {
+				if err := s.ResolveBlueprintGate(ctx, h.goalID, h.nodeKey, cfg.AutoAction,
+					fmt.Sprintf("自动判定：%s（上游产出：%s）", cfg.AutoWhen, excerpt), "auto"); err != nil {
+					logging.Errorf("blueprint: gate auto resolve %s/%s: %v", h.goalID, h.nodeKey, err)
+					continue
+				}
+				resolved++
+				continue
+			}
+		}
+		if cfg.TimeoutAfter == "" {
+			continue // no deadline: park forever (a human decision card)
 		}
 		d, err := time.ParseDuration(cfg.TimeoutAfter)
 		if err != nil {
@@ -2520,6 +2828,30 @@ func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
 			continue
 		}
 		if time.Since(heldAt) < d {
+			continue
+		}
+		if cfg.TimeoutAction == "" {
+			// Park (the default): the deadline flags the gate for a human; it
+			// never decides for them. Idempotent — parked_at is stamped once.
+			var prior struct {
+				ParkedAt string `json:"parked_at"`
+			}
+			_ = json.Unmarshal([]byte(h.cfg), &prior)
+			if prior.ParkedAt != "" {
+				continue
+			}
+			merged, err := mergeResolved(h.cfg, map[string]string{"parked_at": now()})
+			if err != nil {
+				logging.Errorf("blueprint: park gate %s/%s: %v", h.goalID, h.nodeKey, err)
+				continue
+			}
+			if _, err := s.st.DB().ExecContext(ctx,
+				`UPDATE blueprint_node SET resolved_config=? WHERE goal_id=? AND node_key=? AND state='running'`,
+				merged, h.goalID, h.nodeKey); err != nil {
+				logging.Errorf("blueprint: park gate %s/%s: %v", h.goalID, h.nodeKey, err)
+				continue
+			}
+			logging.Warnf("blueprint: gate %s/%s timed out (timeout %s) with no action — parked for a human (no auto-decision)", h.goalID, h.nodeKey, cfg.TimeoutAfter)
 			continue
 		}
 		if err := s.ResolveBlueprintGate(ctx, h.goalID, h.nodeKey, cfg.TimeoutAction,
@@ -2535,6 +2867,38 @@ func (s *GoalService) SweepBlueprintGates(ctx context.Context) (int, error) {
 	return resolved, nil
 }
 
+// gateAutoMatched evaluates a gate's runtime auto rule (auto_when) against the
+// sealed output of the named upstream node. Evidence is the most recent
+// completed subgoal run's result_summary — the same text a human would read on
+// the decision card, so the automatic path and the manual path see one source.
+// A missing upstream run is a MISS (not an error): the gate simply keeps
+// waiting. Returns the matched flag plus a short, single-line excerpt for the
+// decision record.
+func (s *GoalService) gateAutoMatched(ctx context.Context, goalID, gateKey, rule string) (bool, string, error) {
+	nodeKey, ct, err := ParseNodeTest(rule)
+	if err != nil {
+		return false, "", fmt.Errorf("parse gate auto rule %q: %w", rule, err)
+	}
+	var output string
+	err = s.st.DB().QueryRowContext(ctx, `
+		SELECT COALESCE(r.result_summary,'') FROM blueprint_node bn
+		JOIN run r ON r.sub_goal_id = bn.sub_goal_id
+		WHERE bn.goal_id=? AND bn.node_key=?
+		  AND r.role='subgoal' AND COALESCE(r.result_summary,'')!=''
+		ORDER BY r.finished_at DESC LIMIT 1`, goalID, nodeKey).Scan(&output)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil // no sealed evidence yet
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("load upstream output of %q for gate %q: %w", nodeKey, gateKey, err)
+	}
+	excerpt := strings.Join(strings.Fields(output), " ")
+	if runes := []rune(excerpt); len(runes) > 200 {
+		excerpt = string(runes[:200]) + "…"
+	}
+	return ct.eval(output), excerpt, nil
+}
+
 // HeldGate is one open human decision: the gate's node key, the resolved
 // prompt ({{node.*}} already substituted at hold time), the registered
 // action buttons, the hold clock, and the timeout policy. Decided/skipped
@@ -2547,6 +2911,8 @@ type HeldGate struct {
 	HeldSince     string           `json:"held_since,omitempty"`
 	TimeoutAfter  string           `json:"timeout_after,omitempty"`
 	TimeoutAction string           `json:"timeout_action,omitempty"`
+	AutoWhen      string           `json:"auto_when,omitempty"`
+	AutoAction    string           `json:"auto_action,omitempty"`
 	SubGoalID     string           `json:"sub_goal_id"`
 }
 
@@ -2609,11 +2975,15 @@ func (s *GoalService) ListHeldGates(ctx context.Context, goalID string) ([]HeldG
 			HeldSince     string `json:"held_since"`
 			TimeoutAfter  string `json:"timeout_after"`
 			TimeoutAction string `json:"timeout_action"`
+			AutoWhen      string `json:"auto_when"`
+			AutoAction    string `json:"auto_action"`
 		}
 		if json.Unmarshal([]byte(cfg), &c) == nil {
 			hg.HeldSince = c.HeldSince
 			hg.TimeoutAfter = c.TimeoutAfter
 			hg.TimeoutAction = c.TimeoutAction
+			hg.AutoWhen = c.AutoWhen
+			hg.AutoAction = c.AutoAction
 		}
 		out = append(out, hg)
 	}
@@ -2680,7 +3050,16 @@ func gatePrompt(n *SpecNode) string {
 	for _, a := range n.Gate.Actions {
 		b.WriteString(fmt.Sprintf("- %s（%s）\n", a.ID, a.Label))
 	}
-	b.WriteString(fmt.Sprintf("\n若无人决策，超过 %s 后自动执行动作 %q。\n", n.Gate.Timeout.After, n.Gate.Timeout.Action))
+	if n.Gate.Timeout != nil && n.Gate.Timeout.Action != "" {
+		b.WriteString(fmt.Sprintf("\n若无人决策，超过 %s 后自动执行动作 %q。\n", n.Gate.Timeout.After, n.Gate.Timeout.Action))
+	} else if n.Gate.Timeout != nil {
+		b.WriteString(fmt.Sprintf("\n若无人决策，超过 %s 后仅标记为挂起（park），不会自动推进。\n", n.Gate.Timeout.After))
+	} else {
+		b.WriteString("\n该决策点没有超时策略：无人决策时保持挂起。\n")
+	}
+	if n.Gate.Auto != nil {
+		b.WriteString(fmt.Sprintf("\n自动判定：当上游产出满足 `%s` 时，平台自动执行动作 %q（无需人工）；不满足则等人决策。\n", n.Gate.Auto.When, n.Gate.Auto.Action))
+	}
 	b.WriteString("该工作项由人工决定推进，执行者请勿代答——等待决策即可。")
 	return b.String()
 }
@@ -3383,7 +3762,7 @@ func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, d
 		return nil, err
 	}
 	bp, err := s.Create(ctx, name,
-		"自动起草（" + label + "）：同域连续 3 个 infer 执行图" + map[bool]string{true: "工作骨架同构（细节有差异）", false: "结构相同"}[label == "近似固化"] + "，由平台确定性翻译生成（" + map[bool]string{true: "§14.1 L0 骨架收敛", false: "§12.4 精确同构"}[label == "近似固化"] + "）。请审查后发布；发布前不影响任何任务。",
+		"自动起草（"+label+"）：同域连续 3 个 infer 执行图"+map[bool]string{true: "工作骨架同构（细节有差异）", false: "结构相同"}[label == "近似固化"]+"，由平台确定性翻译生成（"+map[bool]string{true: "§14.1 L0 骨架收敛", false: "§12.4 精确同构"}[label == "近似固化"]+"）。请审查后发布；发布前不影响任何任务。",
 		string(content), "agent", "rsi-emergent")
 	if err != nil {
 		// A shape collision with existing blueprint names is a benign skip.

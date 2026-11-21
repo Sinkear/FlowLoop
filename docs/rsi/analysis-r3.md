@@ -37,7 +37,7 @@
 | # | 问题 | 证据 | 当前状态 |
 |---|------|------|----------|
 | 13 | **rsi_round 轮次编号不递增**：两轮均 `round_no=1`、`trigger=terminal` | rsi_round 两行（R1 `1521efe0374196cf889d8e53f15b01d1` / R2 `8aa88fdd89937757d9b449e11efd3e6e`，`/rsi/sessions/{id}/rounds` 实测两行 round_no 均 1）；`/rsi/overview` trend 两条 round_no=1；delta_json 均为 `{}` | **待修 → 提案 P-B** |
-| 14 | **基准口径漂移**：同一基线（33f16dc/0bf354e）test 实测 23.012s（首跑，含测试二进制编译）→ 14.5s（sg-B2 复跑）→ 11.3s（R1 冻结口径），差近 2 倍；build 冷 38-44s vs 温 3.9-5.6s 差约 10 倍 | run `25c28dc347ef`（23.012s）vs `3c3289b01724`（14.5s）；benchmark-report-r2.md 冷 44.417s / 温中位 4.387s | **待修 → 提案 P-C**（R3 sg-REBENCH 派发词已按冷缓存口径，属约定层修复） |
+| 14 | **基准口径漂移**：同一基线（33f16dc/0bf354e）test 实测 23.012s（首跑，含测试二进制编译）→ 14.5s（sg-B2 复跑）→ 11.3s（R1 冻结口径），差近 2 倍；build 冷 38-44s vs 温 3.9-5.6s 差约 10 倍 | run `25c28dc347ef`（23.012s）vs `3c3289b01724`（14.5s）；../reports/benchmark-report-r2.md 冷 44.417s / 温中位 4.387s | **待修 → 提案 P-C**（R3 sg-REBENCH 派发词已按冷缓存口径，属约定层修复） |
 | 15 | **`/rsi` 端点口径不一致**：AGENTS.md/goal 描述写 `/rsi`，实测 404；R1 阻塞汇报（3baf73cff449）即已附带发现 | `curl /rsi` → "404 page not found"；实际为 `/rsi/sessions` 等 4 端点 | 待修（文档/别名级，候选任务 3） |
 | 16 | **验证命令的 PATH 依赖宿主 shell 配置**：domain checks 无法假设 daemon PATH 含工具链 | R3 前置轮 642a21d4/e83e70cf/f1182ff5 三连败实录 + daemon 进程 environ 实测（见问题 #4b） | **已解决**（软链接治标）；根因待 P-A 一并固化（verify 子进程 PATH 约定写入验收策略文档） |
 
@@ -63,7 +63,7 @@
 
 ### 提案 P-C【待评审】bench 基准统一冷缓存口径
 
-- **问题依据**：同一基线（agentwork-int HEAD 33f16dc）上，`go test ./... -count=1` 首跑实测 23.012s（run `25c28dc347ef`，含全部测试二进制编译），复跑降到 14.5s（run `3c3289b01724`）；`go build ./...` 冷 38-44s vs 温 3.9-5.6s 差约 10 倍（benchmark-report-r2.md）。R1→R2 报告里「测试 23.0s→11.6s、-50%」的结论混入了大量缓存口径噪音（docs/rsi-round-evolution-report.md 问题 #8 已自认），跨轮对比不可信。
+- **问题依据**：同一基线（agentwork-int HEAD 33f16dc）上，`go test ./... -count=1` 首跑实测 23.012s（run `25c28dc347ef`，含全部测试二进制编译），复跑降到 14.5s（run `3c3289b01724`）；`go build ./...` 冷 38-44s vs 温 3.9-5.6s 差约 10 倍（../reports/benchmark-report-r2.md）。R1→R2 报告里「测试 23.0s→11.6s、-50%」的结论混入了大量缓存口径噪音（docs/rsi-round-evolution-report.md 问题 #8 已自认），跨轮对比不可信。
 - **拟改动位置**：纯约定层，不改业务代码——① docs/rsi/self-iter-playbook.md「每轮操作」小节固化口径：build 必测冷（独立 GOCACHE，如 `GOCACHE=$(mktemp -d) go build ./...`）+ 温中位各一列；test 以温 3 连跑中位为准并注明首跑编译已完成的口径；② 所有基准报告必须同时记录冷/温两列与 GOCACHE 路径；③ R3 的 sg-REBENCH 派发词已按此口径执行（`GOCACHE=/tmp/r3-gocache` 冷构建），本轮即为首个统一口径样本。下一轮可再落 scripts/rsi-bench.sh 统一计时（builder 实施）。
 - **预期收益**：跨轮 build 对比噪音从 ±50%（23.0 vs 14.5 同基线）收敛到冷/温分列后各自 ±10% 内；演进报告【跨轮指标对比】的百分比首次可信，人工批准提案时有真实数字依据。
 - **风险与回滚**：无代码风险，仅测量与文档约定；口径写错回滚 = 改回 playbook 文档即可。

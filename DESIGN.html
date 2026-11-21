@@ -98,7 +98,7 @@
 </div>
 
 <div class="warn callout">
-<strong>阅读说明：</strong>本文档是 <strong>架构愿景</strong>（目标态设计），<strong>不是现状基线</strong>。现状的权威是 <a href="DESIGN.md">DESIGN.md</a>（决策 2-x / 3-x / 4-x 编号，代码注释引用它）；数据库结构以 <code>internal/store/schema.sql</code> 为准。本文描述的能力（AgentSession 统一抽象、Run Admission、worker lease、持久化 Event Log、Capability Token、Repository 层等）多数为<strong>规划未实现</strong>；与 DESIGN.md 冻结决策冲突处（§6 状态机、§7 Delegation、Roadmap）已就地标注。愿景与现状冲突时，<strong>以 DESIGN.md 与代码为准</strong>。
+<strong>阅读说明：</strong>本文档是 <strong>架构愿景</strong>（目标态设计），<strong>不是现状基线</strong>。现状的权威是 <a href="docs/design/DESIGN.md">DESIGN.md</a>（决策 2-x / 3-x / 4-x 编号，代码注释引用它）；数据库结构以 <code>internal/store/schema.sql</code> 为准。本文描述的能力（AgentSession 统一抽象、Run Admission、worker lease、持久化 Event Log、Capability Token、Repository 层等）多数为<strong>规划未实现</strong>；与 DESIGN.md 冻结决策冲突处（§6 状态机、§7 Delegation、Roadmap）已就地标注。愿景与现状冲突时，<strong>以 DESIGN.md 与代码为准</strong>。
 </div>
 
 <h2 id="principles">1. 设计目标与原则</h2>
@@ -301,7 +301,7 @@ Leader Agent
      └── create child Goal → Agent C</code></pre>
 
 <p>Delegation 的本质是创建/更新 Goal，而不是在 AgentWork 内部偷偷执行一个不可见 Workflow。</p>
-<div class="warn callout"><strong>本节已更新（决策 5-1 撤销 3-6，6-1 重定义）：</strong>child-goal 委派已以 <strong>sub_goal 实体</strong>落地——不是 child goal：不可递归、依附 goal 生命周期、assignee/verifier 分离、Change+Revision 跨 workspace 交付、owner 集成（详见 Collaboration.v2.md）。squad 仍以 leader run + role=reviewer 审查 checkpoint（决策 4-4）运作。</div>
+<div class="warn callout"><strong>本节已更新（决策 5-1 撤销 3-6，6-1 重定义）：</strong>child-goal 委派已以 <strong>sub_goal 实体</strong>落地——不是 child goal：不可递归、依附 goal 生命周期、assignee/verifier 分离、Change+Revision 跨 workspace 交付、owner 集成（详见 docs/design/Collaboration.v2.md）。squad 仍以 leader run + role=reviewer 审查 checkpoint（决策 4-4）运作。</div>
 <p class="small"><strong>交接语义（决策 4-9）：</strong>goal 易主时平台终止旧 owner 的 running run（per-run cancel 注册表）——旧 agent 已交接却不结束 run，会把新 owner 的 run 永远堵在 per-goal 串行队列后（死锁）；AGENTWORK.md 同步引导"交接后立即结束你的 turn"。</p>
 
 <h2 id="runtime">8. Runtime / Agent / Session</h2>
@@ -665,7 +665,11 @@ SQLite</code></pre>
 │   ├── components/
 │   ├── lib/
 │   └── public/
-└── DESIGN.md</code></pre>
+└── docs/
+    ├── design/
+    │   └── DESIGN.md
+    ├── research/
+    └── reports/</code></pre>
 
 <h3>22.1 推荐的业务边界</h3>
 <pre><code>service/
@@ -890,7 +894,7 @@ Future Context</code></pre>
 </div>
 
 <div class="footer">
-AgentWork Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）。愿景与现状冲突时以 DESIGN.md 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
+AgentWork Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="docs/design/DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）。愿景与现状冲突时以 DESIGN.md 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
 </div>
 </main>
 </div>

@@ -11,6 +11,7 @@ import (
 
 	"github.com/eushing/agentwork/internal/events"
 	"github.com/eushing/agentwork/internal/logging"
+	"github.com/eushing/agentwork/internal/service"
 )
 
 // deliver — the deterministic merge step (DESIGN.md §7). After the human
@@ -46,32 +47,16 @@ const deliverWaitForRuns = 5 * time.Minute
 // and the merge/push leaves the goal in review with the latest gate_decision
 // = approve and a review_request that is NOT a deliver failure ("deliver:" —
 // that is a real failure awaiting the human's retry/reject, never replayed).
-// The replay itself is safe: deliverGoal's merge/push idempotency skips
-// already-done steps. Returns how many delivers were re-triggered.
-func (d *Daemon) recoverPendingDelivers(ctx context.Context) (int, error) {
-	rows, err := d.st.DB().QueryContext(ctx,
-		`SELECT g.id FROM goal g
-		 WHERE g.status='review'
-		   AND g.review_request NOT LIKE 'deliver:%'
-		   AND EXISTS (
-		     SELECT 1 FROM gate_decision d
-		     WHERE d.goal_id = g.id AND d.decision='approve'
-		       AND d.decided_at = (SELECT MAX(decided_at) FROM gate_decision WHERE goal_id = g.id)
-		   )`)
+// minAge filters out goals whose approve is too recent — a deliver that just
+// started is still IN FLIGHT, and replaying it would race the merge. The age
+// is computed from the latest approve's decided_at (RFC3339Nano) via
+// time.Parse, never a raw string comparison (the daemon startup pass passes 0:
+// every pending deliver is replayed). The replay itself is safe: deliverGoal's
+// merge/push idempotency skips already-done steps. Returns how many delivers
+// were re-triggered.
+func (d *Daemon) recoverPendingDelivers(ctx context.Context, minAge time.Duration) (int, error) {
+	ids, err := d.pendingDeliverGoalIDs(ctx, minAge)
 	if err != nil {
-		return 0, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 	for _, id := range ids {
@@ -79,6 +64,51 @@ func (d *Daemon) recoverPendingDelivers(ctx context.Context) (int, error) {
 		go d.deliverGoal(context.Background(), id)
 	}
 	return len(ids), nil
+}
+
+// pendingDeliverGoalIDs selects the review goals whose latest gate_decision is
+// an approve with no deliver result, using only the rows whose approve is at
+// least minAge old. Split from recoverPendingDelivers so the age filter is
+// testable without spawning deliver goroutines.
+func (d *Daemon) pendingDeliverGoalIDs(ctx context.Context, minAge time.Duration) ([]string, error) {
+	rows, err := d.st.DB().QueryContext(ctx,
+		`SELECT DISTINCT g.id, d.decided_at FROM goal g
+		 JOIN gate_decision d ON d.goal_id = g.id
+		 WHERE g.status='review'
+		   AND g.review_request NOT LIKE 'deliver:%'
+		   AND d.decision='approve'
+		   AND d.decided_at = (SELECT MAX(decided_at) FROM gate_decision WHERE goal_id = g.id)`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id, decidedAt string
+		if err := rows.Scan(&id, &decidedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if minAge > 0 {
+			ts, perr := time.Parse(time.RFC3339Nano, decidedAt)
+			if perr != nil {
+				// Can't judge the age: log and SKIP. A replay of a
+				// just-started deliver would race its merge, and a malformed
+				// stamp is exactly the unknown case the age filter must not
+				// force. The next sweep re-evaluates.
+				logging.Warnf("daemon: pending deliver %s: unparseable decided_at %q: %v", id, decidedAt, perr)
+				continue
+			}
+			if time.Since(ts) < minAge {
+				continue
+			}
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // domainGitIdentity returns the commit identity configured on the domain
@@ -90,6 +120,18 @@ func (d *Daemon) domainGitIdentity(ctx context.Context, domainID string) string 
 }
 
 func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
+	// Single-flight per goal: the same approve can arrive twice (a stale
+	// re-approve republishes goal:approved, and the periodic recovery sweep
+	// replays an approve that may still be covered by an in-flight deliver).
+	// Two concurrent merges on one goal branch corrupt the domain worktree, so
+	// the second trigger is dropped — the first one is already closing the
+	// goal. A failed deliver is retried on the next sweep, after this entry is
+	// gone.
+	if _, busy := d.deliverInFlight.LoadOrStore(goalID, struct{}{}); busy {
+		logging.Infof("deliver: goal %s already in flight — duplicate trigger ignored", goalID)
+		return
+	}
+	defer d.deliverInFlight.Delete(goalID)
 	// The goal TITLE travels with every deliver log line — ids are for the
 	// system, humans read titles.
 	var goalTitle string
@@ -305,6 +347,32 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	}
 	logging.Infof("git: deliver %q (%s): push done (%s)", goalTitle, goalID, time.Since(start).Round(time.Second))
 
+	// BUG-4 attribution: every delivered commit is inspected for a
+	// "Blueprint-Node: <node_key>" trailer; commits with no (or an unknown)
+	// trailer are recorded as UNATTRIBUTED owner writes. This is record-only —
+	// it never blocks a delivery that is already on the default branch, so a
+	// ledger failure is logged and delivery continues. The parsed slice is
+	// normalized in place by RecordBlueprintWrites (attribution is recomputed
+	// against blueprint_node), which keeps the counts below truthful.
+	deliverWrites := service.ParseBlueprintWrites(goalID, fixLog, nil)
+	if err := d.goalSvc.RecordBlueprintWrites(ctx, goalID, deliverWrites); err != nil {
+		logging.Errorf("git: deliver %q (%s): record blueprint writes failed (delivery continues): %v", goalTitle, goalID, err)
+	} else if len(deliverWrites) > 0 {
+		attributed := 0
+		for _, w := range deliverWrites {
+			if w.Attributed {
+				attributed++
+			}
+		}
+		if attributed < len(deliverWrites) {
+			logging.Warnf("git: deliver %q (%s): blueprint attribution: %d attributed, %d unattributed delivered commit(s)",
+				goalTitle, goalID, attributed, len(deliverWrites)-attributed)
+		} else {
+			logging.Infof("git: deliver %q (%s): blueprint attribution: %d/%d delivered commit(s) attributed",
+				goalTitle, goalID, attributed, len(deliverWrites))
+		}
+	}
+
 	// Cleanup (决策 7-4): the goal's feat branch is disposable once merged —
 	// delete both the remote 中转 ref (agentwork/<branch>, machine-executed
 	// goals) and the local feat-<id> ref. Best-effort + fault-tolerant inside
@@ -328,7 +396,13 @@ func (d *Daemon) finishDeliver(ctx context.Context, goalID string, success bool,
 		fixCommits = commits[0]
 	}
 	if _, err := d.goalSvc.MarkDelivered(ctx, goalID, success, note, fixCommits); err != nil {
-		logging.Infof("daemon: MarkDelivered %s: %v", goalID, err)
+		// BUG-1 (live incident): MarkDelivered used to log this at Infof and
+		// drop it. The goal stays in review with the approve recorded and the
+		// merge maybe already done — the ONLY signal was a startup replay, so
+		// the failure was invisible for the entire interval. Errorf keeps the
+		// goal id + error in the daemon log; the periodic recover ticker
+		// (deliverRecoveryInterval) is the self-heal.
+		logging.Errorf("daemon: MarkDelivered %s failed (deliver success=%t, goal stays in review until recovery): %v", goalID, success, err)
 	}
 }
 

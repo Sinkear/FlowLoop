@@ -1,6 +1,6 @@
 # agentwork
 
-> [English](README.md) | [设计文档](DESIGN.md) | [协作模型](Collaboration.v2.md)
+> [English](README.md) | [设计文档](docs/design/DESIGN.md) | [协作模型](docs/design/Collaboration.v2.md)
 
 **AI 干活的流水线操作系统**——单用户控制面，让 CLI agent 无人值守地跑完整闭环：
 任务 → 执行 → 机器验证 → 人工卡点 → 自动交付。你用自然语言定义验收策略，agent
@@ -109,7 +109,7 @@ agent 只通过 `agentwork` CLI（守护进程二进制的 shim，spawn 时放�
 协作。每条命令携带 per-run token（`AGENTWORK_TOKEN`），守护进程 `/rpc` 端点将其
 解析为 run 的 `(goal, agent, role)`——token 是唯一身份，自报 id 被忽略，handoff
 的 owner 校验在服务端强制。另有 `subgoal verify`、`change integrate` 及
-`*_list` 命令。完整模型见 [Collaboration.v2.md](Collaboration.v2.md)。
+`*_list` 命令。完整模型见 [Collaboration.v2.md](docs/design/Collaboration.v2.md)。
 
 ## 架构
 

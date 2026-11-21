@@ -455,13 +455,40 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		}
 		runEv = ev
 	}
+	// BUG-3: a pinned goal created DIRECTLY as active used to bypass Activate
+	// and therefore never compiled its spec graph — blueprint_node stayed at 0
+	// rows, so the RSI auto-proposal translator (which maps execution nodes
+	// back to spec keys through blueprint_node) silently found nothing and the
+	// self-iteration chain dead-ended. Compile in the SAME transaction as the
+	// first run, exactly like Activate: the graph, its compiled sub_goals and
+	// the creation commit atomically (a rollback discards the whole compile).
+	// BACKLOG goals stay uncompiled on purpose — Activate owns that transition
+	// and compiling early would spawn spec runs for a goal that is not active.
+	// compileBlueprintTx is a no-op for unpinned (infer-mode) goals.
+	var compiledEvs []events.Event
+	if g.Status == "active" {
+		if err := s.compileBlueprintTx(ctx, tx, g.ID, &compiledEvs); err != nil {
+			return nil, fmt.Errorf("compile blueprint: %w", err)
+		}
+		// P0 invariant: an active pinned goal MUST leave this transaction with
+		// a materialized plan — otherwise the owner starts against a contract
+		// that says "COMPILED" while the ledger is empty (the incident's
+		// consult-only deviation). Roll back the whole creation instead.
+		if err := s.assertPlanMaterializedTx(ctx, tx, g.ID); err != nil {
+			return nil, fmt.Errorf("create goal: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
+	// Publish order mirrors Activate: the goal-level owner run first, then the
+	// compiled beat-1 runs (never inside the transaction — a rollback must not
+	// launch runs).
 	if runEv != nil {
 		s.bus.Publish(ctx, *runEv)
 	}
+	s.publishCompiledRuns(ctx, compiledEvs)
 	s.bus.Publish(ctx, events.Event{Topic: "goal:created", Payload: g})
 	// Training goals get their session row now (status waiting/skipped), so
 	// the Training tab lists the goal before its first run starts.
@@ -1363,6 +1390,27 @@ func insertCancelledRunComment(ctx context.Context, tx *sql.Tx, rc goalRunContex
 // reason as ReconcileGoal — a BUSY here would drop the reconcile AND the
 // run.terminal publish (Finish returns the error), which is a worse failure
 // than the retry's cost.
+// backfillConsultResponse links a finished consult run to the comment it
+// produced. Best-effort: a run that never posted a comment leaves the row
+// empty (the UI shows "no response yet"), it never fails the reconcile.
+func (s *GoalService) backfillConsultResponse(ctx context.Context, rc goalRunContext) {
+	var commentID string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id FROM comment WHERE goal_id=? AND run_id=? ORDER BY created_at DESC LIMIT 1`,
+		rc.GoalID, rc.RunID).Scan(&commentID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			logging.Warnf("consult: backfill response for run %s: %v", rc.RunID, err)
+		}
+		return
+	}
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE consult_request SET response_comment_id=?
+		  WHERE guest_run_id=? AND COALESCE(response_comment_id,'')=''`, commentID, rc.RunID); err != nil {
+		logging.Warnf("consult: backfill response comment for run %s: %v", rc.RunID, err)
+	}
+}
+
 func (s *GoalService) ReconcileOnRunEnd(ctx context.Context, rc goalRunContext) error {
 	return withBusyRetry(func() error { return s.reconcileOnRunEndOnce(ctx, rc) })
 }
@@ -1375,6 +1423,14 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 	// commit.
 	var pendingEvents []events.Event
 	var afterCommit []func()
+
+	// A consult run's report comment is the answer the requester was waiting
+	// for: back-fill consult_request.response_comment_id (BUG-4 gap: the
+	// column existed but was never written, so the timeline could not show
+	// "咨询结论").
+	if rc.Role == "consult" {
+		s.backfillConsultResponse(ctx, rc)
+	}
 
 	// Sub-goal runs report to the SUB-GOAL layer (决策 6-1): the goal's state
 	// machine is not their business — a sub-goal run completing verifies the
@@ -1629,6 +1685,40 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 		pendingBP, err := s.pendingBlueprintNodesTx(ctx, tx, rc.GoalID)
 		if err != nil {
 			return err
+		}
+		// P0 invariant backstop: a pinned goal whose ledger is empty can never
+		// be "done" — the finished run executed OUTSIDE the spec (the incident's
+		// consult-only deviation). The empty ledger must not count as "every
+		// node settled"; park the goal for a human with an explicit reason.
+		pinned, versionID, nodeCount, pmErr := planMaterialization(ctx, tx, rc.GoalID)
+		if pmErr != nil {
+			return fmt.Errorf("check plan materialization: %w", pmErr)
+		}
+		if pinned && nodeCount == 0 {
+			reason := fmt.Sprintf("蓝图计划未物化：目标绑定版本 %s，但 blueprint_node=0（执行从未按规范图编译）。请检查激活/编译链路后再继续。", versionID)
+			res, err := tx.ExecContext(ctx,
+				`UPDATE goal SET status='review', review_request=? WHERE id=? AND status='active'`,
+				reason, rc.GoalID)
+			if err != nil {
+				return fmt.Errorf("park goal for unmaterialized plan: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				detail, _ := json.Marshal(map[string]string{"reason": reason, "blueprint_version_id": versionID})
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO activity_log (id,goal_id,actor_type,actor_id,action,detail,created_at) VALUES (?,?,?,?,?,?,?)`,
+					newID(), rc.GoalID, "system", "", "plan_unmaterialized", string(detail), now()); err != nil {
+					return fmt.Errorf("insert plan_unmaterialized activity: %w", err)
+				}
+				logging.Warnf("goal: %q run %s done but pinned blueprint %s has blueprint_node=0 — parked for a human (execution deviated from the spec)", g.Title, rc.RunID, versionID)
+				pendingEvents = append(pendingEvents, events.Event{Topic: "goal:reviewing", Payload: map[string]any{
+					"goal_id":      rc.GoalID,
+					"run_id":       rc.RunID,
+					"reason":       reason,
+					"category":     g.Category,
+					"auto_approve": false,
+				}})
+			}
+			break
 		}
 		if pendingBP == 0 && pendingSG == 0 {
 			// Phase B: ends flip only when the spec ledger is closed AND no
@@ -1914,6 +2004,29 @@ func (s *GoalService) gatesForGoal(ctx context.Context, tx *sql.Tx, rc goalRunCo
 // decidedBy is "human" (the Web/IM approval) or "system" (digest/import
 // auto-approve). It stamps gate_decision.decided_by AND the decision comment's
 // author_type — a system auto-approve must not masquerade as a human comment.
+
+// approveRetriggerGrace is the minimum age of the latest approve before a
+// repeated approve is treated as a RETRY request instead of a double-click
+// (BUG-2): the deliver runs async and the goal stays in review until it
+// finishes, so a page with no feedback invites another click minutes later.
+// Inside this window the click is refused (it would race the in-flight
+// deliver); past it, the approve row being old means the deliver either never
+// started or died mid-flight, and the safe answer is to re-publish
+// goal:approved instead of rejecting the human a third time.
+const approveRetriggerGrace = 2 * time.Minute
+
+// approveRetriggerAllowed reports whether the last approve is old enough that
+// a repeated approve should RE-TRIGGER the deliver. An unparseable timestamp
+// is treated as NOT stale — a conservative fallback that keeps the original
+// duplicate guard (rejecting the click) rather than racing an unknown state.
+func approveRetriggerAllowed(decidedAt string) bool {
+	ts, err := time.Parse(time.RFC3339Nano, decidedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(ts) >= approveRetriggerGrace
+}
+
 func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision, reason, decidedBy string) (*Goal, error) {
 	if decision != "approve" && decision != "reject" && decision != "redirect" {
 		return nil, NewValidationError("decision must be approve, reject, or redirect")
@@ -1954,10 +2067,10 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 	// precondition already rejects stale double-clicks.
 	authorizePark := strings.HasPrefix(g.ReviewRequest, "authorize:")
 	if decision == "approve" || decision == "reject" || decision == "redirect" {
-		var lastDecision, lastRunID string
+		var lastDecision, lastRunID, lastDecidedAt string
 		err := s.st.DB().QueryRowContext(ctx,
-			`SELECT decision, run_id FROM gate_decision WHERE goal_id=? ORDER BY decided_at DESC LIMIT 1`, goalID).
-			Scan(&lastDecision, &lastRunID)
+			`SELECT decision, run_id, decided_at FROM gate_decision WHERE goal_id=? ORDER BY decided_at DESC LIMIT 1`, goalID).
+			Scan(&lastDecision, &lastRunID, &lastDecidedAt)
 		// The duplicate-decision guard protects the ASYNC deliver window of
 		// the CURRENT park — it must not fire across park cycles. A goal
 		// reopened by mention parks again with a NEW evidence run; the old
@@ -1966,6 +2079,29 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 		// the latest decision).
 		if err == nil && !deliverFailed && !handoffLoopPark && !authorizePark && lastRunID == runID {
 			if decision == "approve" && lastDecision == "approve" {
+				// BUG-2: the guard cannot tell "deliver in flight" from
+				// "deliver failed/lost" — it used to reject every re-approve
+				// forever, even when the deliver had died (live: the human
+				// clicked approve 3 times, all refused, 50 minutes until a
+				// restart). Past approveRetriggerGrace the approve row is old
+				// enough that no deliver should still be in flight: re-publish
+				// goal:approved (the SAME topic/payload the daemon's
+				// onGoalApproved consumes) to retry the deliver, WITHOUT
+				// recording another gate_decision and WITHOUT leaving review —
+				// the deliver closes it asynchronously. Inside the grace window
+				// the original rejection stands (the in-flight deliver must not
+				// be raced).
+				if approveRetriggerAllowed(lastDecidedAt) {
+					logging.Warnf("review: goal %q decision=%s RE-TRIGGERING deliver (last approve at %s — deliver in flight or lost; replaying goal:approved)",
+						g.Title, decision, lastDecidedAt)
+					s.bus.Publish(ctx, events.Event{Topic: "goal:approved", Payload: map[string]any{
+						"goal_id": goalID, "reason": reason,
+					}})
+					// No gate_decision row, no goal:review_resolved — this is a
+					// retry request, not a new decision. The caller sees the goal
+					// still parked in review while the deliver progresses.
+					return s.Get(ctx, goalID)
+				}
 				// A human action with NO trace (no decision row, no log) is
 				// indistinguishable from a broken button — the rejected
 				// click must leave a log line with the reason.
@@ -2248,6 +2384,11 @@ func (s *GoalService) Activate(ctx context.Context, goalID string) (*Goal, error
 	var compiledEvs []events.Event
 	if err := s.compileBlueprintTx(ctx, tx, goalID, &compiledEvs); err != nil {
 		return nil, err
+	}
+	// P0 invariant: activation is the transition that puts a pinned goal into
+	// the execution plane — the plan must exist by commit time.
+	if err := s.assertPlanMaterializedTx(ctx, tx, goalID); err != nil {
+		return nil, fmt.Errorf("activate goal: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -3231,46 +3372,63 @@ func (s *GoalService) GateStats(ctx context.Context) ([]GateStat, error) {
 // the goal layer passes it through verbatim to the delivered event — the
 // issue closer links it. The goal layer never parses it (not its domain).
 func (s *GoalService) MarkDelivered(ctx context.Context, goalID string, success bool, note string, fixCommits []string) (*Goal, error) {
-	tx, err := s.st.DB().BeginTx(ctx, nil)
+	// The deliver close is the LAST writer of a review goal, and it races every
+	// other review-window writer (the approve that started this deliver, the
+	// review window's ready publish, a human comment). A SQLITE_BUSY here used
+	// to strand the goal in review forever: the approve was recorded, the merge
+	// may even have happened, but finishDeliver discarded the error and nothing
+	// ever called MarkDelivered again (BUG-1, live incident). The WHOLE
+	// transaction is therefore replayed through withBusyRetry, with a FRESH tx
+	// per attempt; the conditional UPDATEs (status='review') and the terminal
+	// run cleanup are idempotent, so replaying after a rolled-back busy failure
+	// is sound. Publish and the RSI terminal hook run ONCE, only after the
+	// final commit succeeded — a retry must not emit duplicate events.
+	err := withBusyRetry(func() error {
+		tx, err := s.st.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		var statusCheck string
+		err = tx.QueryRowContext(ctx, `SELECT status FROM goal WHERE id=?`, goalID).Scan(&statusCheck)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A missing goal is not transient — never retry it.
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load goal: %w", err)
+		}
+		_ = statusCheck
+
+		if success {
+			// A delivered goal is done: the deliver already merged this goal's
+			// branch. Pending sub-goals cannot exist here — the finalization guard
+			// (决策 6-8) keeps the goal out of the gate judgment while work is
+			// pending.
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE goal SET status='done', handoff_note='', review_request='' WHERE id=? AND status='review'`, goalID); err != nil {
+				return fmt.Errorf("mark delivered: %w", err)
+			}
+			// Terminal state — drop queued runs (same rule as the reconcile paths).
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE run SET status='cancelled', cancel_reason='goal_terminal' WHERE goal_id=? AND status='queued'`, goalID); err != nil {
+				return fmt.Errorf("cancel queued runs on delivered: %w", err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE goal SET review_request=? WHERE id=? AND status='review'`, note, goalID); err != nil {
+				return fmt.Errorf("annotate deliver failure: %w", err)
+			}
+		}
+		return tx.Commit()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-
-	var statusCheck string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM goal WHERE id=?`, goalID).Scan(&statusCheck)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load goal: %w", err)
-	}
-	_ = statusCheck
-
 	event := "goal:deliver_failed"
 	if success {
-		// A delivered goal is done: the deliver already merged this goal's
-		// branch. Pending sub-goals cannot exist here — the finalization guard
-		// (决策 6-8) keeps the goal out of the gate judgment while work is
-		// pending.
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE goal SET status='done', handoff_note='', review_request='' WHERE id=? AND status='review'`, goalID); err != nil {
-			return nil, fmt.Errorf("mark delivered: %w", err)
-		}
-		// Terminal state — drop queued runs (same rule as the reconcile paths).
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE run SET status='cancelled', cancel_reason='goal_terminal' WHERE goal_id=? AND status='queued'`, goalID); err != nil {
-			return nil, fmt.Errorf("cancel queued runs on delivered: %w", err)
-		}
 		event = "goal:delivered"
-	} else {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE goal SET review_request=? WHERE id=? AND status='review'`, note, goalID); err != nil {
-			return nil, fmt.Errorf("annotate deliver failure: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
 	}
 	s.bus.Publish(ctx, events.Event{Topic: event, Payload: map[string]any{
 		"goal_id": goalID, "note": note, "commits": fixCommits,

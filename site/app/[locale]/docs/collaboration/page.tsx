@@ -60,7 +60,7 @@ export default async function CollaborationPage({
 
       <p className="mt-8">
         <a
-          href={`${REPO}/blob/master/Collaboration.v2.md`}
+          href={`${REPO}/blob/master/docs/design/Collaboration.v2.md`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm font-medium text-accent transition-colors hover:text-accent-hover"

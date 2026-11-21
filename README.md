@@ -1,6 +1,6 @@
 # agentwork
 
-> [中文](README.zh.md) | [Design](DESIGN.md) | [协作模型](Collaboration.v2.md)
+> [中文](README.zh.md) | [Design](docs/design/DESIGN.md) | [协作模型](docs/design/Collaboration.v2.md)
 
 An **AI task pipeline OS** — a single-user control plane that runs CLI agents
 unattended through the full loop: goal → execution → machine verification →
@@ -135,7 +135,7 @@ per-run token (`AGENTWORK_TOKEN`), which the daemon's `/rpc` endpoint
 resolves to the run's `(goal, agent, role)` — the token is the ONLY
 identity, self-reported ids are ignored, and the handoff owner check is
 enforced server-side. Plus `subgoal verify`, `change integrate`, and the
-`*_list` commands. Full model in [Collaboration.v2.md](Collaboration.v2.md).
+`*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
 
 ## Architecture
 

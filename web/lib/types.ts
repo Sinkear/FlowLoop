@@ -1038,7 +1038,78 @@ export interface HeldGate {
   held_since?: string;
   timeout_after?: string;
   timeout_action?: string;
+  // 运行时自动判定（BUG-4 §C）：上游 output 满足 auto_when 时自动执行
+  // auto_action（decided_by=auto），否则继续等人。
+  auto_when?: string;
+  auto_action?: string;
   sub_goal_id: string;
+}
+
+// ── scratch 环境变更账本（BUG-4 P2）：执行者对作业环境做了什么 ──
+export interface EnvChange {
+  id: string;
+  goal_id: string;
+  run_id: string;
+  node_key: string;
+  env_id: string;
+  before_version: string;
+  after_version: string;
+  snapshot_ref: string;
+  manifest_sha256: string;
+  status: string; // started | succeeded | failed | rolled_back
+  operator: string;
+  started_at: string;
+  finished_at: string;
+  error: string;
+  created_at: string;
+}
+
+// ── 计划 vs 实际对账（BUG-4）：编译图（blueprint_node）与实际执行
+// （sub_goal / run / consult_request）的逐节点 join。deviations 非空即偏离。
+export interface PlanAlignmentRun {
+  id: string;
+  role: string;
+  status: string;
+  summary?: string;
+}
+
+export interface PlanAlignmentNode {
+  node_key: string;
+  node_type: string;
+  state: string;
+  sub_goal_id?: string;
+  sub_goal_status?: string;
+  title?: string;
+  runs?: PlanAlignmentRun[];
+}
+
+export interface PlanAlignmentSubGoal {
+  id: string;
+  title: string;
+  status: string;
+  assignee_id?: string;
+  planned: boolean;
+}
+
+export interface PlanAlignment {
+  goal_id: string;
+  blueprint_version_id: string;
+  blueprint_name?: string;
+  pinned: boolean;
+  materialized: boolean;
+  nodes: PlanAlignmentNode[];
+  sub_goals: PlanAlignmentSubGoal[];
+  planned: number;
+  settled: number;
+  mapped: number;
+  executed: number;
+  unplanned_sub_goals: number;
+  consult_count: number;
+  writes: number;
+  attributed_writes: number;
+  unattributed_writes: number;
+  unattributed_commits: string[];
+  deviations: string[];
 }
 
 // ── 蓝本提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──

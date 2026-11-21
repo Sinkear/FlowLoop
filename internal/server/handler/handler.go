@@ -107,6 +107,8 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /goals/{id}/reopen", h.reopenGoal)
 	mux.HandleFunc("POST /goals/{id}/activate", h.activateGoal)
 	mux.HandleFunc("GET /goals/{id}/blueprint-gates", h.listBlueprintGates)
+	mux.HandleFunc("GET /goals/{id}/plan-alignment", h.getPlanAlignment)
+	mux.HandleFunc("GET /goals/{id}/env-changes", h.listEnvChanges)
 	mux.HandleFunc("POST /goals/{id}/blueprint-gates/{nodeKey}", h.resolveBlueprintGate)
 	mux.HandleFunc("GET /goals/{id}/runs", h.listRuns)
 	mux.HandleFunc("GET /goals/{id}/runs/{runId}/messages", h.listRunMessages)
@@ -140,9 +142,11 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /blueprints", h.listBlueprints)
 	mux.HandleFunc("POST /blueprints", h.createBlueprint)
 	mux.HandleFunc("GET /blueprints/{id}", h.getBlueprint)
+	mux.HandleFunc("DELETE /blueprints/{id}", h.deleteBlueprint)
 	mux.HandleFunc("GET /blueprints/{id}/versions", h.listBlueprintVersions)
 	mux.HandleFunc("POST /blueprints/{id}/versions", h.newBlueprintDraft)
 	mux.HandleFunc("PUT /blueprint-versions/{versionId}", h.updateBlueprintDraft)
+	mux.HandleFunc("DELETE /blueprint-versions/{versionId}", h.deleteBlueprintVersion)
 	mux.HandleFunc("POST /blueprint-versions/{versionId}/publish", h.publishBlueprintVersion)
 	mux.HandleFunc("GET /blueprint-versions/{versionId}/graph", h.blueprintVersionGraph)
 	// Phase C (proposal §12): patch proposals + diff + same-issue A/B.
@@ -152,6 +156,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /blueprint-proposals/{proposalId}/diff", h.blueprintProposalDiff)
 	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/approve", h.approveBlueprintProposal)
 	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/reject", h.rejectBlueprintProposal)
+	mux.HandleFunc("POST /blueprint-proposals/{proposalId}/next-round", h.nextRoundFromProposal)
 	mux.HandleFunc("GET /workflows/blueprints/{id}/ab", h.blueprintABCompare)
 
 	mux.HandleFunc("GET /squads", h.listSquads)
@@ -508,6 +513,37 @@ func (h *Handlers) resolveBlueprintGate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]any{"resolved": true, "node_key": r.PathValue("nodeKey"), "action": body.Action}, nil)
+}
+
+// getPlanAlignment returns the plan-vs-actual join: compiled spec nodes,
+// their sub_goal/run attachments, unplanned work and consult dispatches.
+func (h *Handlers) getPlanAlignment(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.PlanAlignment(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, out, nil)
+}
+
+// listEnvChanges returns the scratch environment-change ledger: what each
+// executor actually did to an environment (versions before/after, snapshot,
+// manifest hash), so an outcome can be attributed and audited after the fact.
+func (h *Handlers) listEnvChanges(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.ListEnvChanges(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, out, nil)
 }
 
 // listBlueprintGates returns the goal's open human decision cards (held
