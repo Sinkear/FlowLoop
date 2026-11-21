@@ -142,8 +142,14 @@ CREATE TABLE IF NOT EXISTS agent (
 CREATE TABLE IF NOT EXISTS skill (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
+    -- title = human-facing display name (SKILL.md frontmatter `title`); name
+    -- stays the machine identity (library dir / archive / agent.skills).
+    title       TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
+    -- builtin = 1 for skills shipped inside the daemon binary (re-seeded on
+    -- every boot and auto-attached to the steward). User uploads leave it 0.
+    builtin     INTEGER NOT NULL DEFAULT 0,
     -- Remote repository binding (feature: remote skill source). Empty
     -- repo_url = the skill is local-only. repo_token is the git platform
     -- token used for clone/push/PR; never returned by the API.

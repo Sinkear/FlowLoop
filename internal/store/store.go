@@ -276,6 +276,14 @@ func Open(path string) (*Store, error) {
 		`CREATE INDEX IF NOT EXISTS idx_infer_shape_domain ON infer_shape(domain_id, created_at)`,
 		`ALTER TABLE infer_shape ADD COLUMN skeleton TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE infer_shape ADD COLUMN drafted INTEGER NOT NULL DEFAULT 0`,
+
+		// Platform built-in skills (2026-11-20): title is the human-facing
+		// display name from SKILL.md frontmatter; builtin=1 marks a skill
+		// shipped inside the daemon binary (re-seeded every boot, attached to
+		// the steward, delete-refused). Both columns live in schema.sql for
+		// fresh DBs; these ALTERs retrofit existing ones.
+		`ALTER TABLE skill ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE skill ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

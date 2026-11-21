@@ -155,6 +155,23 @@ type intakeAction struct {
 	ImportTeam importTeamAction `json:"import_team"`
 	Domain     domainAction     `json:"domain"`
 	Skill      skillAction      `json:"skill"`
+	Blueprint  blueprintAction  `json:"blueprint"`
+}
+
+// blueprintAction carries the create_blueprint fields. Technical config is
+// absent by design: a blueprint is only (name, description, spec JSON), and
+// the spec itself is the thing the steward must get right — see
+// blueprintSpecHint for the skeleton it is given when the user has not
+// supplied content yet.
+type blueprintAction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Content is the SpecGraph JSON text (NOT a path) — the CLI reads a
+	// --content-file locally and posts the file's text here.
+	Content string `json:"content"`
+	// AgentID optionally fills the __AGENT_ID__ placeholder in content with
+	// this agent's bare id (the blueprint templates' authoring convention).
+	AgentID string `json:"agent_id"`
 }
 
 // skillAction carries the skill_list / skill_delete fields. Only name is
@@ -352,6 +369,10 @@ var intakeReg = &intakeRegistry{cmds: []intakeCommand{
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult { return d.intakeSquadDelete(ctx, p) }},
 	{"import_team", func() string { return "根据 <git URL> 创建一个 team" },
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult { return d.intakeImportTeam(ctx, p) }},
+	{"create_blueprint", func() string { return "创建蓝图 <名字>，流程是 <先说第一步、第二步怎么走>" },
+		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult {
+			return d.intakeCreateBlueprint(ctx, p)
+		}},
 	{"domain_create", func() string { return "创建项目 <名字>，仓库地址 <git url>" },
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult { return d.intakeCreateDomain(ctx, p) }},
 	{"domain_list", func() string { return "查看项目列表" },
@@ -825,6 +846,121 @@ func (d *Daemon) doCreateSquad(ctx context.Context, sq squadAction) intakeResult
 		return reply(fmt.Sprintf("⚠️ 已创建 squad：%s（%s），但以下成员添加失败：%s", createdSquad.Name, shortID(createdSquad.ID), strings.Join(failed, "、")))
 	}
 	return created(createdSquad, fmt.Sprintf("✅ 已创建 squad：%s（%s）", createdSquad.Name, shortID(createdSquad.ID)))
+}
+
+// intakeCreateBlueprint creates a versioned blueprint (draft v1) through the
+// blueprint service. Same two-branch ask-once structure as the other create
+// intents: a clarification turn merges the pending draft; a fresh turn asks
+// for everything missing in ONE message (name + spec JSON), then commits.
+//
+// The spec JSON is the thing users cannot type from memory, so the ask carries
+// a minimal valid skeleton in its platform hint (blueprintSpecHint) instead of
+// the usual roster. A non-empty but INVALID spec is a terminal error rather
+// than another ask — re-asking for "蓝图内容" would loop forever on malformed
+// JSON, and the validator's message already says what to fix.
+func (d *Daemon) intakeCreateBlueprint(ctx context.Context, parsed intakeAction) intakeResult {
+	bp := parsed.Blueprint
+	bp = fillBlueprintAgentPlaceholder(bp)
+	if draft, ok := d.loadDraftOfKind(ctx, "blueprint"); ok {
+		merged := mergeBlueprint(draft.Payload, bp)
+		if d.intakeSvc != nil {
+			_ = d.intakeSvc.ClearDraft(ctx)
+		}
+		return d.doCreateBlueprint(ctx, merged)
+	}
+	if missing := blueprintMissingFields(bp); len(missing) > 0 {
+		msg, hint := d.collectAndAsk(ctx, "blueprint", mustMarshal(bp), missing)
+		return needFields(missing, msg, hint)
+	}
+	return d.doCreateBlueprint(ctx, bp)
+}
+
+// fillBlueprintAgentPlaceholder replaces the templates' __AGENT_ID__ authoring
+// placeholder with the bare agent id, so "agent:__AGENT_ID__" becomes
+// "agent:<id>" (the validator's accepted assignee form). No agent given or no
+// placeholder → content unchanged.
+func fillBlueprintAgentPlaceholder(bp blueprintAction) blueprintAction {
+	agentID := strings.TrimSpace(bp.AgentID)
+	if agentID == "" || !strings.Contains(bp.Content, "__AGENT_ID__") {
+		return bp
+	}
+	bp.Content = strings.ReplaceAll(bp.Content, "__AGENT_ID__", agentID)
+	bp.AgentID = agentID
+	return bp
+}
+
+// doCreateBlueprint calls the service layer (which validates the spec V1–V5 +
+// assignee existence + name uniqueness) and returns the created row. Creation
+// produces a DRAFT v1 — publishing is a separate, deliberate step, so the
+// reply says so instead of implying the blueprint is usable right away.
+func (d *Daemon) doCreateBlueprint(ctx context.Context, bp blueprintAction) intakeResult {
+	if strings.TrimSpace(bp.Name) == "" {
+		return reply("创建蓝图失败：缺少名称")
+	}
+	if strings.TrimSpace(bp.Content) == "" {
+		return reply("创建蓝图失败：缺少蓝图内容（SpecGraph JSON）")
+	}
+	if d.blueprintSvc == nil {
+		return reply("创建蓝图失败：daemon 未接线 blueprint 服务")
+	}
+	row, err := d.blueprintSvc.Create(ctx, bp.Name, bp.Description, bp.Content, "human", "")
+	if err != nil {
+		return reply("创建蓝图失败：" + err.Error())
+	}
+	return created(row, fmt.Sprintf("✅ 已创建蓝图：%s（%s，v1 草稿）。发布之后才能在新建任务时选它；发布前还可以继续改稿。", row.Name, shortID(row.ID)))
+}
+
+// mergeBlueprint merges a clarification reply onto a draft. Content/agent are
+// only replaced when the reply actually carries them — the ask turn's parsed
+// action is usually just the name the user supplied.
+func mergeBlueprint(draftPayload string, reply blueprintAction) blueprintAction {
+	var draft blueprintAction
+	_ = json.Unmarshal([]byte(draftPayload), &draft)
+	if strings.TrimSpace(reply.Name) != "" {
+		draft.Name = reply.Name
+	}
+	if strings.TrimSpace(reply.Description) != "" {
+		draft.Description = reply.Description
+	}
+	if strings.TrimSpace(reply.Content) != "" {
+		draft.Content = reply.Content
+	}
+	if strings.TrimSpace(reply.AgentID) != "" {
+		draft.AgentID = reply.AgentID
+	}
+	return draft
+}
+
+// blueprintMissingFields returns human names of the required blueprint fields.
+// Graph internals (nodes/edges validity) are the validator's job: asking for
+// them field-by-field in chat is worse than one precise validation error.
+func blueprintMissingFields(bp blueprintAction) []string {
+	var out []string
+	if strings.TrimSpace(bp.Name) == "" {
+		out = append(out, "名称")
+	}
+	if strings.TrimSpace(bp.Content) == "" {
+		out = append(out, "蓝图内容")
+	}
+	return out
+}
+
+// blueprintSpecHint is the platform context attached to a blueprint ask: the
+// exact JSON shape that passes validation, plus the agent roster whose ids the
+// skeleton's assignee needs. Deliberately concrete — a steward that has to
+// guess the schema will hallucinate fields that V1–V5 reject.
+func (d *Daemon) blueprintSpecHint(ctx context.Context) string {
+	var b strings.Builder
+	b.WriteString("蓝图内容是一个 SpecGraph JSON，字段形状必须是：\n")
+	b.WriteString(`{"name":"图名","description":"可选说明","nodes":[`)
+	b.WriteString(`{"id":"t1","type":"task","title":"第一步","task":{"assignee":"agent:<agent-id>","brief":"要做的事"}},`)
+	b.WriteString(`{"id":"end_ok","type":"end","title":"完成","end":{"outcome":"success"}}`)
+	b.WriteString(`],"edges":[{"source":"t1","source_handle":"done","target":"end_ok"}]}` + "\n")
+	b.WriteString("node.id 只能是小写字母开头 + 小写字母/数字/下划线；至少一个 end 节点（outcome=success|failure）；task 必须嵌套在 \"task\" 对象里；可选节点类型 condition/router/gate/spawn（Phase B）。\n")
+	if d.platformHasAgents(ctx) {
+		b.WriteString("当前可用 agent（assignee 填 \"agent:<id>\"）：\n" + d.intakeAgentList(ctx))
+	}
+	return b.String()
 }
 
 // runtimeIDExists checks whether a runtime id is valid (used to decide
@@ -1660,6 +1796,8 @@ func (d *Daemon) collectAndAsk(ctx context.Context, kind, payloadJSON string, mi
 		msg.WriteString("创建 squad 还需要以下信息：\n")
 	case "domain":
 		msg.WriteString("创建项目还需要以下信息：\n")
+	case "blueprint":
+		msg.WriteString("创建蓝图还需要以下信息：\n")
 	}
 	for _, f := range missing {
 		msg.WriteString("- " + f + "\n")
@@ -1678,6 +1816,8 @@ func (d *Daemon) collectAndAsk(ctx context.Context, kind, payloadJSON string, mi
 		}
 	case "squad":
 		hint.WriteString("当前可用 agent：\n" + d.intakeAgentList(ctx))
+	case "blueprint":
+		hint.WriteString(d.blueprintSpecHint(ctx))
 	}
 	if d.intakeSvc != nil {
 		_ = d.intakeSvc.SaveDraft(ctx, notify.IntakeDraft{

@@ -45,6 +45,10 @@ state, in-process event bus, Go daemon + Next.js web UI.
   completion/failure pushes, a daily digest
 - **Real-time web UI** — live event stream, execution timeline, sub-goal /
   change / verification panels
+- **Conversation-first creation** — a built-in skill rides every steward
+  conversation, so goals, squads, agents, schedules and blueprints are created
+  by describing them in chat (the platform asks once for anything missing; a
+  blueprint lands as a draft and publishes on confirmation)
 - **Agent chat (ACP bridge)** — the web is a real ACP client for each agent:
   `GET /agents/{id}/acp` relays ACP frames unparsed to the machine-side CLI;
   sessions are the CLI's own (list/load/new), permission requests surface as

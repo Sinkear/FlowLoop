@@ -147,6 +147,7 @@ type Daemon struct {
 	teamImportSvc *service.TeamImportService // team-import processor run lifecycle
 	domainSvc     *service.DomainService     // intake: domain CRUD (NL-driven)
 	skillSvc      *service.SkillService      // intake: skill CRUD (NL-driven)
+	blueprintSvc  *service.BlueprintService  // intake: blueprint creation (NL-driven)
 	rsi           *service.RSIService        // trace collection + training analysis (optional)
 
 	mu          sync.Mutex
@@ -253,6 +254,12 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 	// to avoid a Daemon↔GoalService cycle.
 	goalSvc.SetStaleConflictResolver(&staleConflictResolver{st: st})
 	bus.Subscribe("agent:created", d.onAgentCreated)
+	// agent:updated carries a full agent row when the platform changes an
+	// agent outside the Update API (e.g. the steward's built-in skills being
+	// (re)attached at boot). The worker set is keyed by agent id, so
+	// re-ensuring is idempotent; new topics must also be added to the Web
+	// socket whitelist (internal/server/ws/hub.go).
+	bus.Subscribe("agent:updated", d.onAgentCreated)
 	bus.Subscribe("agent:deleted", d.onAgentDeleted)
 	bus.Subscribe("domain:deleted", d.onDomainDeleted)
 	// run.terminal → ReconcileGoal (决策 6-4): the latch's second edge — any
@@ -391,6 +398,14 @@ func (d *Daemon) SetDomainService(svc *service.DomainService) {
 
 func (d *Daemon) SetSkillService(svc *service.SkillService) {
 	d.skillSvc = svc
+}
+
+// SetBlueprintService wires the blueprint layer into the intake dispatcher so
+// "create blueprint" can go through the same conversation/need-fields path as
+// the other create intents. Optional: a nil service makes the intent reply
+// that blueprint creation is unavailable instead of panicking.
+func (d *Daemon) SetBlueprintService(svc *service.BlueprintService) {
+	d.blueprintSvc = svc
 }
 
 // Run starts the dispatch loop. Blocks until ctx is cancelled.

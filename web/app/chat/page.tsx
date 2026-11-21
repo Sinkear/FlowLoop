@@ -9,8 +9,10 @@ import { StewardChat } from "@/components/steward-chat";
 // 侧栏不是装饰——管家改完东西之后，人需要知道去哪验证（任务、机器、日志）。
 const CAN_DO = [
   "创建任务：说清目标、执行者、验收标准",
+  "创建蓝图：把流程写成节点图，发布后绑到任务",
+  "创建团队：说清谁负责哪个环节",
   "查看与推进任务：谁卡在待审批、哪次执行失败",
-  "改平台配置：项目仓库绑定、定时任务、技能",
+  "改平台配置：绑定项目仓库、定时任务、技能",
   "排查问题：读 daemon 日志、看某次 run 的输出",
 ];
 
@@ -26,7 +28,7 @@ export default function ChatPage() {
     <PageBody full>
       <PageHeader
         title="对话"
-        desc="用自然语言指挥管家：建任务、查状态、改配置，它通过 agentwork CLI 直接改这个平台。"
+        desc="用自然语言指挥管家：建任务、建蓝图、组团队、查状态、改配置，它通过 agentwork CLI 直接改这个平台。"
       />
       <div className="flex min-h-0 flex-1 gap-4">
         <StewardChat className="min-w-0 flex-1" />
@@ -40,6 +42,9 @@ export default function ChatPage() {
                 </li>
               ))}
             </ul>
+            <p className="border-t border-line px-4 py-2.5 text-[11px] leading-relaxed text-ink-3">
+              内置技能「对话式创建」会逐项问清字段再动手：缺什么问什么，确认后才写进平台。
+            </p>
           </SectionCard>
 
           <SectionCard title="做完去哪看" desc="顺手验证结果">

@@ -12,10 +12,12 @@ export interface ProbeCLI {
 // Skill is a platform-managed skill package (CLI 分支 Phase 4).
 export interface Skill {
   id: string;
-  name: string;
+  name: string; // 机器身份（目录名 / agent.skills 里存的 id），如 agentwork-chat-create
+  title?: string; // 中文展示名（SKILL.md frontmatter 的 title），可能为空
   description: string;
   created_at: string;
   source?: SkillSource | null;
+  builtin?: boolean; // 平台随 daemon 二进制发布的内置技能（启动时自动刷新，不能手删）
 }
 
 // SkillSource is a skill's remote repository binding (Feature A). It is

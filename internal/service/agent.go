@@ -613,10 +613,15 @@ func (s *AgentService) ListActiveRuntimeIDs(ctx context.Context) ([]string, erro
 // if no hwcloud runtime is active, the seed is skipped (ImportTeam will report
 // the error when the user tries to import). If the steward already exists but
 // its runtime is no longer usable, EnsureStewardRuntime reassigns or waits.
+// Either way the platform's built-in skills are (re)attached — an existing
+// steward seeded before they existed gains them on this boot.
 func (s *AgentService) SeedSteward(ctx context.Context) error {
-	_, err := s.GetSteward(ctx)
+	a, err := s.GetSteward(ctx)
 	if err == nil {
-		return s.EnsureStewardRuntime(ctx)
+		if err := s.EnsureStewardRuntime(ctx); err != nil {
+			return err
+		}
+		return s.ensureStewardBuiltinSkills(ctx, a.ID)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return err
@@ -643,9 +648,12 @@ func (s *AgentService) SeedSteward(ctx context.Context) error {
 // named runtime doesn't exist or isn't active (seed path), or no active
 // runtime is available (self-heal path).
 func (s *AgentService) SeedStewardForRuntime(ctx context.Context, runtimeName string) error {
-	_, err := s.GetSteward(ctx)
+	a, err := s.GetSteward(ctx)
 	if err == nil {
-		return s.EnsureStewardRuntime(ctx)
+		if err := s.EnsureStewardRuntime(ctx); err != nil {
+			return err
+		}
+		return s.ensureStewardBuiltinSkills(ctx, a.ID)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return err
@@ -675,10 +683,11 @@ func (s *AgentService) SeedStewardForRuntime(ctx context.Context, runtimeName st
 // worker in d.workers).
 func (s *AgentService) insertSteward(ctx context.Context, runtimeID string) error {
 	id := newID()
+	skillsJSON, _ := json.Marshal(stewardBuiltinSkillIDs())
 	if _, err := s.st.DB().ExecContext(ctx,
 		`INSERT INTO agent (id,name,type,description,runtime_id,system_prompt,model,env,mcp_servers,skills,max_concurrent,created_at)
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, "AI SHELL", "steward", stewardDescription, runtimeID, StewardSystemPrompt, "", "{}", "[]", "[]", 3, now()); err != nil {
+		id, "AI SHELL", "steward", stewardDescription, runtimeID, StewardSystemPrompt, "", "{}", "[]", string(skillsJSON), 3, now()); err != nil {
 		return err
 	}
 	a, err := s.Get(ctx, id)
@@ -686,5 +695,53 @@ func (s *AgentService) insertSteward(ctx context.Context, runtimeID string) erro
 		return fmt.Errorf("reload seeded steward: %w", err)
 	}
 	s.bus.Publish(ctx, events.Event{Topic: "agent:created", Payload: *a})
+	return nil
+}
+
+// stewardBuiltinSkillIDs is the platform skill set every steward carries: the
+// conversation-first creation skill (创建任务 / 团队 / 智能体 / 蓝本 by talking).
+// Agent.skills is a JSON array of platform skill ids (pushed to the machine's
+// staging dir by the daemon), so this rides the same pipeline as user skills.
+func stewardBuiltinSkillIDs() []string {
+	return []string{BuiltinChatCreateID}
+}
+
+// ensureStewardBuiltinSkills attaches the platform's built-in skills to a
+// steward that predates them (a DB seeded before the skill shipped), without
+// touching any skill the user added to the steward. Idempotent: a steward that
+// already carries them is left untouched (no write, no event), so callers can
+// invoke it on every boot and every machine registration.
+func (s *AgentService) ensureStewardBuiltinSkills(ctx context.Context, stewardID string) error {
+	a, err := s.Get(ctx, stewardID)
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(a.Skills))
+	for _, id := range a.Skills {
+		have[id] = true
+	}
+	missing := []string{}
+	for _, id := range stewardBuiltinSkillIDs() {
+		if !have[id] {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	a.Skills = append(a.Skills, missing...)
+	skillsJSON, _ := json.Marshal(a.Skills)
+	if _, err := s.st.DB().ExecContext(ctx, `UPDATE agent SET skills=? WHERE id=?`, string(skillsJSON), stewardID); err != nil {
+		return fmt.Errorf("attach builtin skills to steward: %w", err)
+	}
+	fresh, err := s.Get(ctx, stewardID)
+	if err != nil {
+		return err
+	}
+	// Publish agent:updated (not agent:created): the agent already exists and
+	// must not be mistaken for a new one by UI consumers; the daemon's worker
+	// subscription is shared and idempotent, and the Web hub relays the full
+	// updated row so an open chat page refetches the steward's skills.
+	s.bus.Publish(ctx, events.Event{Topic: "agent:updated", Payload: *fresh})
 	return nil
 }
