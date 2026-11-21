@@ -1,10 +1,10 @@
 // Package issue is the GitHub issue adapter (M4-B): the external-entry half
 // of the loop. Open issues in a domain's configured repo become goals
 // (poller); the agent replies to issues through the platform (CreateComment,
-// driven by agentwork-cli); a delivered goal closes its issue (closer).
+// driven by ouroflow-cli); a delivered goal closes its issue (closer).
 //
 // The adapter is a pure platform action: the agent never touches the GitHub
-// token or the API — it produces structured side effects via agentwork-cli,
+// token or the API — it produces structured side effects via ouroflow-cli,
 // the platform executes them (triangle separation).
 package issue
 
@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // Issue is one GitHub issue (API shape, minimal).
@@ -884,7 +884,7 @@ func (c *Closer) OnDelivered(ctx context.Context, goalID, note string, commits [
 			return
 		}
 	}
-	comment := fmt.Sprintf("✅ 已由 agentwork 修复并合入（goal %s）。", short(goalID))
+	comment := fmt.Sprintf("✅ 已由 ouroflow 修复并合入（goal %s）。", short(goalID))
 	if trimmed := strings.TrimSpace(note); trimmed != "" {
 		comment += "\n\n" + trimmed
 	}
@@ -926,7 +926,7 @@ func (c *Closer) OnTerminal(ctx context.Context, goalID, summary string) {
 // OnAgentQuestion is the bus handler for comment:agent_question: an agent
 // posted an --ask comment on the goal's feed, asking the human a question.
 // For an issue-sourced goal the question is mirrored onto the issue so the
-// author sees it where they live (the git host), not only inside agentwork.
+// author sees it where they live (the git host), not only inside ouroflow.
 // The question is relayed verbatim — it is the agent's own words, the same as
 // a developer commenting "I need X to proceed" on an issue. No platform
 // branding, no goal id; the bot account's display name is the identity.

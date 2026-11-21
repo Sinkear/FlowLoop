@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/logging"
 	"github.com/google/uuid"
 )
 

@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/acp"
 )
 
 // modelConfigID is the config-option id agents use for the model selector.

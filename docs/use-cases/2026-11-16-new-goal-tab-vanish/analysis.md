@@ -15,7 +15,7 @@
 | # | 动作 | 修复前平台的实际反应（代码事实） |
 |---|------|----------------------------------|
 | ① | 打开 /goals/new，写需求，点「交给管家创建」 | 页面建立 ws（`/backend/agents/{steward}/acp`）→ daemon `OpenChatForAgent` → 机器 spawn 一个管家 CLI 进程 → `newSession` → 发出建任务指令 |
-| ② | 管家开始跑（通常能看到 tool 卡片在动） | CLI 在会话里执行 `agentwork create goal --title ...`，**这条命令需要数十秒**（LLM turn + 落库） |
+| ② | 管家开始跑（通常能看到 tool 卡片在动） | CLI 在会话里执行 `ouroflow create goal --title ...`，**这条命令需要数十秒**（LLM turn + 落库） |
 | ③ | 用户切到别的页面（任务看板/任何 tab） | **app router 卸载本页组件** → 卸载 cleanup 执行 `disposeClient()`：`gen++`、`ws.close(1000)` |
 | ④ | （用户看不到，但发生了） | daemon 侧 web ws 断开 → `CloseChat` → 通知机器 `MethodChatClose` → 机器 `chatBridge.cleanup`：关 CLI stdin（3 秒后强杀兜底）→ **管家 turn 被掐死，create goal 没跑完 → 永远没有新 goal** |
 | ⑤ | 用户切回 /goals/new | 组件重新挂载：`phase` 回 `idle`、`lines` 为空（**记录只是组件 state，没有持久层**）→ 懒连接重新握手 → `newSession` 开的是**全新会话**——旧对话不在里面 |
@@ -47,8 +47,8 @@
         │        （旧 page.tsx:192-200；懒连接本页没问题——问题是不加区分地关）
         ▼
 [F2 进程被杀]    daemon CloseChat → 机器 MethodChatClose → chatBridge.cleanup
-        │        （关 stdin→3s 强杀；internal/daemon/chat.go + cmd/agentwork-cli/chat.go）
-        │        → 管家 turn 半路死 → agentwork create goal 没跑完 → 无 goal
+        │        （关 stdin→3s 强杀；internal/daemon/chat.go + cmd/ouroflow-cli/chat.go）
+        │        → 管家 turn 半路死 → ouroflow create goal 没跑完 → 无 goal
         ▼
 [F3 记录无持久层] lines=useState，无 localStorage/sessionStore/loadSession 任何一层
         │        （对比：steward-chat.tsx 用 localStorage；chat-panel 用 loadSession）

@@ -2,7 +2,7 @@
 
 > **范围**：`approve → goal:approved → 异步 deliver → MarkDelivered` 这条收口链路；2026-11-21 09:06:34 opencode（`ceb804a0d2ca59a0bc1cf59cdb9c3a2b`）交付失败与 49m48s 停摆的代码机制。
 > **不覆盖**：merge/push 的 Git 正确性（`deliver.go` 119-303）、`recoverPendingDelivers` 的查询语义是否正确（只讨论触发时机与幂等性边界）、事件总线本身的可靠性（观察项-5 另文）。
-> **代码基线**：本仓库 `git HEAD a3d2744`。事故运行版本构建自已删除的 `/tmp/agentwork-featnew`（`0.1.0-featnew.20261119`），源码不可得；事故行为以 `daemon.log` / DB 为准，代码位置以 HEAD 为准。
+> **代码基线**：本仓库 `git HEAD a3d2744`。事故运行版本构建自已删除的 `/tmp/ouroflow-featnew`（`0.1.0-featnew.20261119`），源码不可得；事故行为以 `daemon.log` / DB 为准，代码位置以 HEAD 为准。
 > **判定约定**：每条结论都给出「HEAD 是否已修」。工作树里有并行修复补丁（`deliver.go`/`goal.go` 未提交），**不作为已修证据**；合并状态以 [execution-report.md](execution-report.md) 为准。
 
 ## 事故摘要

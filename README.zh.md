@@ -1,44 +1,42 @@
-# agentwork
+<div align="center">
 
-> [English](README.md) | [设计文档](docs/design/DESIGN.md) | [协作模型](docs/design/Collaboration.v2.md)
+# OuroFlow
 
-**AI 干活的流水线操作系统**——单用户控制面，让 CLI agent 无人值守地跑完整闭环：
-任务 → 执行 → 机器验证 → 人工卡点 → 自动交付。你用自然语言定义验收策略，agent
-干活，平台判定，人只在卡点出现。
+**AI 干活的流水线操作系统——你用自然语言定义"怎样算完成"，CLI agent 无人值守跑完整闭环。**
 
-**单进程、单机、单用户、无需认证。** 本地 SQLite 持久化，进程内事件总线，Go
-daemon + Next.js Web 界面。
+任务 → 执行 → 机器验证 → 人工卡点 → 自动交付
 
-## 特性
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/ouroflow/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)](#-快速开始)
 
-- **全自动闭环** — goal / run / 机器验证 / 结构化约束 / 人工卡点 / 自动交付
-  （合并 + 复验 + 推送）
-- **验收策略属于域（项目）** — 用自然语言说"怎样算完成"，处理器 agent 编译成
-  可执行检查（验证命令、约束、卡点），你确认一次后冻结
-- **子任务 + 变更交付** — owner 拆活成子任务（独立负责人、独立 worktree、
-  机器或 agent 验证）；验证通过的子任务产出 **Change**（带修订版本），owner
-  集成——冲突会自动唤醒 assignee 返修
-- **四种协作行为** — Comment（说）/ Consult（问）/ Handoff（接力）/ Sub-goal
-  （拆活），以 `agentwork` CLI 暴露，owner 权限在服务端强制
-- **多协议多传输** — ACP / JSONL / JSON-RPC × stdio / ws / tcp；agent 可挂
-  自己的额外 MCP 服务器
-- **多触发渠道** — Web、cron 定时、GitHub/GitCode issue + PR（轮询；issue 另有
-  webhook）、飞书入站（@机器人 建任务）
+[English](README.md) · [简体中文](README.zh.md)
+
+[特性亮点](#-特性亮点) · [快速开始](#-快速开始) · [核心概念](#-核心概念) · [协作](#-协作) · [架构](#-架构) · [CLI](#-cli-工具) · [文档](#-数据升级与模板) · [技术栈](#-技术栈) · [致谢](#-致谢)
+
+**单进程、单机、单用户、无需认证。** 本地 SQLite 持久化，进程内事件总线，Go daemon + Next.js Web 界面。
+
+</div>
+
+## 🌟 特性亮点
+
+- **全自动闭环** — goal / run / 机器验证 / 结构化约束 / 人工卡点 / 自动交付（合并 + 复验 + 推送）
+- **验收策略属于域（项目）** — 用自然语言说"怎样算完成"，处理器 agent 编译成可执行检查（验证命令、约束、卡点），你确认一次后冻结
+- **子任务 + 变更交付** — owner 拆活成子任务（独立负责人、独立 worktree、机器或 agent 验证）；验证通过的子任务产出 **Change**（带修订版本），owner 集成——冲突会自动唤醒 assignee 返修
+- **四种协作行为** — Comment（说）/ Consult（问）/ Handoff（接力）/ Sub-goal（拆活），以 `ouroflow` CLI 暴露，owner 权限在服务端强制
+- **多协议多传输** — ACP / JSONL / JSON-RPC × stdio / ws / tcp；agent 可挂自己的额外 MCP 服务器
+- **多触发渠道** — Web、cron 定时、GitHub/GitCode issue + PR（轮询；issue 另有 webhook）、飞书入站（@机器人 建任务）
+- **任务验收模式（HITL / HOOTL）** — goal 与定时任务可建为 HITL（卡点人工复检，默认）或 HOOTL（run 完成即终态，跳过人工卡点）；类别写入创建日志、显示在 Web UI、被定时任务继承
+- **远程技能源** — 给 skill 挂一个 GitHub/GitCode 仓库（分支、路径、token），本地远端比对、拉取更新、推送编辑、发起 PR；同步与 PR 的权限会实际校验，拉取立即刷新该 agent LIVE 会话的技能副本
 - **飞书通知** — 审批卡（IM 内直接批/驳）、完成/失败推送、每日摘要
 - **实时 Web UI** — 事件流、执行时间线、子任务 / 变更 / 验证记录面板
-- **对话式创建** — 平台内置技能「对话式创建」自动挂到管家：任务 / 团队 /
-  智能体 / 定时任务 / 蓝本都能在对话里说清需求后一次建好（缺字段平台追问一轮），
-  蓝本建成即草稿、确认后发布
-- **Agent 聊天（ACP 桥）** — Web 就是每个 agent 的真实 ACP 客户端：
-  `GET /agents/{id}/acp` 把 ACP 帧原样中继到机器侧 CLI；会话是 CLI 自己的
-  （list/load/new），权限请求弹出审批框，回合可中断；毒会话历史在输入层
-  失败时自动换新会话重试
+- **对话式创建** — 平台内置技能「对话式创建」自动挂到管家：任务 / 团队 / 智能体 / 定时任务 / 蓝本都能在对话里说清需求后一次建好
+- **Agent 聊天（ACP 桥）** — Web 就是每个 agent 的真实 ACP 客户端：`GET /agents/{id}/acp` 把 ACP 帧原样中继到机器侧 CLI；权限请求弹出审批框，回合可中断，毒会话历史在输入层失败时自动换新会话重试
 
-> **一句话脑图：** **goal** 是工作条目，状态权威的唯一持有者；**run** 是某个
-> agent 在它上面的一次执行——run 只汇报、不决策。完成与否由平台判定，卡点由人
-> 把关。
+> **一句话脑图：** **goal** 是工作条目，状态权威的唯一持有者；**run** 是某个 agent 在它上面的一次执行——run 只汇报、不决策。完成与否由平台判定，卡点由人把关。
 
-## 快速开始
+## 🚀 快速开始
 
 ### 环境要求
 
@@ -49,17 +47,18 @@ daemon + Next.js Web 界面。
 ### 后端
 
 ```bash
-./build.sh   # 产出 build/agentwork（CLI）+ build/agentwork-daemon，
-             # 带同一版本戳（AGENTWORK_COMPILE_VERSION）
+./build.sh   # 产出 build/ouroflow（CLI）+ build/ouroflow-daemon，
+             # 带同一版本戳（OUROFLOW_COMPILE_VERSION）
 
 # 启动 daemon（默认 :47813）
-./build/agentwork-daemon
+./build/ouroflow-daemon
 
 # 在跑 agent 的机器上：
-./build/agentwork connect
+./build/ouroflow connect
 ```
 
-### 前端
+<details open>
+<summary><b>前端</b></summary>
 
 ```bash
 cd web
@@ -67,17 +66,23 @@ npm install
 npm run build && npm start
 ```
 
-### 第一个任务
+</details>
+
+<details open>
+<summary><b>第一个任务</b></summary>
 
 1. 创建**项目**（域）：仓库地址 + 自然语言验收策略（不确认冻结则强制人工卡点）
 2. 创建 **runtime**（如 `opencode acp --pure`，stdio + acp）和 **agent**
-3. 在机器上运行 `agentwork connect`——daemon 通过 `run.poll` 把任务派给
-   它（拉取模型）
-4. 创建 **goal**、指派给 agent，看闭环跑起来：执行 → 验证 → 卡点 → 你审批 →
-   自动交付
+3. 在机器上运行 `ouroflow connect`——daemon 通过 `run.poll` 把任务派给它（拉取模型）
+4. 创建 **goal**、指派给 agent，看闭环跑起来：执行 → 验证 → 卡点 → 你审批 → 自动交付
 5. 或者直接在 Agent 页面与任意 agent 聊天——每次打开都会重新下发人设和技能
 
-## 核心概念
+</details>
+
+## 🧩 核心概念
+
+<details>
+<summary><b>对象模型——一张表看完</b></summary>
 
 | 概念 | 含义 |
 |---|---|
@@ -96,79 +101,92 @@ npm run build && npm start
 | **定时任务（Schedule）** | cron 模板，每次触发克隆一个 goal（幂等、时区感知） |
 | **触发渠道** | Web、cron、GitHub/GitCode issue + PR（轮询，source_ref 去重；issue 另有 webhook）、飞书入站 |
 
-## 协作（四种行为）
+</details>
+
+## 🤝 协作
+
+<details>
+<summary><b>四种行为、一个 CLI、owner 权限服务端强制</b></summary>
 
 | 行为 | CLI 命令 | 权限 |
 |---|---|---|
-| **Comment**（说） | `agentwork goal comment --text T` | 任何人 |
+| **Comment**（说） | `ouroflow goal comment --text T` | 任何人 |
 | **Consult**（问） | `goal comment` 里 mention：`[@Name](mention://agent/<id>)` | goal 的 owner |
-| **Handoff**（接力） | `agentwork goal assign <to-agent-id> [--note N]` | goal 的 owner |
-| **Sub-goal**（拆活） | `agentwork subgoal create --title T --assignee A` / `subgoal cancel <id>` | goal 的 owner |
+| **Handoff**（接力） | `ouroflow goal assign <to-agent-id> [--note N]` | goal 的 owner |
+| **Sub-goal**（拆活） | `ouroflow subgoal create --title T --assignee A` / `subgoal cancel <id>` | goal 的 owner |
 
-agent 只通过 `agentwork` CLI（守护进程二进制的 shim，spawn 时放进 agent 的 PATH）
-协作。每条命令携带 per-run token（`AGENTWORK_TOKEN`），守护进程 `/rpc` 端点将其
-解析为 run 的 `(goal, agent, role)`——token 是唯一身份，自报 id 被忽略，handoff
-的 owner 校验在服务端强制。另有 `subgoal verify`、`change integrate` 及
-`*_list` 命令。完整模型见 [Collaboration.v2.md](docs/design/Collaboration.v2.md)。
+agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进 agent 的 PATH）协作。每条命令携带 per-run token（`OUROFLOW_TOKEN`），守护进程 `/rpc` 端点将其解析为 run 的 `(goal, agent, role)`——token 是唯一身份，自报 id 被忽略，handoff 的 owner 校验在服务端强制。另有 `subgoal verify`、`change integrate` 及 `*_list` 命令。完整模型见 [Collaboration.v2.md](docs/design/Collaboration.v2.md)。
 
-## 架构
+</details>
+
+## 🧱 架构
+
+<details>
+<summary><b>一张图看全系统</b></summary>
 
 ```
-                 ┌────────────── HTTP API + WS hub ──────────────┐
-                 │   goals/runs/sub-goals/changes/…               │
-                 │   + /agents/{id}/acp（ACP 聊天中继）            │
-                 ▼                                               ▼
-           service 层（状态权威）                       Web UI（Next.js）
-                 │  bus.Publish（commit 后）                │ ACP 客户端（聊天）
-                 ▼                                           │
-            SQLite（真相） ── daemon 调度器 ─────────────────┤
-                                 │ run.poll / chat.*        │
-                                 ▼                           ▼
-                          agentwork connect   ◄──  /connect（JSON-RPC）
-                                 │  runTask、聊天桥（spawn + 中继）
-                                 ▼
-                          runtime.Open(spec)
-                                 │  acp | jsonl | jsonrpc
-                                 ▼
-                          agent CLI 子进程 ◄── ACP 帧原样中继
-                           （stdio/ws/tcp）
-                           └─ fs/terminal RPC + agentwork CLI（/rpc）
-                              （worktree、协作命令）
-                 ┌───────────────┬─────────────────────────────┘
-                 ▼               ▼
-         机器验证 / 约束     卡点 → 交付
-         （域验收策略）      （人批 → 合并+复验+推送）
+             ┌────────────── HTTP API + WS hub ──────────────┐
+             │   goals/runs/sub-goals/changes/…               │
+             │   + /agents/{id}/acp（ACP 聊天中继）            │
+             ▼                                               ▼
+       service 层（状态权威）                       Web UI（Next.js）
+             │  bus.Publish（commit 后）                │ ACP 客户端（聊天）
+             ▼                                           │
+        SQLite（真相） ── daemon 调度器 ────────────────┤
+                             │ run.poll / chat.*        │
+                             ▼                           ▼
+                      ouroflow connect   ◄──  /connect（JSON-RPC）
+                             │  runTask、聊天桥（spawn + 中继）
+                             ▼
+                      runtime.Open(spec)
+                             │  acp | jsonl | jsonrpc
+                             ▼
+                      agent CLI 子进程 ◄── ACP 帧原样中继
+                       （stdio/ws/tcp）
+                       └─ fs/terminal RPC + ouroflow CLI（/rpc）
+                          （worktree、协作命令）
+             ┌───────────────┬─────────────────────────────┘
+             ▼               ▼
+      机器验证 / 约束        卡点 → 交付
+      （域验收策略）        （人批 → 合并+复验+推送）
 ```
 
-- **Event ≠ 真相** — 事件总线只是唤醒提示；一切状态转移都是条件化 DB 事务，
-  重放幂等
-- **机器执行器** — `agentwork connect` 持有一条常驻 JSON-RPC 链接并拉取
-  工作（`run.poll`）；它执行 run、托管每个 agent 的聊天桥（spawn CLI、原样
-  中继 ACP 帧、关闭时先 stdin EOF 优雅收尾再杀进程）
-- **run 级 worktree** — `$AGENTWORK_HOME/runs/<runID>`（默认 `~/.agentwork`）临时 git worktree，基于每域
-  bare 仓；崩溃恢复在启动时重放未仲裁的终态 run 并重推导 attention
-- **Coordinator** — 派生的 OwnerAttention（integration / recovery /
-  user_action）在有活干时才唤醒 owner
+- **Event ≠ 真相** — 事件总线只是唤醒提示；一切状态转移都是条件化 DB 事务，重放幂等
+- **机器执行器** — `ouroflow connect` 持有一条常驻 JSON-RPC 链接并拉取工作（`run.poll`）；它执行 run、托管每个 agent 的聊天桥（spawn CLI、原样中继 ACP 帧、关闭时先 stdin EOF 优雅收尾再杀进程）
+- **run 级 worktree** — `$OUROFLOW_HOME/runs/<runID>`（默认 `~/.ouroflow`）临时 git worktree，基于每域 bare 仓；崩溃恢复在启动时重放未仲裁的终态 run 并重推导 attention
+- **Coordinator** — 派生的 OwnerAttention（integration / recovery / user_action）在有活干时才唤醒 owner
 
-## CLI 工具
+</details>
 
-`agentwork` 既是**机器执行器**，也是人调试用的工具（agent 走 `agentwork` CLI shim 协作）：
+## 🔧 CLI 工具
+
+<details>
+<summary><b>机器执行器 + 人用调试工具</b></summary>
+
+`ouroflow` 既是**机器执行器**，也是人调试用的工具（agent 走 `ouroflow` CLI shim 协作）：
 
 ```bash
-agentwork connect               # 机器侧：拉取派发、执行 run、托管聊天桥
-agentwork goal list --limit 5   # 调试命令（默认连 http://localhost:47813，
-agentwork stats                 #   或设 AGENTWORK_SERVER_URL）
+ouroflow connect               # 机器侧：拉取派发、执行 run、托管聊天桥
+ouroflow goal list --limit 5   # 调试命令（默认连 http://localhost:47813，
+ouroflow stats                 #   或设 OUROFLOW_SERVER_URL）
 ```
 
-## 数据、升级与模板
+</details>
+
+## 📚 数据、升级与模板
 
 - [路径与数据布局](docs/PATHS.md) — 每个目录/环境变量，以及升级时哪些必须保留
 - [保留数据的升级](docs/UPGRADE.md) — stop → 备份 → 只换 bin/web → start，含 JEM 方案
 - [Run 身份与指令归属](docs/IDENTITY.md) — run 的身份只由本次 run 定义：共用 workdir 身份劫持复盘与三层修复
-- [把最佳实践做成模板](docs/TEMPLATES.md) — 用 `agentwork-daemon export-template` 导出并复用
-- [制品替换 skill](skills/agentwork-artifact-swap/SKILL.md) — 同一套“不丢数据”流程，可拷到目标机器直接用
+- [把最佳实践做成模板](docs/TEMPLATES.md) — 用 `ouroflow-daemon export-template` 导出并复用
+- [制品替换 skill](skills/ouroflow-artifact-swap/SKILL.md) — 同一套"不丢数据"流程，可拷到目标机器直接用
+- [设计基线](docs/design/DESIGN.md) — 冻结版产品与架构设计文档
+- [协作模型](docs/design/Collaboration.v2.md) — 完整的 owner / 角色 / 权限模型
 
-## 技术栈
+## 🧪 技术栈
+
+<details>
+<summary><b>用了什么</b></summary>
 
 | 层 | 技术 |
 |---|---|
@@ -178,3 +196,27 @@ agentwork stats                 #   或设 AGENTWORK_SERVER_URL）
 | **传输** | stdio、WebSocket、TCP |
 | **通知** | 飞书（审批卡、日报、IM 入站） |
 | **Issue/PR 触发** | GitHub、GitCode |
+
+</details>
+
+## 🙏 致谢
+
+OuroFlow 是 [agentwork](https://github.com/yusheng-g/agentwork) 的独立衍生发行版，由 [Sinkear](https://github.com/Sinkear) 维护。
+
+| | |
+|---|---|
+| 上游项目 | [yusheng-g/agentwork](https://github.com/yusheng-g/agentwork) |
+| 维护者 | [Sinkear](https://github.com/Sinkear) |
+| 许可证 | MIT — 修改部分 © 2026 Sinkear，原始部分版权归原作者 |
+
+---
+
+<div align="center">
+
+**OuroFlow** — 人把卡点，平台跑闭环。
+
+[⬆ 回到顶部](#ouroflow)
+
+MIT © 2026 Sinkear
+
+</div>

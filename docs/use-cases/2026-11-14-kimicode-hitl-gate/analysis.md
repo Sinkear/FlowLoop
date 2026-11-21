@@ -1,7 +1,7 @@
 # 案例分析：kimicode 高风险升级的人工授权闸门（F1/F2/F3/R3）
 
 > 分析对象：2026-11-14 18:26「升级 kimicode」HITL 任务（category=hitl），事件时间线见 §1。
-> 代码基线：`/home/sinkear/developer/agentwork`（修复前 HEAD `a843af0`）。
+> 代码基线：`/home/sinkear/developer/ouroflow`（修复前 HEAD `a843af0`）。
 > 配套：`findings-review-semantics.md`（review 状态机逐项分析 F1/F2/F3/R3 + C1）。
 > 本文是结论与数据指标；修复对照见 §6。
 

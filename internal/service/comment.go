@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // Comment is a message under a goal. Authors are polymorphic (human/agent/
@@ -24,7 +24,7 @@ type Comment struct {
 	ParentID   string `json:"parent_id"`
 	Content    string `json:"content"`
 	CreatedAt  string `json:"created_at"`
-	// RunID is the run whose product this comment is (AGENTWORK_RUN_ID for
+	// RunID is the run whose product this comment is (OUROFLOW_RUN_ID for
 	// agent comments — the RPC handler stamps it from the run token).
 	// Persisted — the approval panel distinguishes worker reports from
 	// review opinions by run ownership (DESIGN.md 决策 4-4), and

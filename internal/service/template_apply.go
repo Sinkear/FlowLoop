@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/acp"
-	"github.com/eushing/agentwork/internal/gitcodeapi"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/gitcodeapi"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -336,7 +336,7 @@ func parseTemplate(raw string) (TemplateMeta, any, error) {
 	if err := dec.Decode(&spec); err != nil {
 		return TemplateMeta{}, nil, fmt.Errorf("模板格式错误：%v", err)
 	}
-	if spec.APIVersion != "" && spec.APIVersion != "agentwork/v1" {
+	if spec.APIVersion != "" && spec.APIVersion != "ouroflow/v1" {
 		return TemplateMeta{}, nil, fmt.Errorf("不支持的 api_version %q", spec.APIVersion)
 	}
 	if spec.Metadata.ID == "" {
@@ -502,7 +502,7 @@ func (s *TemplateApplyService) resolveRuntime(ctx context.Context, name string, 
 		}
 	}
 	if len(usableIDs) == 0 {
-		return "", NewValidationError("没有可用的 runtime——所有机器离线或未连接，请先 agentwork connect")
+		return "", NewValidationError("没有可用的 runtime——所有机器离线或未连接，请先 ouroflow connect")
 	}
 	return pickRandom(usableIDs), nil
 }

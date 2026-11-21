@@ -2,7 +2,7 @@ import { setRequestLocale, getTranslations } from "next-intl/server";
 import { CodeBlock } from "@/components/code-block";
 import { Callout } from "@/components/callout";
 
-const REPO = "https://github.com/yusheng-g/agentwork";
+const REPO = "https://github.com/Sinkear/ouroflow";
 
 type Behavior = { name: string; desc: string; who: string; chips: string[]; example: string };
 

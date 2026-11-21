@@ -28,26 +28,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/logging"
 
-	"github.com/eushing/agentwork/internal/acp"
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/gitutil"
-	"github.com/eushing/agentwork/internal/issue"
-	"github.com/eushing/agentwork/internal/notify"
-	"github.com/eushing/agentwork/internal/paths"
-	"github.com/eushing/agentwork/internal/proto"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/gitutil"
+	"github.com/Sinkear/ouroflow/internal/issue"
+	"github.com/Sinkear/ouroflow/internal/notify"
+	"github.com/Sinkear/ouroflow/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 	"github.com/google/uuid"
 )
 
-// DaemonVersion is the agentwork-daemon build version, echoed in register
+// DaemonVersion is the ouroflow-daemon build version, echoed in register
 // results — the CLI and the daemon warn each other on a mismatch (protocol
 // drift between an old binary and a new daemon surfaces at connect time).
 // var (not const): the release build stamps the real version via
-// -ldflags "-X <pkg>.DaemonVersion=$AGENTWORK_COMPILE_VERSION" (build.sh)
+// -ldflags "-X <pkg>.DaemonVersion=$OUROFLOW_COMPILE_VERSION" (build.sh)
 // so the CLI and the daemon ship one shared version stamp.
 var DaemonVersion = "0.0.1-beta.1"
 
@@ -164,7 +164,7 @@ type Daemon struct {
 	rsi           *service.RSIService        // trace collection + training analysis (optional)
 
 	mu          sync.Mutex
-	workers     map[string]*agentWorker // agentID → per-agent scheduler
+	workers     map[string]*agentRunner // agentID → per-agent scheduler
 	domainLocks map[string]*domainLock  // per-domain git lock (fetch + deliver)
 	// deliverInFlight is the single-flight guard for deliverGoal: a stale
 	// re-approve (BUG-2) now PUBLISHES goal:approved instead of rejecting, and
@@ -227,8 +227,8 @@ type Daemon struct {
 	chat chatRelay
 }
 
-// agentWorker schedules one agent's runs with a concurrency semaphore.
-type agentWorker struct {
+// agentRunner schedules one agent's runs with a concurrency semaphore.
+type agentRunner struct {
 	agentID   string
 	sem       chan struct{} // capacity = max_concurrent
 	queue     chan *service.ClaimedRow
@@ -252,7 +252,7 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 		intakeSvc:         intakeSvc,
 		issuePoll:         issue.NewPoller(st, goalSvc, runSvc),
 		issueCloser:       issue.NewCloser(st),
-		workers:           make(map[string]*agentWorker),
+		workers:           make(map[string]*agentRunner),
 		msgBuffers:        make(map[string]*msgBuffer),
 		toolBuffers:       make(map[string]map[string]*toolRow),
 		runCancels:        make(map[string]context.CancelFunc),
@@ -383,7 +383,7 @@ func New(st *store.Store, bus *events.Bus, addr string, protoReg *proto.Registry
 	})
 	// M4-B: an agent's --ask question on an issue-sourced goal is mirrored
 	// onto the issue so the author sees it on the git host (where they live),
-	// not only inside agentwork. The agent's question is relayed verbatim —
+	// not only inside ouroflow. The agent's question is relayed verbatim —
 	// the same as a developer commenting "I need X to proceed" on an issue.
 	// Non-issue goals no-op (Closer.resolveIssueTarget returns false). The
 	// notify subscription (Feishu card) runs independently for platform users.
@@ -1094,7 +1094,7 @@ func (d *Daemon) StopRun(goalID, runID string) error {
 // owner's persistent workdir + the feed are its real memory. Returns nil for
 // review/terminal/human goals (EnqueueOwnerRun's no-op contract).
 func (d *Daemon) ContinueGoal(goalID string) (*service.Run, error) {
-	const wakeNote = "You were paused by the user. Pick up your worktree state where you left it — pull the comment feed with `agentwork goal comments` if you need to recheck the latest coordination, then continue. Do NOT start over."
+	const wakeNote = "You were paused by the user. Pick up your worktree state where you left it — pull the comment feed with `ouroflow goal comments` if you need to recheck the latest coordination, then continue. Do NOT start over."
 	return d.goalSvc.EnqueueOwnerRun(d.ctx, goalID, wakeNote)
 }
 
@@ -1124,7 +1124,7 @@ func (d *Daemon) takeCancelReason(runID string) string {
 	return r
 }
 
-func (d *Daemon) ensureWorker(agentID string, maxConcurrent int) *agentWorker {
+func (d *Daemon) ensureWorker(agentID string, maxConcurrent int) *agentRunner {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
@@ -1133,7 +1133,7 @@ func (d *Daemon) ensureWorker(agentID string, maxConcurrent int) *agentWorker {
 	if w, ok := d.workers[agentID]; ok {
 		return w
 	}
-	w := &agentWorker{
+	w := &agentRunner{
 		agentID:   agentID,
 		sem:       make(chan struct{}, maxConcurrent),
 		queue:     make(chan *service.ClaimedRow, workerQueueDepth),
@@ -1147,7 +1147,7 @@ func (d *Daemon) ensureWorker(agentID string, maxConcurrent int) *agentWorker {
 	return w
 }
 
-func (w *agentWorker) loop() {
+func (w *agentRunner) loop() {
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -1280,7 +1280,7 @@ func (d *Daemon) dispatchOnce(ctx context.Context) {
 // would collide on index.lock.
 
 // runsRoot is where run worktrees and the domain bare repos live
-// ($AGENTWORK_HOME/runs).
+// ($OUROFLOW_HOME/runs).
 func runsRoot() string {
 	return paths.Runs()
 }
@@ -1484,12 +1484,12 @@ func (d *Daemon) ensureSharedRepo(ctx context.Context, domainID, gitURL, gitCred
 // URLs are returned as-is.
 // sanitizeURL strips embedded credentials before a URL is logged — clone
 // URLs carry the platform token, and it must never reach the log file.
-// Delegates to gitutil (shared with the agentwork CLI — Phase 3).
+// Delegates to gitutil (shared with the ouroflow CLI — Phase 3).
 func sanitizeURL(raw string) string { return gitutil.SanitizeURL(raw) }
 
 // gitCloneURL embeds the domain's credentials into an HTTPS clone URL
 // (github token-as-username / gitcode oauth2:). Delegates to gitutil
-// (shared with the agentwork CLI — Phase 3).
+// (shared with the ouroflow CLI — Phase 3).
 func gitCloneURL(gitURL, credentials string) string { return gitutil.CloneURL(gitURL, credentials) }
 
 // ensureRunWorktreeFor allocates the run's worktree (决策 6-2): owner runs
@@ -1880,7 +1880,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	agentEnv, _ := d.loadAgentEnv(ctx, q.AgentID)
 
 	// M4-B: source-ref goals (issue | pull request) carry the source identity
-	// so the agent can reply via `agentwork-cli issue comment` (the platform
+	// so the agent can reply via `ouroflow-cli issue comment` (the platform
 	// owns the token and routes by the source kind); the LIVE remote comments
 	// are fetched at run start and injected into the prompt — the source
 	// stays the source of truth, nothing is stored. A PR's dialogue lives on
@@ -1905,7 +1905,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	var issueSection string
 	if srcRepo != "" {
 		// The run's goal tracks a PUBLIC issue/PR on the git host. Anything
-		// the agent posts there with `agentwork issue comment` is read by
+		// the agent posts there with `ouroflow issue comment` is read by
 		// humans outside the platform — the contract rides EVERY run that
 		// can touch the source, not the user-written persona (which is
 		// easy to leave unconfigured).
@@ -1913,13 +1913,13 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			issueSection = "## Source pull request (public)\n" +
 				"This goal tracks a PUBLIC pull request (" + srcRepo + "!" + srcNumber + ") on the git host. " +
 				"The PR's source/target branches are in the goal description — fetch the source branch in the worktree to review the actual diff. " +
-				"Comments you post there with `agentwork issue comment` are read by people outside the platform — " +
+				"Comments you post there with `ouroflow issue comment` are read by people outside the platform — " +
 				"write professionally and completely (review findings / status / blockers / conclusions), " +
 				"never mention platform-internal ids or process details.\n"
 		} else {
 			issueSection = "## Source issue (public)\n" +
 				"This goal tracks a PUBLIC issue (" + srcRepo + "#" + srcNumber + ") on the git host. " +
-				"Comments you post there with `agentwork issue comment` are read by people outside the platform — " +
+				"Comments you post there with `ouroflow issue comment` are read by people outside the platform — " +
 				"write professionally and completely (current status / plan / blockers / conclusions), " +
 				"never mention platform-internal ids or process details.\n"
 		}
@@ -1946,10 +1946,10 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			dispatchEnv[k] = v
 		}
 		if srcRepo != "" {
-			dispatchEnv["AGENTWORK_ISSUE_REPO"] = srcRepo
-			dispatchEnv["AGENTWORK_ISSUE_NUMBER"] = srcNumber
+			dispatchEnv["OUROFLOW_ISSUE_REPO"] = srcRepo
+			dispatchEnv["OUROFLOW_ISSUE_NUMBER"] = srcNumber
 			if srcKind == issue.RefPull {
-				dispatchEnv["AGENTWORK_SOURCE_KIND"] = "pull"
+				dispatchEnv["OUROFLOW_SOURCE_KIND"] = "pull"
 			}
 		}
 		// Dispatch-time plan backstop: a pinned goal whose ledger is empty must
@@ -2010,12 +2010,12 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			artifactFiles = []string{"team.json"}
 			if d.teamImportSvc != nil {
 				if impGitURL, impCreds, impBranch, ok := d.teamImportSvc.GitConfigForGoal(ctx, q.GoalID); ok {
-					dispatchEnv["AGENTWORK_GIT_URL"] = impGitURL
+					dispatchEnv["OUROFLOW_GIT_URL"] = impGitURL
 					if impCreds != "" {
-						dispatchEnv["AGENTWORK_GIT_CREDENTIALS"] = impCreds
+						dispatchEnv["OUROFLOW_GIT_CREDENTIALS"] = impCreds
 					}
 					if impBranch != "" {
-						dispatchEnv["AGENTWORK_DEFAULT_BRANCH"] = impBranch
+						dispatchEnv["OUROFLOW_DEFAULT_BRANCH"] = impBranch
 					}
 				} else {
 					logging.Warnf("daemon: import run %s has no team_import git config — agent clone will fail", q.RunID)
@@ -2043,7 +2043,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	// The unified execution model (CLI 分支): every run dispatches to its
 	// machine over the /connect link. Legacy transports have no executor
 	// anymore — fail with a pointer instead of pretending to run.
-	d.failRun(ctx, q, "this runtime has no machine — run `agentwork connect` and point the agent at a machine-owned runtime")
+	d.failRun(ctx, q, "this runtime has no machine — run `ouroflow connect` and point the agent at a machine-owned runtime")
 }
 
 // runProcessorTask executes a platform-internal processor run. The only
@@ -2986,7 +2986,7 @@ func (d *Daemon) assemblePrompt(ctx context.Context, q *service.ClaimedRow, in p
 		// the reject memory above: the owner's own previous round, continued.
 		//
 		// The comment id is injected as the anchor (comment <id>) so the owner
-		// can re-pull the full thread with `agentwork goal comments --after
+		// can re-pull the full thread with `ouroflow goal comments --after
 		// <id>` if it needs more context than the snippet. No truncation — an
 		// --ask question is short, and a report snippet that lost its tail
 		// with no way to fetch the full text was worse than a slightly longer
@@ -2998,7 +2998,7 @@ func (d *Daemon) assemblePrompt(ctx context.Context, q *service.ClaimedRow, in p
 			  WHERE c.id=? AND c.parent_id != '' AND p.author_type='agent'`,
 			in.triggerCommentID).Scan(&parentID, &parentContent); err == nil {
 			if s := strings.TrimSpace(parentContent); s != "" {
-				extras.WriteString(fmt.Sprintf("\nYour previous comment (comment %s — the user is replying to this; pull `agentwork goal comments --after %s` for the full thread if needed):\n> %s\n",
+				extras.WriteString(fmt.Sprintf("\nYour previous comment (comment %s — the user is replying to this; pull `ouroflow goal comments --after %s` for the full thread if needed):\n> %s\n",
 					parentID, parentID, s))
 			}
 		}
@@ -3010,7 +3010,7 @@ func (d *Daemon) assemblePrompt(ctx context.Context, q *service.ClaimedRow, in p
 	// SQL stays untouched; the text now names the positive close-out path.
 	if in.runRole == "owner" || in.runRole == "consult" {
 		if n, err := d.agentTriggeredRunCount(ctx, q.GoalID); err == nil && n > service.MaxMentionHints {
-			extras.WriteString(fmt.Sprintf("\n⚠️ Collaboration warning: agents have handed this task back and forth %d times. Do NOT hand it off again — finish the remaining work yourself. If the work is substantially done, submit the goal for review (agentwork goal submit-review) and end your turn; otherwise end your turn and leave it for a human.\n", n))
+			extras.WriteString(fmt.Sprintf("\n⚠️ Collaboration warning: agents have handed this task back and forth %d times. Do NOT hand it off again — finish the remaining work yourself. If the work is substantially done, submit the goal for review (ouroflow goal submit-review) and end your turn; otherwise end your turn and leave it for a human.\n", n))
 		}
 	}
 	if in.runRole == "owner" {

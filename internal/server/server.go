@@ -19,17 +19,17 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/eushing/agentwork/internal/daemon"
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/issue"
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/notify"
-	"github.com/eushing/agentwork/internal/paths"
-	"github.com/eushing/agentwork/internal/server/handler"
-	"github.com/eushing/agentwork/internal/server/ws"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/daemon"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/issue"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/notify"
+	"github.com/Sinkear/ouroflow/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/server/handler"
+	"github.com/Sinkear/ouroflow/internal/server/ws"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 
 	"github.com/gorilla/websocket"
 )
@@ -258,7 +258,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeWS(s.hub, w, r)
 	})
-	// The agentwork CLI's link (CLI 分支 Phase 1): a JSON-RPC 2.0 over
+	// The ouroflow CLI's link (CLI 分支 Phase 1): a JSON-RPC 2.0 over
 	// WebSocket connection carrying machine registration, heartbeats, and
 	// probe reports (run dispatch/config push land in later phases).
 	// /connect auth is handled by authMiddleware on non-loopback (the machine
@@ -1147,7 +1147,7 @@ func isLoopbackAddr(addr string) bool {
 //
 // /rpc is EXEMPT: it is the agent/link channel with its own application-layer
 // auth (per-run token in JSON-RPC params via ResolveRunToken). The executor
-// env injects AGENTWORK_SERVER_URL but not worker_token — agent CLI's rpcCall
+// env injects OUROFLOW_SERVER_URL but not worker_token — agent CLI's rpcCall
 // dials /rpc with no HTTP-layer token. /connect is NOT exempt: the machine
 // connect CLI passes ?token=worker_token explicitly (connect.go:431).
 func authMiddleware(settingsSvc *service.SettingsService, next http.Handler) http.Handler {

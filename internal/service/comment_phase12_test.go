@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // captureEvents returns a func that drains the buffered capture of every

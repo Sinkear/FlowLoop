@@ -1,6 +1,6 @@
 # 看门狗 / 自动调度闸门 / 交付件持久化 / 验收口径 — 源码核对与治理结论
 
-- 分析对象：`/home/sinkear/developer/agentwork`，HEAD = `9931759`（2026-11-13 14:17）。
+- 分析对象：`/home/sinkear/developer/ouroflow`，HEAD = `9931759`（2026-11-13 14:17）。
 - 生产部署二进制：以 `f0c7563`（2026-11-03 20:10）/ `23a7ce1`（11-03 21:27）为近似构建点。
 - 部署版 vs HEAD 的判定方法：对每个论点做 `git blame` + `git merge-base --is-ancestor`，结论写在每项的「HEAD 是否已修」里。
 - 不在本文件范围（已由他人负责）：comment mention 派发去重（A2）、run 预算/续跑（runtime-analyst）。涉及这两处的联动只在必要时引用，不展开。
@@ -15,7 +15,7 @@
 | ID | 结论（一句话） | 严重度 | HEAD 状态 |
 |---|---|---|---|
 | **W1** | scratch 域（本案例就是）的平台验收是**零机器校验**：run 完成跳过全部 checks/guards/gates，交付审批"按汇报验收"直接 delivered。A7（1.0.3 未按严格 spec）与 A8（三轴版本错位）平台没有任何机会发现——这是同一个根因的两个表现。 | **P1** | 未修（`a7f584a3` 08-14 / `11bcf2eb` 08-16 至今） |
-| **W2** | 交付证据默认不落盘：平台已提供持久 goal 目录，但没有报告路径约定、没有 `AGENTWORK_*DIR` 环境变量、`subgoal verify --evidence` 只收内联字符串、worker 的 scratch 交付件没有上传通道。A9 的 /tmp 丢失是机制性结果，不是偶然。 | **P1** | 未修 |
+| **W2** | 交付证据默认不落盘：平台已提供持久 goal 目录，但没有报告路径约定、没有 `OUROFLOW_*DIR` 环境变量、`subgoal verify --evidence` 只收内联字符串、worker 的 scratch 交付件没有上传通道。A9 的 /tmp 丢失是机制性结果，不是偶然。 | **P1** | 未修 |
 | **W3** | 机器执行模型下 scratch 交付目录只在**执行机磁盘**上；跨机器/容器重建即丢。且固定块里打印的是 daemon 侧算出的绝对路径，跨主机部署时该路径在执行机上不存在。 | **P1**（结构性风险） | 未修 |
 | **W4** | idle 看门狗的时间戳是"最后一批 ACP 事件"，无 run 级心跳；任何 >2min 无输出的命令（`uv sync` 183 包）必然误报。A3 的 4 条告警是**设计内噪声**；idle 评论走 `CreateNoDispatch`，**不会**再触发 consult/wake/二次 run，"据此重复调度"在代码层不成立。 | P2 | 未修（通知行为本身就是 08-31 修复后的设计） |
 | **W5** | Collaboration Warning 注入**不区分 run 角色**（verify/subgoal 也会收到"不要再派发"），计数把 consult 算进去；它只是 prompt 文本，没有任何拦截。A6 里"停止派发"是模型自律，不是平台闸门。 | P2 | 未修（`11bcf2eb` 08-16） |
@@ -75,7 +75,7 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSu
    }
    if role == "consult" || role == "review" { return "" }
    ```
-2. 由于 scratch 目录在**执行机**而 checks 在 daemon，验收必须放到执行侧：`internal/daemon/daemon.go:1945` 的 dispatch 参数新增 `ScratchChecks`（仅 scratch owner run 下发 `checks.Setup/Verify` + `verify_timeout`，不下发 guards/gates——它们需要域 diff，scratch 无 diff）；`cmd/agentwork-cli/exec.go` 在 agent 进程退出、`status=="completed"` 后，**由 CLI 自身**（agent 不可见）在 `workdir` 顺序执行 setup/verify，写 `reports/verify-evidence.json`（命令、退出码、耗时、workdir），作为 `ArtifactFiles` 上传；任一退出码非 0 则把 run 置 `failed`（summary=`machine verification failed: <cmd>`），走既有失败/重试链。这是把 repo 域"daemon 算、goal 层判"的影子模型搬到 scratch，执行主体从 daemon 换成 CLI。
+2. 由于 scratch 目录在**执行机**而 checks 在 daemon，验收必须放到执行侧：`internal/daemon/daemon.go:1945` 的 dispatch 参数新增 `ScratchChecks`（仅 scratch owner run 下发 `checks.Setup/Verify` + `verify_timeout`，不下发 guards/gates——它们需要域 diff，scratch 无 diff）；`cmd/ouroflow-cli/exec.go` 在 agent 进程退出、`status=="completed"` 后，**由 CLI 自身**（agent 不可见）在 `workdir` 顺序执行 setup/verify，写 `reports/verify-evidence.json`（命令、退出码、耗时、workdir），作为 `ArtifactFiles` 上传；任一退出码非 0 则把 run 置 `failed`（summary=`machine verification failed: <cmd>`），走既有失败/重试链。这是把 repo 域"daemon 算、goal 层判"的影子模型搬到 scratch，执行主体从 daemon 换成 CLI。
 3. `internal/daemon/deliver.go:102` 收紧：当 domain 冻结了 `checks.Verify`（`checks_compiled_at != ''` 且 Verify 非空）而 owner run 的 `evidence` 为空/失败 → `finishDeliver(ctx, goalID, false, "scratch 交付缺少机器验收证据（verify 未跑或未通过）")`，并 park review 让人决定"重跑验收"或"接受例外"。
 4. A8 的正确落点：把 zz.009/严格 spec 扫描这类脚本作为**该 packaging domain 的 `checks.Verify` 条目**（如 `python3 scripts/zz_scan.py --strict --metadata`），而不是让 Packager 在对话里选口径。这样"用 --env 宽松口径"这种降级在平台层根本不可能发生。A7 的许可证三件套同理变成 verify 脚本的断言（`test -f runtime/THIRD_PARTY_NOTICES` 等）。
 5. 测试：
@@ -96,7 +96,7 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSu
 1. 持久目录**已经存在**，但只是"告知"，不是"约定"，更不是"校验"：
    - `internal/paths/paths.go:95-98`：`ScratchGoal(name, goalID) = runs/scratch/<name>/goals/<goalID>`；
    - `internal/service/util.go:179-181` 注释："the branch analog: the goal's durable state lives HERE across runs"；
-   - `cmd/agentwork-cli/exec.go:715-722`：执行机的 cwd 就是这个目录（`os.MkdirAll(base, 0o755)`）。
+   - `cmd/ouroflow-cli/exec.go:715-722`：执行机的 cwd 就是这个目录（`os.MkdirAll(base, 0o755)`）。
 2. 平台注入的固定块只写了"产物在这个目录、会跨轮存活"，没有报告子路径、没有"不要写 /tmp"：
    - `internal/daemon/team_context.go:71-78`：
      ```go
@@ -106,36 +106,36 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, agentSu
      b.WriteString("PARENT directory is user-maintained shared material: READ-ONLY. Write\n")
      b.WriteString("only inside this goal's directory.\n")
      ```
-3. 环境变量只有身份，没有目录：`cmd/agentwork-cli/exec.go:739-743` 仅 `AGENTWORK_SERVER_URL/GOAL_ID/RUN_ID/AGENT_ID/TOKEN`。
-4. verify 的 evidence 只能内联：`cmd/agentwork-cli/collab.go:78` `fs.String("evidence", "", "evidence (command output etc.)")`，服务端 `internal/service/subgoal.go:483-487` 写 `verification_result.evidence`。报告文件本身不会被收进证据，只能贴一段文字或写一个 `/tmp/...` 路径——任务结束即悬空。
+3. 环境变量只有身份，没有目录：`cmd/ouroflow-cli/exec.go:739-743` 仅 `OUROFLOW_SERVER_URL/GOAL_ID/RUN_ID/AGENT_ID/TOKEN`。
+4. verify 的 evidence 只能内联：`cmd/ouroflow-cli/collab.go:78` `fs.String("evidence", "", "evidence (command output etc.)")`，服务端 `internal/service/subgoal.go:483-487` 写 `verification_result.evidence`。报告文件本身不会被收进证据，只能贴一段文字或写一个 `/tmp/...` 路径——任务结束即悬空。
 5. worker 的 scratch 交付件没有上传通道；现有 `Artifacts` 通道只服务 processor/import/digest：
    - `internal/link/link.go:284` `ArtifactFiles []string`，`:505-508` `Artifacts map[string]string`；
-   - `cmd/agentwork-cli/exec.go:431-438` 在 `status=="completed"` 时按 `p.ArtifactFiles` 从 workdir 读文件上传；
+   - `cmd/ouroflow-cli/exec.go:431-438` 在 `status=="completed"` 时按 `p.ArtifactFiles` 从 workdir 读文件上传；
    - 但 `ArtifactFiles` 只有三处设置：`daemon.go:1949/2035`（digest/import/compile）与 `intake.go:74`（intake），普通 worker 恒为 nil。
    - digest 是现成范式：`internal/service/digest_seed.go:45-47` `DigestArtifactFiles = []string{"manifest.json", "1.md", ...}`，注释"Fixed names — the executor's prompt mandates them"。
 
 **本案例影响**
 
-A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader 的 `icode-snapshot.json`（`/tmp/job-env-uvgrade/`）、Verifier 首轮报告（`/tmp/job-env-artifact-verifier/reports/`）、Packager 的 `artifact-spec-report.json`（`/tmp/`）全部丢失。最终只能靠本轮人工补验重跑一遍（§6，105s，`agentwork_runs: 0`）——"测试内容等价、治理不等价"正是这个缺口。平台侧只留下了 28 条交接评论，**报告内容本身不可复核**。
+A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader 的 `icode-snapshot.json`（`/tmp/job-env-uvgrade/`）、Verifier 首轮报告（`/tmp/job-env-artifact-verifier/reports/`）、Packager 的 `artifact-spec-report.json`（`/tmp/`）全部丢失。最终只能靠本轮人工补验重跑一遍（§6，105s，`ouroflow_runs: 0`）——"测试内容等价、治理不等价"正是这个缺口。平台侧只留下了 28 条交接评论，**报告内容本身不可复核**。
 
-/tmp 的机制性原因：平台没有指定报告路径、没给目录环境变量、证据只收内联字符串；而 skill/模板脚本自带 `/tmp/<skill-name>/` 约定（本仓库无该脚本，来自 agentwork-templates 的 job-env 系列），agent 在"技能说的路径"和"固定块说的目录"之间选择了前者。**不是平台把 /tmp 当默认，也不是容器 /tmp**：`exec.go` 直接 spawn agent（全仓无 docker/container 运行时），cwd 就是 goal 目录。
+/tmp 的机制性原因：平台没有指定报告路径、没给目录环境变量、证据只收内联字符串；而 skill/模板脚本自带 `/tmp/<skill-name>/` 约定（本仓库无该脚本，来自 ouroflow-templates 的 job-env 系列），agent 在"技能说的路径"和"固定块说的目录"之间选择了前者。**不是平台把 /tmp 当默认，也不是容器 /tmp**：`exec.go` 直接 spawn agent（全仓无 docker/container 运行时），cwd 就是 goal 目录。
 
 **HEAD 是否已修**：否（`team_context.go:71` 08-16；`collab.go` evidence 参数自引入未变）。
 
 **修复方案（小改动、高收益）**
 
-1. `cmd/agentwork-cli/exec.go:736-745`（`buildEnv`）在 `scratchWorkdir` 解析后注入：
+1. `cmd/ouroflow-cli/exec.go:736-745`（`buildEnv`）在 `scratchWorkdir` 解析后注入：
    ```go
-   env = append(env, "AGENTWORK_WORKDIR="+workdir,
-                    "AGENTWORK_GOAL_DIR="+goaldir,        // repo 域为 worktree 根
-                    "AGENTWORK_REPORT_DIR="+filepath.Join(workdir, "reports"))
+   env = append(env, "OUROFLOW_WORKDIR="+workdir,
+                    "OUROFLOW_GOAL_DIR="+goaldir,        // repo 域为 worktree 根
+                    "OUROFLOW_REPORT_DIR="+filepath.Join(workdir, "reports"))
    ```
    （`buildEnv` 目前拿得到 `workdir` 参数，scratch 的 `workdir` 就是 goal 目录；repo 域可给 `reports/` 留空，避免污染仓库。）
 2. `internal/daemon/team_context.go:71-78` 固定块加硬规则：
-   "Write every report/evidence file under `AGENTWORK_REPORT_DIR` (i.e. `<goalDir>/reports/`). Files under `/tmp`, `/var/tmp`, or outside the goal directory are NOT durable and will be treated as missing evidence."
+   "Write every report/evidence file under `OUROFLOW_REPORT_DIR` (i.e. `<goalDir>/reports/`). Files under `/tmp`, `/var/tmp`, or outside the goal directory are NOT durable and will be treated as missing evidence."
 3. CLI 增加 `subgoal verify --evidence-file <path>`：读文件（上限 64KB，超限截断并注明），与 `--evidence` 互斥；`internal/server/server.go:707` 已有透传。这样 Verifier 的报告正文直接进 `verification_result.evidence`，即使文件丢了也有结构化证据。
 4. worker 的 scratch 交付走 digest 通道：daemon 在 dispatch 时给 scratch owner run 设 `ArtifactFiles: []string{"reports/manifest.json"}`（固定名，模板/固定块强制），`exec.go:431` 天然支持；daemon 在 `IngestRunFinished` 里把 manifest 落到 daemon 侧 `runs/scratch/<name>/goals/<id>/reports/`（或 DB），实现跨机器可审计的一小份"收据"。manifest 只放小文件清单/sha256/版本三元组，不放大制品（74MB tar 仍留在 `/root/jobEnvPackage/` 或走 release）。
-5. 模板侧（另一个仓库）必须同步把 job-env 系列脚本的输出根从 `/tmp` 改为 `${AGENTWORK_REPORT_DIR:-$PWD/reports}`；平台改不了这部分，建议在 templates 仓库开一条对应 issue。
+5. 模板侧（另一个仓库）必须同步把 job-env 系列脚本的输出根从 `/tmp` 改为 `${OUROFLOW_REPORT_DIR:-$PWD/reports}`；平台改不了这部分，建议在 templates 仓库开一条对应 issue。
 6. 测试：`exec_test`（env 与 manifest 上传）、`team_context` 固定块含新规、`collab_test`（evidence-file 读入与截断）、`daemon` 落盘路径。
 7. 风险：manifest 缺失会让旧 scratch 域在交付时被"证据缺失"拦住 → 用"域配置 + 默认警告"两档：默认只写告警评论，`verification_strength=strong` 或显式配置才硬拦。
 
@@ -145,7 +145,7 @@ A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader
 
 **证据**
 
-1. scratch 目录是**执行机本地**的：`cmd/agentwork-cli/exec.go:715-722` 用 `paths.ScratchGoal(...)`（`paths.Runs()` 基于本机 home），daemon 的 `scratchGoalDir`（`daemon.go:1262-1266`）只在 daemon 本机有意义。worker run 全部 dispatch 到 machine（`daemon.go:1960-1963`："every run dispatches to its machine ... Legacy transports have no executor anymore"），不存在 daemon 本地执行路径。
+1. scratch 目录是**执行机本地**的：`cmd/ouroflow-cli/exec.go:715-722` 用 `paths.ScratchGoal(...)`（`paths.Runs()` 基于本机 home），daemon 的 `scratchGoalDir`（`daemon.go:1262-1266`）只在 daemon 本机有意义。worker run 全部 dispatch 到 machine（`daemon.go:1960-1963`："every run dispatches to its machine ... Legacy transports have no executor anymore"），不存在 daemon 本地执行路径。
 2. 固定块里的路径是 **daemon 侧**算的：`team_context.go:75` `scratchGoalDir(domainName, goalID)` → `daemon.go:1258-1265` → `paths.Runs()`。若执行机与 daemon 不同主机/不同 home，这段 prompt 里的绝对路径在执行机上不存在。本案例能落到 `…/goals/f68bd0a5…/reports/` 说明是同机（或同 home），但这个前提没有任何地方被断言。
 3. 删除也只在 daemon 侧：`daemon.go:774-780` 删 goal 时 `RemoveAll(scratchGoalDir)`；执行机上的目录没人清理也没人收集（与 repo 域不同：repo 靠 `git push` 回共享仓，scratch 没有等价通道）。
 
@@ -155,7 +155,7 @@ A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader
 
 **修复方案**
 
-1. 路径不写死：`team_context.go:75` 改为不渲染绝对路径，只说"当前工作目录（`AGENTWORK_WORKDIR`）就是 goal 目录，`AGENTWORK_REPORT_DIR` 是报告目录"；或由 `exec.go` 在合并 `AGENTS.md`（run profile）时把 `{{AGENTWORK_WORKDIR}}` 占位替换成执行机真实路径。改 `exec.go` 的 profile 合并点即可，根除跨机错路径。
+1. 路径不写死：`team_context.go:75` 改为不渲染绝对路径，只说"当前工作目录（`OUROFLOW_WORKDIR`）就是 goal 目录，`OUROFLOW_REPORT_DIR` 是报告目录"；或由 `exec.go` 在合并 `AGENTS.md`（run profile）时把 `{{OUROFLOW_WORKDIR}}` 占位替换成执行机真实路径。改 `exec.go` 的 profile 合并点即可，根除跨机错路径。
 2. 小报告跨机：W2 的 manifest 上传即为最小方案；若需要完整目录镜像，复用 `Artifacts` 通道做"reports 目录打包上传（≤N MB）"，daemon 落到自己的 `runs/scratch/<name>/goals/<id>/reports/`；大制品不镜像，明确"制品发布走 release/CDN 或对象存储"。
 3. 域级约束：scratch domain 可声明"必须单机执行"（已有 `runtime.machine_id` 机制，但 domain/goal 没有 pin）。最小可行：交付卡上显示"交付目录所在机器"，跨机时提示"未镜像"。
 4. 测试：profile 占位替换单测；manifest 跨机落盘测试（daemon 侧 fake machine artifacts）。
@@ -179,7 +179,7 @@ A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader
    - `internal/daemon/machine_dispatch.go:313-316`：`d.machineLastEvent[p.RunID] = time.Now()` + `go d.runMachineWatchdog(p.RunID, mid)`；
    - `machine_dispatch.go:369`：`IngestRunEvents` 每批 `d.machineLastEvent[p.RunID] = time.Now()`；
    - run 终态删除（`:507-511`）。
-   评论、工具是否执行完、进程存活、HTTP 心跳都**不参与**判定（`grep heartbeat` 只命中 `cmd/agentwork-cli/connect.go` 的机器链路心跳，没有 run 级心跳）。
+   评论、工具是否执行完、进程存活、HTTP 心跳都**不参与**判定（`grep heartbeat` 只命中 `cmd/ouroflow-cli/connect.go` 的机器链路心跳，没有 run 级心跳）。
 3. 触发动作：只发 system 评论，不取消、不重排：
    - `machine_dispatch.go:640-658`：
      ```go
@@ -201,7 +201,7 @@ A9：Checker 的 `upgrades.json`（`/tmp/job-env-upgrade-checker/`）、Upgrader
    }
    ```
    即：既不 Reopen goal，也不 Enqueue consult/owner run。
-5. 长命令必然误报：`cmd/agentwork-cli/exec.go:351-396` 的事件泵只在 `len(buf) > 0` 时 flush（100ms ticker）。一个 `uv sync --frozen`（183 包）从 `tool_call` 事件到 `tool_result` 之间可能 5-10 分钟零事件 → `machineLastEvent` 不动 → 2 分钟必发一条。模型 rate-limit backoff 同理（这正是文案里的 "possibly ... backoff"）。
+5. 长命令必然误报：`cmd/ouroflow-cli/exec.go:351-396` 的事件泵只在 `len(buf) > 0` 时 flush（100ms ticker）。一个 `uv sync --frozen`（183 包）从 `tool_call` 事件到 `tool_result` 之间可能 5-10 分钟零事件 → `machineLastEvent` 不动 → 2 分钟必发一条。模型 rate-limit backoff 同理（这正是文案里的 "possibly ... backoff"）。
 
 **本案例影响**
 
@@ -331,7 +331,7 @@ A6：18:39 AI SHELL 的 owner run（run#20）收到"已往返 5 次，不要再�
    }
    ```
    不比较 `verifierID` 与 `assigneeID`，也不比较与 goal owner。照此可以创建"我干活、我验收"的工作项。
-3. 本案例的实证：报告 §2/§6 明确"AI SHELL 兼平台触发的 verify/consult run 执行者"——即 goal owner 亲自跑平台 verify run（run#7/#13/#19），独立 Verifier agent（run#15）只被派去跑 34 条 base 用例。最终补验（10:15）甚至是"架构伙伴直跑 skill"，`agentwork_runs: 0`。治理上的"独立验收"在平台结构里没有被强制。
+3. 本案例的实证：报告 §2/§6 明确"AI SHELL 兼平台触发的 verify/consult run 执行者"——即 goal owner 亲自跑平台 verify run（run#7/#13/#19），独立 Verifier agent（run#15）只被派去跑 34 条 base 用例。最终补验（10:15）甚至是"架构伙伴直跑 skill"，`ouroflow_runs: 0`。治理上的"独立验收"在平台结构里没有被强制。
 
 **HEAD 是否已修**：否。
 
@@ -349,7 +349,7 @@ A6：18:39 AI SHELL 的 owner run（run#20）收到"已往返 5 次，不要再�
 **证据**
 
 1. 模板版本只解析、不落库：`internal/service/template_apply.go:19-30`（`templateSpec.Metadata.Version`）、`:316` 只校验 `api_version`；`internal/service/template.go:43-48` 的 `TemplateMeta.Version` 只在内存缓存里用于导出。schema 的 `goal` 表（`schema.sql:192-226`）没有 `template_id/template_version` 列，`skill` 表（`:142-163`）也没有 version 列。
-2. 也就是说 A8 的三轴——JEM 模板注册表 1.0.2（在 icode 环境内部）、`env.packageVersion` 1.0.3（在 env 元数据里）、磁盘模板/新产物 1.0.4——**没有一轴是 AgentWork 平台状态**。平台就算新增 `goal.template_version` 也只能对"目标声称的模板版本"和"goal 声称的产物版本"做对账，碰不到 JEM 注册表。
+2. 也就是说 A8 的三轴——JEM 模板注册表 1.0.2（在 icode 环境内部）、`env.packageVersion` 1.0.3（在 env 元数据里）、磁盘模板/新产物 1.0.4——**没有一轴是 OuroFlow 平台状态**。平台就算新增 `goal.template_version` 也只能对"目标声称的模板版本"和"goal 声称的产物版本"做对账，碰不到 JEM 注册表。
 3. 平台已有的可执行层是 domain checks：`internal/service/domain.go:63-86`（`Setup/Excludes/Verify/Guards/Gates`）；`internal/daemon/verify.go:118-150` `runVerification` 就是逐条执行 `checks.Verify` 并产出 evidence。对 repo 域它已经工作；scratch 域只是被 W1 的早退跳过了。
 
 **本案例影响**：A8 最终由人工补验的 zz.009 发现，平台零参与；A7 的宽松口径同样是"agent 自选脚本参数"，平台零参与。两者都说明：**验收脚本必须由平台执行，参数必须来自域策略**。
@@ -378,7 +378,7 @@ A6：18:39 AI SHELL 的 owner run（run#20）收到"已往返 5 次，不要再�
 | 4 | W5 警告只注入 owner/consult + 计数口径分离 | S | 一行条件 + 一个查询；避免 verify/subgoal prompt 被无关警告污染 |
 | 5 | W6 verify 无裁决 → park/重派一次 | S | 消除"永久 verifying"静默卡死 |
 | 6 | W7 拒绝 verifier==assignee（`--self-verify` 逃生门） | S | 把已在 squad reviewer 上承认的原则补到 verifier 字段 |
-| 7 | W3 固定块路径改为占位符/`AGENTWORK_WORKDIR` + 小报告镜像 | S-M | 跨机部署的前置条件；不做镜像则至少修路径错误 |
+| 7 | W3 固定块路径改为占位符/`OUROFLOW_WORKDIR` + 小报告镜像 | S-M | 跨机部署的前置条件；不做镜像则至少修路径错误 |
 
 ### 设计取舍 / 不该改
 
@@ -404,5 +404,5 @@ A6：18:39 AI SHELL 的 owner run（run#20）收到"已往返 5 次，不要再�
 
 ## 五、给模板/外部仓库的两条配套（平台改不了，但不改则前功尽弃）
 
-1. **agentwork-templates / job-env 系列 skill**：所有报告输出根改为 `${AGENTWORK_REPORT_DIR:-$PWD/reports}`，禁止硬编码 `/tmp/job-env-*`；Packager 的 spec 扫描默认 `--metadata` 严格口径。这是 A9/A7 的另一半。
+1. **ouroflow-templates / job-env 系列 skill**：所有报告输出根改为 `${OUROFLOW_REPORT_DIR:-$PWD/reports}`，禁止硬编码 `/tmp/job-env-*`；Packager 的 spec 扫描默认 `--metadata` 严格口径。这是 A9/A7 的另一半。
 2. **发布归一**：1.0.4 三件套的 sha256、JEM 注册表、env.packageVersion 的对齐脚本，应该作为该 packaging domain 的 Verify 命令随域一起冻结（W8），并在发布前作为门禁执行；平台只负责"执行 + 留证 + 阻断"，不接管版本语义。

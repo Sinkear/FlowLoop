@@ -128,7 +128,7 @@ function RuntimeModelsDialog({ rt, onClose }: { rt: Runtime; onClose: () => void
         <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
           <p className="text-sm text-ink-2">暂无模型目录</p>
           <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-ink-3">
-            机器每次执行 <code className="font-mono">agentwork connect</code>
+            机器每次执行 <code className="font-mono">ouroflow connect</code>
             ，或在探测上报更新时，会自动重新探测；不需要手动操作，稍后重新打开这里即可看到结果。
           </p>
         </div>
@@ -317,7 +317,7 @@ export default function RuntimesPage() {
     <PageBody>
       <PageHeader
         title="运行时"
-        desc="远端机器运行 agentwork connect 时探测到的 agent CLI 会自动注册成运行时（CLI@机器名）；Agent 与 Run 都绑定到具体运行时。"
+        desc="远端机器运行 ouroflow connect 时探测到的 agent CLI 会自动注册成运行时（CLI@机器名）；Agent 与 Run 都绑定到具体运行时。"
       />
 
       <StatStrip
@@ -386,7 +386,7 @@ export default function RuntimesPage() {
           </div>
         ) : !runtimes?.length ? (
           <Empty icon={<Terminal className="h-5 w-5" />}>
-            还没有运行时——在远端机器上运行 <code className="font-mono">agentwork connect</code>
+            还没有运行时——在远端机器上运行 <code className="font-mono">ouroflow connect</code>
             ，探测到的 agent CLI 会自动注册到这里。
           </Empty>
         ) : !visible.length ? (

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/proto"
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // machineDispatch is the daemon's half of the machine link (CLI 分支
@@ -131,7 +131,7 @@ const pollHoldTimeout = 30 * time.Second
 // between claim and dispatch).
 func (d *Daemon) dispatchToMachine(ctx context.Context, q *service.ClaimedRow, p link.RunDispatchParams, machineID string) {
 	if d.MachinePeer(machineID) == nil {
-		d.failRun(ctx, q, fmt.Sprintf("machine offline — the machine must run `agentwork connect` (machine %s)", machineID))
+		d.failRun(ctx, q, fmt.Sprintf("machine offline — the machine must run `ouroflow connect` (machine %s)", machineID))
 		return
 	}
 	// Stamp the ownership anchor BEFORE enqueueing: every /connect report
@@ -450,7 +450,7 @@ func (d *Daemon) finishMachineRun(ctx context.Context, p link.RunFinishedParams,
 		return
 	}
 	// Digest collection BEFORE Finish: the uploaded articles land in
-	// ~/.agentwork/digest/ regardless of what the goal reconcile decides
+	// ~/.ouroflow/digest/ regardless of what the goal reconcile decides
 	// next (idempotent per goal — a retried report re-collects harmlessly).
 	digestGoalID := ""
 	if p.Status == "completed" {
@@ -850,7 +850,7 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, headSHA
 		if _, err := gitRun(ctx, repo, "fetch", "origin"); err != nil {
 			continue
 		}
-		if _, err := gitRun(ctx, repo, "branch", "-f", branchName, "origin/agentwork/"+branchName); err == nil {
+		if _, err := gitRun(ctx, repo, "branch", "-f", branchName, "origin/ouroflow/"+branchName); err == nil {
 			adopted = true
 		}
 	}
@@ -860,7 +860,7 @@ func (d *Daemon) processMachineRunCompletion(ctx context.Context, runID, headSHA
 	if headSHA != "" {
 		if !adopted {
 			unlock()
-			return fmt.Sprintf("transfer branch missing: the machine pushed %s but origin/agentwork/%s was not visible after retries", headSHA, branchName)
+			return fmt.Sprintf("transfer branch missing: the machine pushed %s but origin/ouroflow/%s was not visible after retries", headSHA, branchName)
 		}
 		tip := strings.TrimSpace(mustGit(ctx, repo, "rev-parse", "refs/heads/"+branchName))
 		if tip != headSHA {

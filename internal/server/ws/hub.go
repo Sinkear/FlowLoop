@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // topics is the full set of bus topics the hub forwards to clients. New

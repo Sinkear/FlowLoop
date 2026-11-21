@@ -1,7 +1,7 @@
-# agentwork R1 构建/测试基准测量报告（bench）
+# ouroflow R1 构建/测试基准测量报告（bench）
 
 - 日期：2026-11-10（R1 复跑 · 冲突重做修订 v2）
-- 基线：**agentwork-int 新集成基线 `0bf354e`**（"Integrate 46d681ea…"，含 optimizer 提案 proposals.md；相对旧基线 `33f16dc` 仅新增文档，无代码变更）
+- 基线：**ouroflow-int 新集成基线 `0bf354e`**（"Integrate 46d681ea…"，含 optimizer 提案 proposals.md；相对旧基线 `33f16dc` 仅新增文档，无代码变更）
 - 本修订替换此前基于 `33f16dc` 的 v1 修订（该修订在集成时与同队另一条 bench 运行的同名 `benchmark-report.md` 发生路径冲突）。
 - 原则：只测量、不修改任何代码、不修任何失败测试；失败如实记录。本报告为工作区内该文件唯一有效版本。
 
@@ -30,18 +30,18 @@
 
 | 排名 | 包 | 耗时 | 结果 |
 | --- | --- | --- | --- |
-| 1 | github.com/eushing/agentwork/internal/daemon | 8.00 s | pass |
-| 2 | github.com/eushing/agentwork/internal/service | 4.61 s | **FAIL** |
-| 3 | github.com/eushing/agentwork/cmd/agentwork-cli | 4.20 s | pass |
-| 4 | github.com/eushing/agentwork/internal/notify | 0.89 s | pass |
-| 5 | github.com/eushing/agentwork/internal/issue | 0.30 s | pass |
-| 6 | github.com/eushing/agentwork/internal/backup | 0.26 s | pass |
-| 7 | github.com/eushing/agentwork/internal/server/handler | 0.05 s | pass |
-| 8 | github.com/eushing/agentwork/internal/paths | 0.04 s | pass |
-| 9 | github.com/eushing/agentwork/internal/server | 0.03 s | pass |
-| 10 | github.com/eushing/agentwork/internal/acp | 0.03 s | pass |
+| 1 | github.com/Sinkear/ouroflow/internal/daemon | 8.00 s | pass |
+| 2 | github.com/Sinkear/ouroflow/internal/service | 4.61 s | **FAIL** |
+| 3 | github.com/Sinkear/ouroflow/cmd/ouroflow-cli | 4.20 s | pass |
+| 4 | github.com/Sinkear/ouroflow/internal/notify | 0.89 s | pass |
+| 5 | github.com/Sinkear/ouroflow/internal/issue | 0.30 s | pass |
+| 6 | github.com/Sinkear/ouroflow/internal/backup | 0.26 s | pass |
+| 7 | github.com/Sinkear/ouroflow/internal/server/handler | 0.05 s | pass |
+| 8 | github.com/Sinkear/ouroflow/internal/paths | 0.04 s | pass |
+| 9 | github.com/Sinkear/ouroflow/internal/server | 0.03 s | pass |
+| 10 | github.com/Sinkear/ouroflow/internal/acp | 0.03 s | pass |
 
-其余包均 < 0.03 s；`cmd/agentwork-daemon`、`cmd/validate-templates`、`internal/card`、`internal/events`、`internal/gitcodeapi`、`internal/store` 等无测试文件（"[no test files]"，未计入排名）。
+其余包均 < 0.03 s；`cmd/ouroflow-daemon`、`cmd/validate-templates`、`internal/card`、`internal/events`、`internal/gitcodeapi`、`internal/store` 等无测试文件（"[no test files]"，未计入排名）。
 
 ## 4. 失败用例清单（3 条，与 v1 一致）
 

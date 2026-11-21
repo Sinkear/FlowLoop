@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // envChangeSeedGoal creates the goal fixture the ledger tests record against.

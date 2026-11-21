@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestGoalCategoryHITLParkedByGate is the HITL control arm for the v3

@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { ArrowDown, ArrowRight } from "lucide-react";
 
 // 真正的视觉架构图（不是 ASCII 搬运）——三层流向：
-//   Web UI → Daemon（含 SQLite/bus/scheduler 三个内部块）→ agentwork connect → Agent CLI
+//   Web UI → Daemon（含 SQLite/bus/scheduler 三个内部块）→ ouroflow connect → Agent CLI
 // 层间用绿色箭头标注协议/方法（/backend 代理、/connect JSON-RPC、run.poll、runtime.Open）。
 // 深色卡片 + 终端绿流向线，和整站调性一致。
 //

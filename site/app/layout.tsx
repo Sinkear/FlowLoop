@@ -9,8 +9,8 @@ import "./globals.css";
 // "en" 默认；如需精确 lang，可在此处读 segment，但静态导出下保持简单。
 export const metadata: Metadata = {
   title: {
-    default: "agentwork — AI Task Pipeline OS",
-    template: "%s | agentwork",
+    default: "ouroflow — AI Task Pipeline OS",
+    template: "%s | ouroflow",
   },
   description:
     "A single-user control plane that runs CLI agents unattended through goal → execution → verification → gate → delivery.",

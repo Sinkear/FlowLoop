@@ -1,7 +1,7 @@
 import { setRequestLocale, getTranslations } from "next-intl/server";
 import { routing, type Locale } from "@/i18n/routing";
 
-const REPO = "https://github.com/yusheng-g/agentwork";
+const REPO = "https://github.com/Sinkear/ouroflow";
 
 // 每个 [locale] 下的 page 都必须接收 params 并调 setRequestLocale——
 // 否则 getTranslations 回退去读 headers(requestLocale) 触发动态渲染，

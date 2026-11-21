@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/link"
+	"github.com/Sinkear/ouroflow/internal/link"
 )
 
 // TestRuntimeModelsEndpoint covers RuntimeService.Models: identity fields

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // newStewardWorkerDaemon builds a minimal Daemon with the worker surfaces the
@@ -33,7 +33,7 @@ func newStewardWorkerDaemon(t *testing.T) (*Daemon, *store.Store, *service.Agent
 		bus:         bus,
 		agentSvc:    agentSvc,
 		runSvc:      service.NewRunService(st, bus),
-		workers:     make(map[string]*agentWorker),
+		workers:     make(map[string]*agentRunner),
 	}
 	ctxCancel := func() {}
 	d.ctx, ctxCancel = context.WithCancel(context.Background())

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestCancelledRunPostsSystemFeedComment: a cancelled run with a structured

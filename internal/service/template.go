@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/gitutil"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/gitutil"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +28,7 @@ const (
 	templateCacheKey = "platform.template_cache"
 	// defaultTemplateRepo is the built-in official template repository —
 	// used when platform.template_repo is unset.
-	defaultTemplateRepo = "https://gitcode.com/Wing-Jason/agentwork-templates.git"
+	defaultTemplateRepo = "https://gitcode.com/Wing-Jason/ouroflow-templates.git"
 )
 
 // TemplateRepoConfig is the platform.template_repo value.
@@ -211,7 +211,7 @@ var fetchTemplateFiles = fetchTemplateFilesFromGit
 // for registry.yaml and every template/skill file it references. A token,
 // when given, is embedded via gitCloneURL and never logged.
 func fetchTemplateFilesFromGit(ctx context.Context, cfg TemplateRepoConfig, token string) (map[string]string, error) {
-	dir, err := os.MkdirTemp("", "agentwork-templates-*")
+	dir, err := os.MkdirTemp("", "ouroflow-templates-*")
 	if err != nil {
 		return nil, fmt.Errorf("mkdir temp: %w", err)
 	}
@@ -307,8 +307,8 @@ func parseTemplateFiles(files map[string]string) (*templateCache, error) {
 		}
 		switch {
 		case meta.APIVersion == "":
-			meta.APIVersion = "agentwork/v1"
-		case meta.APIVersion != "agentwork/v1":
+			meta.APIVersion = "ouroflow/v1"
+		case meta.APIVersion != "ouroflow/v1":
 			cache.Errors = append(cache.Errors, fmt.Sprintf("template %s: unsupported api_version %q", entry.Path, meta.APIVersion))
 			continue
 		}

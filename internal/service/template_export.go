@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,7 +95,7 @@ func (s *TemplateExportService) Export(ctx context.Context, opts TemplateExportO
 	if err != nil {
 		return nil, err
 	}
-	meta.APIVersion = "agentwork/v1"
+	meta.APIVersion = "ouroflow/v1"
 
 	// Validate the generated YAML with the SAME strict parser the apply path
 	// uses, before touching the output directory.
@@ -723,7 +723,7 @@ func marshalTemplate(meta TemplateMeta, spec any) ([]byte, error) {
 		} `yaml:"metadata"`
 		Spec any `yaml:"spec"`
 	}{
-		APIVersion: "agentwork/v1",
+		APIVersion: "ouroflow/v1",
 		Kind:       meta.Kind,
 		Spec:       spec,
 	}

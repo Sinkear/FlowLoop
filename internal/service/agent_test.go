@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestDeleteAgentCancelsItsSubGoals: deleting an agent cancels the

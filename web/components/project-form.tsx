@@ -202,7 +202,7 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
     >
       <form id="project-form" onSubmit={submit} className="space-y-4">
         <Field label="名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：agentwork" required />
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：ouroflow" required />
         </Field>
 
         <Field label="项目类型" hint={project ? "类型创建后不可修改" : undefined}>
@@ -258,7 +258,7 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
               <input value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls} placeholder="main" />
             </Field>
             <Field label="提交身份">
-              <input value={identity} onChange={(e) => setIdentity(e.target.value)} className={inputCls} placeholder="agentwork-bot <bot@example.com>" />
+              <input value={identity} onChange={(e) => setIdentity(e.target.value)} className={inputCls} placeholder="ouroflow-bot <bot@example.com>" />
             </Field>
           </div>
         )}

@@ -28,14 +28,14 @@ func TestGitHubCreatePull(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{token: "tok", http: srv.Client(), baseURL: srv.URL}
-	url, number, err := c.CreatePull(context.Background(), "o/r", "Update skill x", "agentwork/skill-abc", "main", "body text")
+	url, number, err := c.CreatePull(context.Background(), "o/r", "Update skill x", "ouroflow/skill-abc", "main", "body text")
 	if err != nil {
 		t.Fatalf("CreatePull: %v", err)
 	}
 	if gotPath != "/repos/o/r/pulls" || gotAuth != "Bearer tok" {
 		t.Fatalf("request = %s auth=%q", gotPath, gotAuth)
 	}
-	if gotBody["title"] != "Update skill x" || gotBody["head"] != "agentwork/skill-abc" ||
+	if gotBody["title"] != "Update skill x" || gotBody["head"] != "ouroflow/skill-abc" ||
 		gotBody["base"] != "main" || gotBody["body"] != "body text" {
 		t.Fatalf("payload = %+v", gotBody)
 	}
@@ -97,14 +97,14 @@ func TestGitCodeCreatePull(t *testing.T) {
 	defer srv.Close()
 
 	c := &GitCodeClient{token: "tok", http: srv.Client(), baseURL: srv.URL}
-	url, number, err := c.CreatePull(context.Background(), "o/r", "Update", "agentwork/skill-x", "main", "why")
+	url, number, err := c.CreatePull(context.Background(), "o/r", "Update", "ouroflow/skill-x", "main", "why")
 	if err != nil {
 		t.Fatalf("CreatePull: %v", err)
 	}
 	if gotPath != "/repos/o/r/pulls" || gotToken != "tok" {
 		t.Fatalf("request path=%s token=%q", gotPath, gotToken)
 	}
-	for _, want := range []string{"title=Update", "head=agentwork%2Fskill-x", "base=main", "body=why"} {
+	for _, want := range []string{"title=Update", "head=ouroflow%2Fskill-x", "base=main", "body=why"} {
 		if !strings.Contains(gotForm, want) {
 			t.Fatalf("form %q missing %q", gotForm, want)
 		}

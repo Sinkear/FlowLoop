@@ -30,16 +30,16 @@ go.work.sum
 # Build output (local binaries, not committed)
 build/
 
-# Guard against binaries built into the repo root (e.g. `go build -o ./agentwork`).
+# Guard against binaries built into the repo root (e.g. `go build -o ./ouroflow`).
 # `build/` covers the normal case; these catch stray top-level binaries.
-/agentwork
-/agentwork-cli
-/agentwork-daemon
+/ouroflow
+/ouroflow-cli
+/ouroflow-daemon
 
 # Local runtime data (SQLite db, workdirs)
 *.db
 *.db-*
-.agentwork/
+.ouroflow/
 
 # Local scratch (archify diagram sources, review worktrees — kept locally, never pushed)
 tmp/
@@ -58,7 +58,7 @@ Thumbs.db
 # 打包产物
 dist/
 
-# agentwork 平台注入的运行简报（run 启动时写入工作区根，非仓库内容；
+# ouroflow 平台注入的运行简报（run 启动时写入工作区根，非仓库内容；
 # 不加入会导致 change integrate 的 git merge 覆盖未跟踪文件而被拒）
-AGENTWORK.md
+OUROFLOW.md
 AGENTS.md

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestAgentQuestionEventSendsCard (决策 7-3): a comment:agent_question event

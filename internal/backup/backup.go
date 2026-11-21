@@ -1,4 +1,4 @@
-// Package backup creates a consistent snapshot of agentwork's persistent data.
+// Package backup creates a consistent snapshot of ouroflow's persistent data.
 //
 // The primary artifact is a SQLite online backup produced with VACUUM INTO,
 // so it is safe to run while the daemon is serving requests. Optional run
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/paths"
 	_ "modernc.org/sqlite"
 )
 
@@ -57,14 +57,14 @@ func Create(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	ts := time.Now().Format("20060102-150405")
-	dir := filepath.Join(opts.OutDir, "agentwork-"+ts)
+	dir := filepath.Join(opts.OutDir, "ouroflow-"+ts)
 	for i := 1; fileExists(dir); i++ {
-		dir = fmt.Sprintf("%s-%d", filepath.Join(opts.OutDir, "agentwork-"+ts), i)
+		dir = fmt.Sprintf("%s-%d", filepath.Join(opts.OutDir, "ouroflow-"+ts), i)
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("backup: create snapshot dir: %w", err)
 	}
-	dbDst := filepath.Join(dir, "agentwork.db")
+	dbDst := filepath.Join(dir, "ouroflow.db")
 
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
@@ -109,13 +109,13 @@ func Create(ctx context.Context, opts Options) (*Result, error) {
 		Counts:       counts,
 	}
 	if opts.WithFiles {
-		filesDst := filepath.Join(dir, "agentwork-files.tar.gz")
+		filesDst := filepath.Join(dir, "ouroflow-files.tar.gz")
 		if err := archiveFiles(paths.Home(), filesDst); err != nil {
 			return nil, fmt.Errorf("backup: archive files: %w", err)
 		}
 		res.Files = filesDst
 	}
-	manifest := filepath.Join(dir, "agentwork.db.manifest.json")
+	manifest := filepath.Join(dir, "ouroflow.db.manifest.json")
 	res.Manifest = manifest
 	raw, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {

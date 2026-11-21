@@ -2,7 +2,7 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "agentwork 图驱动自迭代 · 总览",
+    "title": "ouroflow 图驱动自迭代 · 总览",
     "output": ".archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
     "locale": "zh-CN",
     "quality_profile": "showcase",

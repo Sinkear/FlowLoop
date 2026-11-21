@@ -2,7 +2,7 @@
 
 > 范围：从"一条评论 / 一次 `create_sub_goal` / 一次平台触发"到"run 落库可被 Claim"这一段——`internal/service/comment.go`、`internal/service/run.go`、`internal/service/subgoal.go`、`internal/service/goal.go`（reconcile/retry/consult 闭环）、`internal/daemon/daemon.go`（prompt 组装与协作计数）。
 > 不覆盖：运行时（进程生命周期、watchdog、idle 误报、late-result）、看门狗/回收器——由 runtime 分析员负责。
-> 基线：生产 `agentwork-daemon` 构建于 **2026-11-03**（当日最后提交 `23a7ce1`）；HEAD = `9931759`（2026-11-13 14:17）。每条结论都给出"HEAD 是否已修"的判定与 git 证据。
+> 基线：生产 `ouroflow-daemon` 构建于 **2026-11-03**（当日最后提交 `23a7ce1`）；HEAD = `9931759`（2026-11-13 14:17）。每条结论都给出"HEAD 是否已修"的判定与 git 证据。
 
 ---
 
@@ -83,12 +83,12 @@ subgoal 与 consult 都不是 owner、`sub_goal_id` 也不同 ⇒ **两条 run �
 **为什么 agent 会两条都发**：`roleContract("owner")` 把两个动作并排写进了同一条契约（`internal/daemon/team_context.go:249-256`）：
 
 ```
-dispatch them: `agentwork subgoal create --title T --assignee <agent-id>`
+dispatch them: `ouroflow subgoal create --title T --assignee <agent-id>`
 Ask teammates (read-only consult) by commenting a mention:
-`agentwork goal comment --text "[@Name](mention://agent/<id>)"`
+`ouroflow goal comment --text "[@Name](mention://agent/<id>)"`
 ```
 
-而 `agentwork goal comment` 在 CLI 里**是走派发路径**的（`cmd/agentwork-cli/main.go:396-420` → RPC `goal.comment` `server.go:544-562` → `CommentService.Create(..., dispatch=true)`；HTTP 的 `POST comments` 同样 `h.Comment.Create`，`handler.go:458-465`）。DESIGN 里"mention 不再承担任务委派"（决策 5-2）在代码上没有护栏——模板却在教 agent 用 mention 派活。
+而 `ouroflow goal comment` 在 CLI 里**是走派发路径**的（`cmd/ouroflow-cli/main.go:396-420` → RPC `goal.comment` `server.go:544-562` → `CommentService.Create(..., dispatch=true)`；HTTP 的 `POST comments` 同样 `h.Comment.Create`，`handler.go:458-465`）。DESIGN 里"mention 不再承担任务委派"（决策 5-2）在代码上没有护栏——模板却在教 agent 用 mention 派活。
 
 **本案例量化**
 

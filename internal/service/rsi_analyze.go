@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // Structure analysis (W-RSI). Input: the assembled WorkflowGraph + entity

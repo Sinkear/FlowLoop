@@ -28,11 +28,11 @@ set -euo pipefail
 
 PROG="$(basename "$0")"
 API="http://127.0.0.1:47813"
-INT_BRANCH="agentwork-int"
+INT_BRANCH="ouroflow-int"
 SINCE=""
 UNTIL=""
 OUT=""
-REPO_URL="https://github.com/Sinkear/agentwork"
+REPO_URL="https://github.com/Sinkear/ouroflow"
 DRY_RUN=0
 N=""
 
@@ -46,12 +46,12 @@ usage() {
 
 选项：
   --api URL          daemon API 基址（默认 http://127.0.0.1:47813）
-  --int-branch REF   集成分支（默认 agentwork-int）
+  --int-branch REF   集成分支（默认 ouroflow-int）
   --since ROUND      跨轮对比起始轮（默认 1），接受 1 或 R1
   --until ROUND      跨轮对比结束轮（默认 N-1），接受 3 或 R3
   --out PATH         输出路径（默认 <repo>/docs/rsi/round-report-r<N>.md）
   --repo URL         报告内 commit 链接的仓库基址
-                     （默认 https://github.com/Sinkear/agentwork）
+                     （默认 https://github.com/Sinkear/ouroflow）
   --dry-run          只输出到 stdout，不写文件
   -h, --help         显示本帮助
 

@@ -1,7 +1,7 @@
-# agentwork 自迭代手册（用 agentwork 迭代 agentwork）
+# ouroflow 自迭代手册（用 ouroflow 迭代 ouroflow）
 
-> 场景：觉得 agentwork 执行任务比「裸 agent」慢，怀疑编排层开销（排队/派发/校验/评审/串行化）。
-> 方法：让 agentwork 跑自己的基准任务，用 W-RSI 训练分析量化开销，产出只读提案，人工批准后改造，下一轮复测对比。
+> 场景：觉得 ouroflow 执行任务比「裸 agent」慢，怀疑编排层开销（排队/派发/校验/评审/串行化）。
+> 方法：让 ouroflow 跑自己的基准任务，用 W-RSI 训练分析量化开销，产出只读提案，人工批准后改造，下一轮复测对比。
 > 本文档是操作手册：团队怎么建、每轮怎么跑、指标怎么读。
 
 ## 1. 循环结构（每轮 = 一个 train 模式 goal）
@@ -23,19 +23,19 @@ R<n> goal (execution_mode=train, assignee=squad self-iter)
 
 | 实体 | ID | 说明 |
 |---|---|---|
-| machine | `9a5bce86…` (sinkear-dev) | `build/agentwork connect -name sinkear-dev` 常驻（nohup），它负责在本机 spawn opencode |
+| machine | `9a5bce86…` (sinkear-dev) | `build/ouroflow connect -name sinkear-dev` 常驻（nohup），它负责在本机 spawn opencode |
 | runtime | `fc6354ff…` (opencode@sinkear-dev) | args=`["opencode","acp"]`（由探测自动 upsert） |
-| domain | `a6f7ec84…` (agentwork-self) | type=repo，`git@github.com:Sinkear/agentwork.git`（**必须 SSH**，HTTPS 无凭证） |
+| domain | `a6f7ec84…` (ouroflow-self) | type=repo，`git@github.com:Sinkear/ouroflow.git`（**必须 SSH**，HTTPS 无凭证） |
 | agent bench | `1d5ff0af…` | 基准执行者：直接干活，不拆分/不咨询/不加流程 |
 | agent optimizer | `0b55bf51…` | RSI 分析师：读 /rsi/* API，写只读提案；squad leader |
 | agent builder | `b7efb1ce…` | 改造执行者：只实施 goal 评论中标注【已批准】的提案 |
 | squad | `9733828a…` (self-iter) | leader=optimizer，成员=bench+builder |
 
 踩坑记录（2026-11-08 实测）：
-1. runtime 必须 machine 挂靠——无 machine 的 runtime 被 daemon 拒绝 spawn（`agentwork connect` 是唯一正道）。
+1. runtime 必须 machine 挂靠——无 machine 的 runtime 被 daemon 拒绝 spawn（`ouroflow connect` 是唯一正道）。
 2. opencode v2.2.5 不认 `acp --pure`（打印 usage 即退出 → "transport closed"），探测表已修为 `opencode acp`。
 3. 域名 git_url 用 SSH；HTTPS 走 ghfast.top 代理只读可通、push 无凭证必败。
-4. **GitHub main 有 repository rule 禁直推**（deliver push 被拒）→ 已建不受保护集成分支 `agentwork-int`，domain.default_branch 已指向它；每轮 deliver 合并进 agentwork-int，人工定期 PR 到 main。
+4. **GitHub main 有 repository rule 禁直推**（deliver push 被拒）→ 已建不受保护集成分支 `ouroflow-int`，domain.default_branch 已指向它；每轮 deliver 合并进 ouroflow-int，人工定期 PR 到 main。
 5. train goal 经 review 批准→deliver 完成时才触发训练分析（MarkDelivered 已接 OnGoalTerminal）；若分析缺失用 `POST /rsi/sessions/{id}/retry` 兜底。
 
 ## 3. 每轮操作（人 = 编排者）
@@ -59,7 +59,7 @@ curl -s -X POST localhost:47813/goals/$GOAL/sub-goals -H 'Content-Type: applicat
 
 # ④ 看进度
 curl -s localhost:47813/goals/$GOAL/sub-goals | python3 -m json.tool
-tail -f /tmp/agentwork-daemon.log
+tail -f /tmp/ouroflow-daemon.log
 
 # ⑤ sg-O 完成后：训练页读分析，review 批准提案；需要 builder 时再建 sg-Bd（depends_on sg-O）
 # ⑥ 复测对比：GET /rsi/sessions/{id}/rounds（轮次账本）或 /rsi/overview 的 trend（同样逐条取自 rsi_round）
@@ -110,7 +110,7 @@ tail -f /tmp/agentwork-daemon.log
 - 生成器是数据驱动的：脚本不含任何轮次结论/数字；必需 API 失败会 stderr + 退出码 1
   且不写输出文件；可选数据缺失在对应节标注「数据不可得」。`--dry-run` 只输出到
   stdout 便于审阅。轮次标题匹配同时支持 `RSI R<N>` 与 `RSI 自迭代 R<N>`。
-- ③ 的 commit 范围按集成分支（默认 `agentwork-int`）+ 本轮时间窗（goal 最早
+- ③ 的 commit 范围按集成分支（默认 `ouroflow-int`）+ 本轮时间窗（goal 最早
   `created_at` → session 最晚 `sealed_at/finished_at`）过滤；区间内无 commit 时
   退化最近 30 条，并在报告中标注口径。
 - 报告必须自包含：不依赖读者登录平台即可理解；数据源为 daemon API 列表端点
@@ -122,7 +122,7 @@ tail -f /tmp/agentwork-daemon.log
 - 下一轮的 optimizer 分析与本轮收尾验证都以最新一份 round-report 为起点。
 - **路径约定**：本约定宿主在 `docs/rsi/self-iter-playbook.md`（随仓库跟踪、
   集成无冲突）。不要把本节写入仓库根 `AGENTS.md`——根级 AGENTS.md 是
-  agentwork 平台每次 run 注入 agent 简报的路径（运行时未跟踪文件），跟踪它
+  ouroflow 平台每次 run 注入 agent 简报的路径（运行时未跟踪文件），跟踪它
   会让任何 change integrate 的 `git merge` 因「untracked working tree files
   would be overwritten」被拒（R3 实测两次集成冲突即此根因）；`.gitignore`
-  已将 `AGENTS.md`/`AGENTWORK.md` 列为忽略项。
+  已将 `AGENTS.md`/`OUROFLOW.md` 列为忽略项。

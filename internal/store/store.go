@@ -1,7 +1,7 @@
 // Package store is the SQLite persistence layer.
 //
-// Single-file SQLite (WAL mode) at $AGENTWORK_HOME/agentwork.db by default
-// (~/.agentwork/agentwork.db when AGENTWORK_HOME is unset).
+// Single-file SQLite (WAL mode) at $OUROFLOW_HOME/ouroflow.db by default
+// (~/.ouroflow/ouroflow.db when OUROFLOW_HOME is unset).
 // Schema is applied on Open via schema.sql (CREATE TABLE IF NOT EXISTS) —
 // no migration tool for now.
 package store
@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/paths"
 	_ "modernc.org/sqlite"
 )
 
@@ -28,7 +28,7 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the SQLite database at path and applies
-// the schema. If path is empty, defaults to $AGENTWORK_HOME/agentwork.db.
+// the schema. If path is empty, defaults to $OUROFLOW_HOME/ouroflow.db.
 func Open(path string) (*Store, error) {
 	if path == "" {
 		path = paths.DB()

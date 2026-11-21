@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/card"
+	"github.com/Sinkear/ouroflow/internal/card"
 )
 
 func TestBuildCardBasic(t *testing.T) {

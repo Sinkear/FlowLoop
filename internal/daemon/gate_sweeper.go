@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // gateSweepInterval is how often the daemon times out held blueprint gates

@@ -15,7 +15,7 @@ func TestHomeHonorsEnv(t *testing.T) {
 	if got, want := Home(), dir; got != want {
 		t.Fatalf("Home() = %q, want %q", got, want)
 	}
-	if got, want := DB(), filepath.Join(dir, "agentwork.db"); got != want {
+	if got, want := DB(), filepath.Join(dir, "ouroflow.db"); got != want {
 		t.Fatalf("DB() = %q, want %q", got, want)
 	}
 	if got, want := Runs(), filepath.Join(dir, "runs"); got != want {
@@ -23,13 +23,13 @@ func TestHomeHonorsEnv(t *testing.T) {
 	}
 }
 
-func TestHomeDefaultsToDotAgentwork(t *testing.T) {
+func TestHomeDefaultsToDotOuroflow(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(EnvHome, "")
 	t.Setenv(EnvDB, "")
 	t.Setenv("HOME", home)
 
-	if got, want := Home(), filepath.Join(home, ".agentwork"); got != want {
+	if got, want := Home(), filepath.Join(home, ".ouroflow"); got != want {
 		t.Fatalf("Home() = %q, want %q", got, want)
 	}
 }
@@ -37,9 +37,9 @@ func TestHomeDefaultsToDotAgentwork(t *testing.T) {
 func TestHomeExpandsTilde(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(EnvHome, "~/custom-agentwork")
+	t.Setenv(EnvHome, "~/custom-ouroflow")
 
-	if got, want := Home(), filepath.Join(home, "custom-agentwork"); got != want {
+	if got, want := Home(), filepath.Join(home, "custom-ouroflow"); got != want {
 		t.Fatalf("Home() = %q, want %q", got, want)
 	}
 }
@@ -56,7 +56,7 @@ func TestDBOverride(t *testing.T) {
 }
 
 func TestEnsureHome(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "nested", "agentwork")
+	dir := filepath.Join(t.TempDir(), "nested", "ouroflow")
 	t.Setenv(EnvHome, dir)
 
 	got, err := EnsureHome()

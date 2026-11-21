@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/acp"
-	"github.com/eushing/agentwork/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/proto"
 )
 
 // ── Session backend (决策 6-21): one ACP session, many prompts ──

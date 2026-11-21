@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestSetWebhookSecret covers the explicit write/clear path for the repo-level
@@ -18,7 +18,7 @@ func TestSetWebhookSecret(t *testing.T) {
 
 	d, err := svc.Create(ctx, Domain{
 		Name:   "webhook-secret",
-		GitURL: "https://github.com/eushing/agentwork.git",
+		GitURL: "https://github.com/Sinkear/ouroflow.git",
 	})
 	if err != nil {
 		t.Fatalf("create domain: %v", err)

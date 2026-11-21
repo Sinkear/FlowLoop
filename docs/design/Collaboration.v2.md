@@ -1,4 +1,4 @@
-# AgentWork 协作模型终稿（v2 · final）
+# OuroFlow 协作模型终稿（v2 · final）
 
 - Status: **Approved**（已定稿，决策写入 DESIGN.md 6-1~6-10）
 - 核心原则：**Goal 定义协作目标，Run 定义执行主体，Workspace 定义执行隔离，Worktree 定义代码隔离，Change 定义变更交付，Integration 定义变更进入 Owner 工作区的方式。**
@@ -43,7 +43,7 @@ Goal（长期状态，第一公民）
 
 # 3. 执行模型：run 级 Workspace + per-run Worktree
 
-- **Workspace 按 Run 实例化，不按 Goal**。布局：`~/.agentwork/repos/`（bare 共享仓）+ `~/.agentwork/runs/<runID>/`（per-run worktree）+ `proc/`
+- **Workspace 按 Run 实例化，不按 Goal**。布局：`~/.ouroflow/repos/`（bare 共享仓）+ `~/.ouroflow/runs/<runID>/`（per-run worktree）+ `proc/`
 - **不变量：Workspace 出生时 = claim 时刻的 branch HEAD**。owner 单飞 + fresh workspace 使"workspace 落后 Goal HEAD"在 owner 身上不可能发生（goal 分支唯一写者就是那一个 owner run；sub-goal 写自己的分支；集成在 owner run 内进行）。跨 ref 的 git merge 天然处理 base 计算，无需人工同步步骤
 - **Workspace 的 cleanliness 不是不变量，Workspace ownership 才是**：`runs/<runID>/` 路径即归属边界——crash recovery 后目录脏了无所谓，脏的就是这个 run 自己的产物；Workspace B 永不被 C 使用
 - **串行化退化为**：owner run 单飞 + 每 sub-goal 至多一个 run；consult/verify run 只读、可与 owner 并行（读分支快照）。**同 agent 多 workspace 并行由 per-agent semaphore 控制——agent identity 与 workspace identity 是两个维度，禁止退回 per-agent 串行**
@@ -100,7 +100,7 @@ Goal Coordinator ──► DB Transaction
 - **Reconcile 幂等**：执行 100 次最终状态相同。所有关键转移 conditional transition（`WHERE status=expected` / `INSERT ... WHERE NOT EXISTS (同 goal 且 role=owner 且 queued/running)`）
 - **Latch 双触发**：`attention != empty && ownerIdle` 是状态条件不是一次性事件——**Sub-goal/Change state changed 与 run.terminal 两个方向都必须触发 Reconcile**。硬规则：*任何可能改变"Goal 是否需要 Owner attention"判定的状态变更，都必须触发 Goal Reconcile*
 - **`run.terminal {run_id, goal_id, status}` 事件**（Finish 统一发布），Coordinator 订阅它 + sub_goal.* + change.*
-- **Owner Resume Context 是索引不是数据库 dump**：goal 摘要 + sub-goal 清单（✓/✗）+ Change 状态 + 验证摘要 + Attention 项；详情按需 `agentwork_get_sub_goal` / `get_change` / `get_verification` 展开
+- **Owner Resume Context 是索引不是数据库 dump**：goal 摘要 + sub-goal 清单（✓/✗）+ Change 状态 + 验证摘要 + Attention 项；详情按需 `ouroflow_get_sub_goal` / `get_change` / `get_verification` 展开
 - run 状态机不加 Suspended/Waiting：suspend = run 自然结束；**恢复统一叫 successor run**（"Consult 完成后创建 requester 的 successor run"，不存在 resume 原 run）
 - run 内事件（tool result）不走 Coordinator——那是 agent 自己的循环
 
@@ -109,7 +109,7 @@ Goal Coordinator ──► DB Transaction
 - Sub-goal 三角色：Assignee（做）/ Verifier（验）/ Goal Owner（集成 + Final Verify）。**Assignee ≠ Verifier**
 - **Verifier 分层——默认机器当 Verifier**：
   - 默认：sub-goal run 结束 → 域验证命令跑在 sub-goal workspace → 通过 = Verified → Change Ready；失败 = 机器验证失败
-  - 可选：指定 `verifier_id`（agent）→ Verifier Run（只读、复用 review run 机制、多轮）+ 结构化判定工具 `agentwork_verify_sub_goal(verdict, summary, evidence)`
+  - 可选：指定 `verifier_id`（agent）→ Verifier Run（只读、复用 review run 机制、多轮）+ 结构化判定工具 `ouroflow_verify_sub_goal(verdict, summary, evidence)`
   - **verifier_type ∈ {machine, agent}，无 human verifier**（human 质量把关在 goal 卡点；不为未来设计用不上的抽象）
 - **两层失败语义，两个计数，绝不混**：
   | 路径 | 语义 | 计数 | 耗尽 |
@@ -152,7 +152,7 @@ Review 是 goal 的一个状态，approve / reject 是这个状态的两个**退
 - **Owner successor run 的 reject 上下文契约**（assemblePrompt 独立 `case isReject:` 分支，不复用 `case in.handoff`）：
   - wake line：`You were mentioned by the platform (comment <驳回评论id>):` + 驳回理由原文（引用前缀）。
   - 记忆注入：owner 自己上一轮的 completed run 报告（`role='owner' AND status='completed'`，最新一条），标签为 **"Your previous round was REJECTED — fix from this, do NOT start over"**（不是 "Previous owner"）。这是让 owner 接着改而非重来的唯一记忆载体。
-  - 驳回评论 `author_type='human'`、`author_id=''`、`content="驳回：<reason>"`，在评论 feed 里全 agent 可见（§见 v2 §3 feed 开放）。owner 可通过 `agentwork goal comments` 拉到 reviewer 的审查意见（如果 squad review 产生过 reviewer 评论）。
+  - 驳回评论 `author_type='human'`、`author_id=''`、`content="驳回：<reason>"`，在评论 feed 里全 agent 可见（§见 v2 §3 feed 开放）。owner 可通过 `ouroflow goal comments` 拉到 reviewer 的审查意见（如果 squad review 产生过 reviewer 评论）。
 - **与 sub-goal 级 reject 的边界**：§6 的 verifier reject 是 sub-goal 级（`quality_iteration++`、assignee 新 run）；本节的 reject 是 goal 级（`human_iterations++`、owner successor run）。两个计数、两个 enqueue 路径，绝不混。
 - **Reject 的 wake 路径独立性硬约束**：`assemblePrompt` 的 switch 中，reject 分支必须在 handoff 分支之前判定（reject 不复用 handoff_note，否则 handoff_note 非空会劫持 reject 走交接分支）。实现上 reject wake 由独立信号触发（如 goal 最近一次状态转移 `review→active` 且有 reject gate_decision），不依赖 `handoff_note` 字段。
 
@@ -173,7 +173,7 @@ Review 是 goal 的一个状态，approve / reject 是这个状态的两个**退
 
 - Handoff 只换 Goal Owner；**既有 sub-goal 的 assignee/verifier/run/change 全部不变**；新 owner 获得管理权，不自动成为任何 sub-goal 的 assignee
 - **Handoff 是 Goal Owner 的变化，不是 Run 生命周期的新状态**：`run.status` 保持五态（queued|running|completed|failed|cancelled），`cancel_reason=handed_off` 承担语义（**撤销决策 5-5 的 handed_off 状态**）；handoff 事件入 handoff_event 表
-- **forced handoff（MVP 唯一形态）**：kill 旧 owner run → **不代提交 WIP**（mid-git-op 代提交不安全）→ WIP 留在 `runs/<old-runID>/`（取证）→ 新 owner 从 branch HEAD 切新 workspace。AGENTWORK.md 引导"handoff 前随手 commit"。graceful handoff（信号→checkpoint→terminal）后置
+- **forced handoff（MVP 唯一形态）**：kill 旧 owner run → **不代提交 WIP**（mid-git-op 代提交不安全）→ WIP 留在 `runs/<old-runID>/`（取证）→ 新 owner 从 branch HEAD 切新 workspace。OUROFLOW.md 引导"handoff 前随手 commit"。graceful handoff（信号→checkpoint→terminal）后置
 - **Deliver 只等 owner run**：`deliverWaitForOwnerRuns(goalID)`——sub-goal run 不碰 goal 分支，不阻塞交付
 - Handoff Snapshot 不建持久化实体：新 owner run 的 prompt 注入即 snapshot
 - Handoff Cycle 保持现状（4 警告 / 8 审停，不判 failed）
@@ -215,7 +215,7 @@ run.terminal {run_id, goal_id, status}
 | `goal` 表 | 加 `execution_attempt`（机器重试计数，权威）、`attention`（派生状态持久化）；`parent_id` 子 goal 用法退役 |
 | `consult_request` | 已有（requester_run_id 即恢复锚点） |
 | 删除 | blocked 路径、wake_count、WaitChildren/wakeParentIfReadyInTx/goal_wait |
-| 新增 MCP 工具 | `agentwork_cancel_sub_goal`（reassign 用 cancel + create 替代）、`agentwork_verify_sub_goal`、`agentwork_get_sub_goal` / `get_change` / `get_verification` |
+| 新增 MCP 工具 | `ouroflow_cancel_sub_goal`（reassign 用 cancel + create 替代）、`ouroflow_verify_sub_goal`、`ouroflow_get_sub_goal` / `get_change` / `get_verification` |
 
 # 13. Runtime Invariants（最终 16 条）
 

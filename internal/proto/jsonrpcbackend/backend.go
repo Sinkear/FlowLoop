@@ -11,7 +11,7 @@ package jsonrpcbackend
 import (
 	"context"
 
-	"github.com/eushing/agentwork/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/proto"
 )
 
 type Backend struct{}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/paths"
 )
 
 // ErrNotFound is returned by Get* when no row matches.
@@ -156,7 +156,7 @@ func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 // ── filesystem layout helpers (shared with the daemon) ──
 
 // RunsRoot is the root of all run/domain filesystem state
-// ($AGENTWORK_HOME/runs, ~/.agentwork/runs by default).
+// ($OUROFLOW_HOME/runs, ~/.ouroflow/runs by default).
 func RunsRoot() string {
 	return paths.Runs()
 }

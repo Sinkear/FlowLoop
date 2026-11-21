@@ -15,9 +15,9 @@ export async function describeStewardFailure(stewardId: string | null): Promise<
     const m = machines.find((x) => x.id === rt.machine_id);
     if (!m) return "管家绑定的机器已经不在了——去「智能体」页重新选一个运行时。";
     if (m.status !== "connected") {
-      return `管家挂在「${m.name}」上，但这台机器现在离线——在那台机器上重新跑 agentwork connect 再试。`;
+      return `管家挂在「${m.name}」上，但这台机器现在离线——在那台机器上重新跑 ouroflow connect 再试。`;
     }
-    return `管家在「${m.name}」上用 ${rt.name} 启动，但没连上——确认那台机器的 agentwork connect 还在跑、装好了这个 CLI，且没有别的会话正占着它。`;
+    return `管家在「${m.name}」上用 ${rt.name} 启动，但没连上——确认那台机器的 ouroflow connect 还在跑、装好了这个 CLI，且没有别的会话正占着它。`;
   } catch {
     return "";
   }

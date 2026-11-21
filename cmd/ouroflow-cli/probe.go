@@ -1,0 +1,779 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"gopkg.in/yaml.v3"
+)
+
+// probeTimeout bounds a single probe command (a hung version check must
+// not stall registration). Derived from the caller's ctx so Ctrl+C also
+// aborts probing.
+const probeTimeout = 5 * time.Second
+
+// modelsTimeout bounds one model detection (models_cmd run or the ACP
+// initialize+session/new introspection). Longer than probeTimeout because
+// spawning a real ACP server takes seconds, but still short enough that a
+// hung CLI never stalls the probe report (detections run concurrently).
+const modelsTimeout = 15 * time.Second
+
+// modelsCacheTTL is how long a CLI's detected model list is reused. Probe
+// ticks run about once a minute; re-probing every models_cmd / spawning an
+// ACP server for every CLI each tick would be pure waste.
+const modelsCacheTTL = 30 * time.Minute
+
+// probeEntry is one agent CLI probe-table entry (builtin or user-configured
+// via ~/.ouroflow/agents.yaml). Each entry maps a CLI to: the probe command
+// (runs fast and prints a version), how to start it as an ACP stdio server,
+// and where its skills / profile files live (config push lands the skills).
+// ProjectSkillsDir is the relative directory inside a run workdir where the
+// CLI loads PROJECT-level skills — the executor stages the agent's skills
+// there and the commit excludes every probed dir.
+type probeEntry struct {
+	Name             string   `yaml:"name"`
+	ProbeCmd         string   `yaml:"probe_cmd"`          // run with sh -c; success = installed
+	ModelsCmd        string   `yaml:"models_cmd"`         // run with sh -c; prints available models (best effort)
+	ACPSpawn         []string `yaml:"acp_spawn"`          // how to start it as an ACP stdio server
+	SkillsDir        string   `yaml:"skills_dir"`         // ~ expanded (global skills)
+	ProjectSkillsDir string   `yaml:"project_skills_dir"` // relative, inside a run workdir
+	ProfileFiles     []string `yaml:"profile_files"`
+}
+
+// agentsConfig is the top-level shape of the ~/.ouroflow/agents.yaml file.
+type agentsConfig struct {
+	Agents []probeEntry `yaml:"agents"`
+}
+
+// builtinProbeTable is the hardcoded registry of agent CLIs the CLI knows
+// how to detect (CLI 分支 Phase 1). A user's agents.yaml can ADD entries
+// (new CLIs) or OVERRIDE these by Name — see mergeProbeTables.
+var builtinProbeTable = []probeEntry{
+	{
+		Name:             "claude",
+		ProbeCmd:         "claude --version",
+		ModelsCmd:        "claude models", // best effort; ACP fallback covers a missing subcommand
+		ACPSpawn:         []string{"claude", "--acp"},
+		SkillsDir:        "~/.claude/skills",
+		ProjectSkillsDir: ".claude/skills",
+		ProfileFiles:     []string{"CLAUDE.md", "AGENTS.md"},
+	},
+	{
+		Name:      "opencode",
+		ProbeCmd:  "opencode --version",
+		ModelsCmd: "opencode models", // prints one model id per line
+		// v2.2.5 rejects the unknown --pure flag (prints usage, exits → ACP
+		// "transport closed"). Plain `opencode acp` is the correct spawn.
+		ACPSpawn:         []string{"opencode", "acp"},
+		SkillsDir:        "~/.config/opencode/skills",
+		ProjectSkillsDir: ".opencode/skill",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+	{
+		Name:             "hwcloud",
+		ProbeCmd:         "hwcloud --version",
+		ACPSpawn:         []string{"hwcloud", "serve", "--acp"},
+		SkillsDir:        "~/.agents/skills",
+		ProjectSkillsDir: ".agents/skills", // the AgentSkills standard (npx skills add)
+		ProfileFiles:     []string{"SOUL.md", "SYSTEM.md", "AGENTS.md"},
+	},
+	{
+		Name:             "kimi",
+		ProbeCmd:         "kimi --version",
+		ACPSpawn:         []string{"kimi", "acp"},
+		SkillsDir:        "~/.kimi/skills",
+		ProjectSkillsDir: ".kimi/skills",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+	{
+		Name:             "hermes",
+		ProbeCmd:         "hermes-acp --version",
+		ACPSpawn:         []string{"hermes-acp"},
+		SkillsDir:        "~/.hermes/skills",
+		ProjectSkillsDir: "",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+	{
+		Name:             "openclaw",
+		ProbeCmd:         "/root/runtime/openclaw/openclaw.mjs --version",
+		ACPSpawn:         []string{"/root/runtime/openclaw/node/bin/node", "/root/runtime/openclaw/openclaw.mjs", "acp"},
+		SkillsDir:        "~/.openclaw/skills",
+		ProjectSkillsDir: ".agents/skills",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+	{
+		Name:             "jiuwenswarm",
+		ProbeCmd:         "jiuwenswarm-acp --help",
+		ACPSpawn:         []string{"jiuwenswarm-acp"},
+		SkillsDir:        "~/.jiuwenswarm/service_default/agent_default/jiuwenswarm_workspace/skills",
+		ProjectSkillsDir: "",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+	{
+		Name:             "codearts",
+		ProbeCmd:         "codearts --version",
+		ACPSpawn:         []string{"codearts", "acp"},
+		SkillsDir:        "~/.codeartsdoer/skills",
+		ProjectSkillsDir: ".codeartsdoer/skills",
+		ProfileFiles:     []string{"AGENTS.md"},
+	},
+}
+
+// mergedProbeTable holds the builtin table + agents.yaml overrides, loaded
+// once at connect startup by setMergedProbeTable. nil = no config loaded →
+// activeProbeTable falls back to the builtin table (so tests and a missing
+// config file still probe the builtins).
+var mergedProbeTable []probeEntry
+
+// activeProbeTable returns the merged probe table when a config has been
+// loaded, else the builtin table. Both probeCLIs and projectSkillsDirs
+// consume this so a custom entry's ProjectSkillsDir lands in the git-exclude
+// set and its CLI gets probed.
+func activeProbeTable() []probeEntry {
+	if mergedProbeTable != nil {
+		return mergedProbeTable
+	}
+	return builtinProbeTable
+}
+
+// mergeProbeTables merges custom (agents.yaml) entries into the builtin
+// table. Entries sharing a builtin's Name OVERRIDE it (customize a known
+// CLI's spawn command / dirs); new Names are appended in config-file order.
+// Builtins not mentioned in custom are kept unchanged. Result order:
+// builtins first (original order, with overrides applied), then new custom
+// entries (config-file order).
+func mergeProbeTables(builtin, custom []probeEntry) []probeEntry {
+	byName := map[string]probeEntry{}
+	for _, e := range builtin {
+		byName[e.Name] = e
+	}
+	for _, e := range custom {
+		byName[e.Name] = e // override-by-name: custom wins
+	}
+	merged := make([]probeEntry, 0, len(builtin)+len(custom))
+	// Builtins first, with any override applied.
+	for _, e := range builtin {
+		merged = append(merged, byName[e.Name])
+		delete(byName, e.Name)
+	}
+	// Remaining are new custom entries — preserve config-file order.
+	for _, e := range custom {
+		if _, ok := byName[e.Name]; ok {
+			merged = append(merged, e)
+			delete(byName, e.Name)
+		}
+	}
+	return merged
+}
+
+// loadAgentsConfig reads and validates the agents YAML config. Each entry
+// needs at least name + probe_cmd + acp_spawn; an entry missing any of
+// those is warned and skipped (never fatal — the remaining valid entries
+// are still returned). Returns (nil, nil) for an empty/no-valid-entry file.
+// A missing file returns the os error so the caller can distinguish "no
+// config" from "bad config".
+func loadAgentsConfig(path string) ([]probeEntry, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg agentsConfig
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	valid := make([]probeEntry, 0, len(cfg.Agents))
+	for i, e := range cfg.Agents {
+		if e.Name == "" {
+			cliLogf("agents config: entry %d skipped: name is required", i+1)
+			continue
+		}
+		if e.ProbeCmd == "" {
+			cliLogf("agents config: entry %q skipped: probe_cmd is required", e.Name)
+			continue
+		}
+		if len(e.ACPSpawn) == 0 {
+			cliLogf("agents config: entry %q skipped: acp_spawn is required", e.Name)
+			continue
+		}
+		valid = append(valid, e)
+	}
+	return valid, nil
+}
+
+// setMergedProbeTable loads the agents config from path and merges it with
+// the builtin table, caching the result in mergedProbeTable. A missing file
+// or a config with no valid entries clears mergedProbeTable (activeProbeTable
+// then falls back to builtins) — so deleting or emptying the config restores
+// the builtin table on the next reload, no restart needed. A YAML parse
+// error returns the error WITHOUT touching mergedProbeTable: the caller keeps
+// the previously loaded table (a transiently-corrupted edit shouldn't drop a
+// working custom table). Called at connect startup and on every probe tick
+// (hot-reload: edits to ~/.ouroflow/agents.yaml take effect within a minute).
+func setMergedProbeTable(path string) error {
+	custom, err := loadAgentsConfig(path)
+	if os.IsNotExist(err) {
+		mergedProbeTable = nil // file removed → restore builtin fallback
+		return nil
+	}
+	if err != nil {
+		return err // parse error: caller warns, KEEPS the previous table
+	}
+	if len(custom) == 0 {
+		mergedProbeTable = nil // empty / no valid entries → builtin fallback
+		return nil
+	}
+	mergedProbeTable = mergeProbeTables(builtinProbeTable, custom)
+	return nil
+}
+
+// projectSkillsDirs returns every project-level skills directory the probe
+// table knows — the git exclusion set (staged skills are platform
+// infrastructure, never the agent's commit) and the executor's fallback.
+func projectSkillsDirs() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range activeProbeTable() {
+		if e.ProjectSkillsDir != "" && !seen[e.ProjectSkillsDir] {
+			seen[e.ProjectSkillsDir] = true
+			out = append(out, e.ProjectSkillsDir)
+		}
+	}
+	return out
+}
+
+// probeCLIs scans the environment for the probe-table CLIs: PATH first,
+// then each --scan directory (a CLI installed outside PATH — the common
+// case for absolute-path installs). When a scan dir resolves the CLI, the
+// reported ACPSpawn carries the ABSOLUTE executable so the runtime row
+// spawns correctly on a machine whose PATH never sees it. Probe commands
+// get a hard timeout derived from ctx (a hung version check must not stall
+// registration; Ctrl+C aborts probing too).
+func probeCLIs(ctx context.Context, scanDirs []string) []link.ProbeCLI {
+	type foundCLI struct {
+		probe link.ProbeCLI
+		entry probeEntry
+		path  string // scan dir that resolved the CLI ('' = found on PATH)
+	}
+	found := []foundCLI{}
+	for _, e := range activeProbeTable() {
+		spawn := e.ACPSpawn
+		extraPath := "" // scan dir that resolved the CLI (empty = found on PATH)
+		if !probeRuns(ctx, e.ProbeCmd, "") {
+			for _, pattern := range scanDirs {
+				for _, d := range scanDirsFor(pattern) {
+					if abs, err := filepath.Abs(d); err == nil {
+						d = abs
+					}
+					if !probeRuns(ctx, e.ProbeCmd, d) {
+						continue
+					}
+					extraPath = d
+					break
+				}
+				if extraPath != "" {
+					break
+				}
+			}
+			if extraPath == "" {
+				continue
+			}
+		}
+		if extraPath != "" {
+			spawn = append([]string{filepath.Join(extraPath, e.Name)}, e.ACPSpawn[1:]...)
+		}
+		found = append(found, foundCLI{
+			probe: link.ProbeCLI{
+				Name:             e.Name,
+				Version:          probeVersion(ctx, e.ProbeCmd, extraPath),
+				ACPSpawn:         spawn,
+				SkillsDir:        expandHome(e.SkillsDir),
+				ProjectSkillsDir: e.ProjectSkillsDir,
+				ProfileFiles:     e.ProfileFiles,
+			},
+			entry: e,
+			path:  extraPath,
+		})
+	}
+	// Model detection runs CONCURRENTLY: registration must not serialize
+	// eight CLIs' models_cmd runs / ACP intros behind one slow CLI.
+	out := make([]link.ProbeCLI, len(found))
+	var wg sync.WaitGroup
+	for i, f := range found {
+		wg.Add(1)
+		go func(i int, f foundCLI) {
+			defer wg.Done()
+			f.probe.Models = detectCLIModels(ctx, f.entry, f.probe.ACPSpawn, f.path)
+			out[i] = f.probe
+		}(i, f)
+	}
+	wg.Wait()
+	return out
+}
+
+// detectCLIModels returns the CLI's model list, cached per CLI name for
+// modelsCacheTTL. Strategy: run ModelsCmd when the table configured it and
+// parse its one-model-per-line (or JSON array) output; when that yields
+// nothing (no ModelsCmd, command missing, empty output) fall back to ACP
+// introspection. An empty result is cached too — retrying an ACP spawn for a
+// model-less CLI every probe tick would be waste.
+func detectCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
+	if models, ok := cachedModels(e.Name); ok {
+		return models
+	}
+	// Prefer the ACP handshake when the CLI is spawnable: its session/new
+	// model selector lists the models the CLI will actually accept (opencode
+	// advertises configOptions and rejects registry-only ids). The `models`
+	// subcommand is the fallback for CLIs whose ACP server advertises none.
+	var models []link.ModelInfo
+	if len(spawn) > 0 {
+		models = probeModelsViaACP(ctx, spawn)
+	}
+	if len(models) == 0 && e.ModelsCmd != "" {
+		models = parseModelsOutput(runModelsCmd(ctx, e.ModelsCmd, extraPath))
+	}
+	if models == nil {
+		models = []link.ModelInfo{}
+	}
+	storeModels(e.Name, models)
+	return models
+}
+
+// ── model detection cache ──
+
+type modelsCacheEntry struct {
+	models []link.ModelInfo
+	at     time.Time
+}
+
+var (
+	modelsCacheMu sync.Mutex
+	modelsCache   = map[string]modelsCacheEntry{}
+)
+
+// cachedModels returns a cached detection younger than modelsCacheTTL.
+func cachedModels(name string) ([]link.ModelInfo, bool) {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	ent, ok := modelsCache[name]
+	if !ok || time.Since(ent.at) > modelsCacheTTL {
+		return nil, false
+	}
+	return append([]link.ModelInfo(nil), ent.models...), true
+}
+
+// storeModels caches one CLI's detection result.
+func storeModels(name string, models []link.ModelInfo) {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	modelsCache[name] = modelsCacheEntry{models: append([]link.ModelInfo(nil), models...), at: time.Now()}
+}
+
+// resetModelsCache clears the cache (tests; a config change may also want a
+// fresh detection).
+func resetModelsCache() {
+	modelsCacheMu.Lock()
+	defer modelsCacheMu.Unlock()
+	modelsCache = map[string]modelsCacheEntry{}
+}
+
+// runModelsCmd runs a models_cmd with a hard timeout and returns its
+// combined output (” on failure). extraPath (a --scan dir) is prepended to
+// PATH so a CLI resolved outside PATH still runs.
+func runModelsCmd(ctx context.Context, cmd, extraPath string) string {
+	pctx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+	c := exec.CommandContext(pctx, "sh", "-c", cmd)
+	if extraPath != "" {
+		c.Env = append(os.Environ(), "PATH="+extraPath+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	b, err := c.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// parseModelsOutput parses a models_cmd's output into model infos. Two
+// shapes are accepted: a JSON array (of strings or {id|modelId,name,
+// description} objects) and one model id per line. Lines that are empty,
+// comment-prefixed (#) or a trailing-colon header ("Available models:") are
+// skipped; duplicates are dropped (first wins).
+func parseModelsOutput(raw string) []link.ModelInfo {
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+	if raw == "" {
+		return []link.ModelInfo{}
+	}
+	if strings.HasPrefix(raw, "[") {
+		if models, ok := parseModelJSONArray([]byte(raw)); ok {
+			return models
+		}
+	}
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		id := strings.TrimSpace(line)
+		if id == "" || strings.HasPrefix(id, "#") || strings.HasSuffix(id, ":") {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, link.ModelInfo{ID: id})
+	}
+	return models
+}
+
+func parseModelJSONArray(b []byte) ([]link.ModelInfo, bool) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(b, &items); err != nil {
+		return nil, false
+	}
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	add := func(m link.ModelInfo) {
+		if m.ID == "" || seen[m.ID] {
+			return
+		}
+		seen[m.ID] = true
+		models = append(models, m)
+	}
+	for _, item := range items {
+		var s string
+		if err := json.Unmarshal(item, &s); err == nil {
+			add(link.ModelInfo{ID: strings.TrimSpace(s)})
+			continue
+		}
+		var m acpModel
+		if err := json.Unmarshal(item, &m); err == nil {
+			add(m.info())
+		}
+	}
+	return models, true
+}
+
+// acpModel is one model descriptor as ACP implementations shape it
+// (modelId per spec; id tolerated — some servers use it). Also reused for
+// JSON-array models_cmd output.
+type acpModel struct {
+	ModelID     string `json:"modelId"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (m acpModel) info() link.ModelInfo {
+	id := strings.TrimSpace(m.ModelID)
+	if id == "" {
+		id = strings.TrimSpace(m.ID)
+	}
+	return link.ModelInfo{ID: id, Name: m.Name, Description: m.Description}
+}
+
+func acpModelsToInfos(in []acpModel) []link.ModelInfo {
+	models := []link.ModelInfo{}
+	seen := map[string]bool{}
+	for _, m := range in {
+		info := m.info()
+		if info.ID == "" || seen[info.ID] {
+			continue
+		}
+		seen[info.ID] = true
+		models = append(models, info)
+	}
+	return models
+}
+
+// acpConfigOption is one entry of a session/new result.configOptions array.
+// opencode returns its model selector this way (verified with opencode
+// 2.2.5):
+//
+//	{id:"model", category:"model", type:"select", currentValue:"...",
+//	 options:[{value:"...", name:"...", description:"..."}]}
+//
+// Unknown fields (currentValue, _meta) are ignored.
+type acpConfigOption struct {
+	ID       string              `json:"id"`
+	Category string              `json:"category"`
+	Type     string              `json:"type"`
+	Options  []acpConfigOptValue `json:"options"`
+}
+
+// acpConfigOptValue is one selectable value of a config option.
+type acpConfigOptValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// acpConfigOptionModels maps the model selector's options to ModelInfo:
+// entries whose id OR category is "model" (and that are not boolean
+// toggles). A boolean "model" option has no options list, so it contributes
+// nothing anyway.
+func acpConfigOptionModels(opts []acpConfigOption) []link.ModelInfo {
+	const model = "model"
+	out := []link.ModelInfo{}
+	for _, o := range opts {
+		if o.ID != model && o.Category != model {
+			continue
+		}
+		if o.Type == "boolean" {
+			continue
+		}
+		for _, v := range o.Options {
+			id := strings.TrimSpace(v.Value)
+			if id == "" {
+				continue
+			}
+			out = append(out, link.ModelInfo{ID: id, Name: v.Name, Description: v.Description})
+		}
+	}
+	return out
+}
+
+// mergeModelInfos appends in to dst, skipping empty and already-present ids
+// (first occurrence wins — shape order decides when duplicates disagree).
+func mergeModelInfos(dst, in []link.ModelInfo) []link.ModelInfo {
+	seen := make(map[string]bool, len(dst)+len(in))
+	for _, m := range dst {
+		seen[m.ID] = true
+	}
+	for _, m := range in {
+		if m.ID == "" || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		dst = append(dst, m)
+	}
+	return dst
+}
+
+// parseACPModels extracts the model list from an ACP session/new RESULT
+// payload. Accepted shapes (deduplicated, in order): result.models.
+// availableModels, result.models as an array, top-level availableModels,
+// and result.configOptions entries for the model selector (the shape
+// opencode's `opencode acp` returns; hermes-acp and other ACP-only agents
+// are covered by the same parse).
+func parseACPModels(result json.RawMessage) []link.ModelInfo {
+	out := []link.ModelInfo{}
+	if len(result) == 0 {
+		return out
+	}
+	var top struct {
+		Models          json.RawMessage   `json:"models"`
+		AvailableModels []acpModel        `json:"availableModels"`
+		ConfigOptions   []acpConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(result, &top); err != nil {
+		return out
+	}
+	models := strings.TrimSpace(string(top.Models))
+	if models != "" && models != "null" {
+		if strings.HasPrefix(models, "[") {
+			var arr []acpModel
+			if err := json.Unmarshal([]byte(models), &arr); err == nil {
+				out = mergeModelInfos(out, acpModelsToInfos(arr))
+			}
+		} else {
+			var obj struct {
+				AvailableModels []acpModel `json:"availableModels"`
+			}
+			if err := json.Unmarshal([]byte(models), &obj); err == nil {
+				out = mergeModelInfos(out, acpModelsToInfos(obj.AvailableModels))
+			}
+		}
+	}
+	out = mergeModelInfos(out, acpModelsToInfos(top.AvailableModels))
+	out = mergeModelInfos(out, acpConfigOptionModels(top.ConfigOptions))
+	return out
+}
+
+// probeModelsViaACP introspects a CLI over ACP stdio: spawn ACPSpawn, read
+// its initialize reply, then session/new (empty mcpServers, temp cwd) and
+// parse the model list off the reply — from result.models shapes or the
+// result.configOptions model selector (opencode/hermes). The process is
+// always killed and the temp cwd removed. Returns nil on any failure
+// (caller treats it as "no models").
+func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
+	if len(spawn) == 0 {
+		return nil
+	}
+	cwd, err := os.MkdirTemp("", "ouroflow-models-")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(cwd)
+
+	pctx, cancel := context.WithTimeout(ctx, modelsTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(pctx, spawn[0], spawn[1:]...)
+	cmd.Dir = cwd
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return nil
+	}
+	defer func() {
+		cancel() // CommandContext kills the process on ctx cancel
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	lines := make(chan []byte, 32)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(make([]byte, 64*1024), 4<<20)
+		for sc.Scan() {
+			line := append([]byte(nil), sc.Bytes()...)
+			select {
+			case lines <- line:
+			case <-pctx.Done():
+				return
+			}
+		}
+	}()
+
+	send := func(id int, method string, params any) bool {
+		frame, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			return false
+		}
+		_, err = stdin.Write(append(frame, '\n'))
+		return err == nil
+	}
+	// call writes one request and waits for the reply with the matching id.
+	call := func(id int, method string, params any) (json.RawMessage, bool) {
+		if !send(id, method, params) {
+			return nil, false
+		}
+		for {
+			select {
+			case <-pctx.Done():
+				return nil, false
+			case line, ok := <-lines:
+				if !ok {
+					return nil, false
+				}
+				var env struct {
+					ID     json.RawMessage `json:"id"`
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if json.Unmarshal(line, &env) != nil {
+					continue
+				}
+				if strings.TrimSpace(string(env.ID)) != strconv.Itoa(id) {
+					continue
+				}
+				if e := strings.TrimSpace(string(env.Error)); e != "" && e != "null" {
+					return nil, false
+				}
+				return env.Result, true
+			}
+		}
+	}
+	if _, ok := call(1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}); !ok {
+		return nil
+	}
+	result, ok := call(2, "session/new", map[string]any{
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if !ok {
+		return nil
+	}
+	models := parseACPModels(result)
+	if len(models) == 0 {
+		return nil
+	}
+	return models
+}
+
+// scanDirsFor expands one --scan argument into concrete directories: ~ is
+// expanded, glob patterns are resolved via doublestar (`*` one segment,
+// `**` recursive — /opt/**/ = any depth under /opt), and non-directory
+// matches are dropped. Plain paths pass through unchanged.
+func scanDirsFor(pattern string) []string {
+	pattern = expandHome(pattern)
+	if !strings.ContainsAny(pattern, "*?[") {
+		return []string{pattern}
+	}
+	matches, err := doublestar.FilepathGlob(pattern)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.IsDir() {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// probeRuns reports whether the probe command executes successfully, with
+// extraPath (a --scan dir) prepended to PATH when non-empty.
+func probeRuns(ctx context.Context, cmd, extraPath string) bool {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	c := exec.CommandContext(pctx, "sh", "-c", cmd)
+	if extraPath != "" {
+		c.Env = append(os.Environ(), "PATH="+extraPath+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return c.Run() == nil
+}
+
+// probeVersion runs the probe command and returns its first output line,
+// trimmed (” when the CLI prints nothing).
+func probeVersion(ctx context.Context, cmd, extraPath string) string {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	c := exec.CommandContext(pctx, "sh", "-c", cmd)
+	if extraPath != "" {
+		c.Env = append(os.Environ(), "PATH="+extraPath+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	b, err := c.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(b))
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	return line
+}
+
+// expandHome resolves a leading ~ (” input passes through).
+func expandHome(p string) string {
+	if !strings.HasPrefix(p, "~") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
+}

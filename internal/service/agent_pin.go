@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // AgentPinService manages the sidebar-pin preference for agents. Pin state is
-// per-agent only — agentwork is a single-user local platform (no user/tenant
+// per-agent only — ouroflow is a single-user local platform (no user/tenant
 // dimension), so there is no user_id column.
 //
 // The model is "row existence = pinned": pin = INSERT OR IGNORE, unpin =

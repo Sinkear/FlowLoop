@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/store"
-	"github.com/eushing/agentwork/internal/zipx"
+	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/ouroflow/internal/zipx"
 )
 
 // ── fakes: no network / no git binary in these tests ──
@@ -91,11 +91,11 @@ func (p *fakePullProvider) CheckPushPermission(_ context.Context, repo string) (
 	return p.identity, p.canPush, nil
 }
 
-// remoteTestHarness builds an isolated skill service (temp AGENTWORK_HOME)
+// remoteTestHarness builds an isolated skill service (temp OUROFLOW_HOME)
 // with one skill and fake git/provider surfaces.
 func remoteTestHarness(t *testing.T, local map[string]string) (*SkillService, *Skill, *fakeRemoteGit, *fakePullProvider) {
 	t.Helper()
-	t.Setenv("AGENTWORK_HOME", t.TempDir())
+	t.Setenv("OUROFLOW_HOME", t.TempDir())
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -538,7 +538,7 @@ func TestSkillPullRequest(t *testing.T) {
 	if out.PRURL != prov.prURL || out.PRNumber != 7 || out.Base != "main" || out.Identity != "alice" || out.Commit != "commit-1" {
 		t.Fatalf("PR result = %+v", out)
 	}
-	wantBranch := "agentwork/skill-" + firstID8(sk.ID) + "-"
+	wantBranch := "ouroflow/skill-" + firstID8(sk.ID) + "-"
 	if !strings.HasPrefix(out.Branch, wantBranch) {
 		t.Fatalf("PR branch = %q, want prefix %q", out.Branch, wantBranch)
 	}

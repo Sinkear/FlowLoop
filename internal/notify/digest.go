@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/card"
-	"github.com/eushing/agentwork/internal/card/feishu"
+	"github.com/Sinkear/ouroflow/internal/card"
+	"github.com/Sinkear/ouroflow/internal/card/feishu"
 )
 
 // Daily digest (M3-3): the morning summary card — pending approvals +
@@ -66,7 +66,7 @@ func BuildDigestCard(ctx context.Context, qs QueryStore, since, until time.Time,
 	return feishu.BuildCard(&card.Card{
 		Header:  card.CardHeader{Title: "📋 每日摘要 " + now.Format("01-02")},
 		Content: body.String(),
-		Footer:  "agentwork · 点开 Web 审批队列处理卡点",
+		Footer:  "ouroflow · 点开 Web 审批队列处理卡点",
 		Color:   card.CardColorBlue,
 	})
 }

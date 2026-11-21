@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/proto"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // insertToolRow persists one chat_message tool row as persistEvent would

@@ -109,7 +109,7 @@ export function Nav() {
         className="flex items-center gap-2 rounded-md px-3 pb-4 pt-2 transition-colors hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-        <span className="font-mono text-sm font-semibold tracking-tight text-ink">agentwork</span>
+        <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
       </Link>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

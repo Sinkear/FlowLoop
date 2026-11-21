@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // ageOwnerRun marks the goal's queued owner run terminal and rewrites its

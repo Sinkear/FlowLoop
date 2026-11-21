@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // staleConflictResolver implements service.StaleConflictResolver. It lives in

@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/acp"
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // ── fixtures ──
 
-const squadTemplateYAML = `api_version: agentwork/v1
+const squadTemplateYAML = `api_version: ouroflow/v1
 kind: squad-template
 metadata:
   id: backend-dev
@@ -50,7 +50,7 @@ spec:
 
 // fullAgentFieldsYAML exercises every tplAgent field the apply path must carry
 // through to the DB: mcp_servers (stdio + http), env, model, max_concurrent.
-const fullAgentFieldsYAML = `api_version: agentwork/v1
+const fullAgentFieldsYAML = `api_version: ouroflow/v1
 kind: squad-template
 metadata:
   id: full-fields
@@ -91,7 +91,7 @@ spec:
     members: []
 `
 
-const projectTemplateYAML = `api_version: agentwork/v1
+const projectTemplateYAML = `api_version: ouroflow/v1
 kind: project-template
 metadata:
   id: go-service
@@ -257,7 +257,7 @@ func (c *templateTestCluster) putTemplate(t *testing.T, kind, id, raw string) {
 		"fetched_at": "2026-01-01T00:00:00Z",
 		"repo":       map[string]any{"git_url": "https://example.com/templates.git", "branch": "main"},
 		"templates": []map[string]any{{
-			"api_version": "agentwork/v1", "kind": kind, "id": id,
+			"api_version": "ouroflow/v1", "kind": kind, "id": id,
 			"name": id, "version": "1.0.0", "path": kind + "/" + id + ".yaml",
 			"spec_yaml": raw,
 		}},
@@ -272,7 +272,7 @@ func (c *templateTestCluster) putTemplate(t *testing.T, kind, id, raw string) {
 
 func TestParseTemplateStrictFields(t *testing.T) {
 	// A misspelled spec field must fail loudly (R5).
-	bad := `api_version: agentwork/v1
+	bad := `api_version: ouroflow/v1
 kind: squad-template
 metadata:
   id: bad
@@ -290,7 +290,7 @@ spec:
 }
 
 func TestParseTemplateKindMismatch(t *testing.T) {
-	_, _, err := parseTemplate("api_version: agentwork/v1\nkind: bogus\nmetadata:\n  id: x\nspec: {}\n")
+	_, _, err := parseTemplate("api_version: ouroflow/v1\nkind: bogus\nmetadata:\n  id: x\nspec: {}\n")
 	if err == nil || !strings.Contains(err.Error(), "kind") {
 		t.Fatalf("expected unsupported-kind error, got %v", err)
 	}
@@ -933,7 +933,7 @@ func TestApplyProjectDuplicateDomainNameFails(t *testing.T) {
 // mustExist(...WHERE id=?) against the raw NAME and aborted the whole apply
 // before the team section ever ran (AW.10000001 "issue assignee ... does not
 // exist").
-const forwardRefAssigneeYAML = `api_version: agentwork/v1
+const forwardRefAssigneeYAML = `api_version: ouroflow/v1
 kind: project-template
 metadata:
   id: existing-repo
@@ -1030,7 +1030,7 @@ func TestParseTemplateFilesMixedValidity(t *testing.T) {
     kind: squad-template
     path: squads/bad.yaml
 `,
-		"squads/good.yaml": "api_version: agentwork/v1\nkind: squad-template\nmetadata:\n  id: good\nspec:\n  agents:\n    - name: a\n  squad:\n    leader: a\n",
+		"squads/good.yaml": "api_version: ouroflow/v1\nkind: squad-template\nmetadata:\n  id: good\nspec:\n  agents:\n    - name: a\n  squad:\n    leader: a\n",
 		"squads/bad.yaml":  "not: a template\n",
 	}
 	c, err := parseTemplateFiles(files)
@@ -1163,8 +1163,8 @@ func TestGetSpecIsInnerNodeOnly(t *testing.T) {
 
 func TestTemplateSpecJSONEdgeCases(t *testing.T) {
 	cases := map[string]string{ // doc → expected raw spec JSON
-		"api_version: agentwork/v1\nspec:\n  domain:\n    type: scratch\n": `{"domain":{"type":"scratch"}}`,
-		"api_version: agentwork/v1\nmetadata:\n  id: x\n":                  `null`, // no spec section
+		"api_version: ouroflow/v1\nspec:\n  domain:\n    type: scratch\n": `{"domain":{"type":"scratch"}}`,
+		"api_version: ouroflow/v1\nmetadata:\n  id: x\n":                  `null`, // no spec section
 		"": `null`,
 	}
 	for doc, want := range cases {
@@ -1179,7 +1179,7 @@ func TestTemplateSpecJSONEdgeCases(t *testing.T) {
 }
 
 // repoCreateTemplateYAML mirrors the real go-service template (repo.create section).
-const repoCreateTemplateYAML = `api_version: agentwork/v1
+const repoCreateTemplateYAML = `api_version: ouroflow/v1
 kind: project-template
 metadata:
   id: go-service-repo-create
@@ -1238,7 +1238,7 @@ func TestRefreshAppliesIndependentTimeout(t *testing.T) {
 
 // ── agent-template fixtures + tests ──
 
-const agentTemplateYAML = `api_version: agentwork/v1
+const agentTemplateYAML = `api_version: ouroflow/v1
 kind: agent-template
 metadata:
   id: code-reviewer
@@ -1264,7 +1264,7 @@ spec:
       拉取最近变更并输出审查意见。
 `
 
-const agentTemplateNoSuggestedGoalYAML = `api_version: agentwork/v1
+const agentTemplateNoSuggestedGoalYAML = `api_version: ouroflow/v1
 kind: agent-template
 metadata:
   id: bare-agent

@@ -1,6 +1,6 @@
-# agentwork-int-v2 自迭代分支审查报告
+# ouroflow-int-v2 自迭代分支审查报告
 
-> 审查对象：`origin/agentwork-int-v2` @ `ae12054`（相对 `origin/agentwork-int` 领先 28 个提交）
+> 审查对象：`origin/ouroflow-int-v2` @ `ae12054`（相对 `origin/ouroflow-int` 领先 28 个提交）
 > 审查时间：2026-11-14
 > 审查方式：静态代码审计 + 合成 fixture/受控 A/B + 真实复现 + 全量构建/测试
 > 结论先行：**方向成立、产出有真实价值，但“效果证据链”不可信。工程修复多数可采纳；RSI 分析器目前只能当观测脚手架，不能当自动判优依据。**
@@ -24,7 +24,7 @@
 ## 1. 审查方法与边界
 
 - **双路验证**：一路读代码/文档找声明；另一路用合成 fixture、受控 A/B、真实命令复现，确认“场景是否真的存在”，再判断“修改是否真的生效”。
-- **环境**：Linux amd64，16 核；Go 1.26.5；v2 工作树 `/home/sinkear/developer/agentwork-v2-review`；本地 DB 为 2026-11-08 的早期 MVP 数据，**不是** R1–R3 生产库（生产数据在 `/root/.agentwork`，本机不可读）。
+- **环境**：Linux amd64，16 核；Go 1.26.5；v2 工作树 `/home/sinkear/developer/ouroflow-v2-review`；本地 DB 为 2026-11-08 的早期 MVP 数据，**不是** R1–R3 生产库（生产数据在 `/root/.ouroflow`，本机不可读）。
 - **能验证的**：代码逻辑、合成数据、公开构建/测试、git/环境变量复现、UI 类型与构建契约。
 - **不能验证的**：R1–R3 生产库原始行、R2 那 6 个失败的真实根因、UI 真机截图（本机没有对应 daemon）。
 - 因此下文凡是“生产数据”结论，只作为**文档自述**引用，不当作已证实事实；凡是“代码/合成 fixture/命令复现”结论，都给了复现路径。
@@ -33,7 +33,7 @@
 
 - `GOCACHE=/tmp/gocache-v2-cold go build ./...` → PASS，23.103s（冷）。
 - `go test ./... -count=1` → exit 0；daemon 2.537s、service 3.140s、cli 0.841s、link 0.008s、server 0.016s。
-- 所以 v2 在本机是绿的；R3 报告里的 6 个失败是 `/root` HOME/AGENTWORK_HOME 环境隔离问题，不是本机必现。
+- 所以 v2 在本机是绿的；R3 报告里的 6 个失败是 `/root` HOME/OUROFLOW_HOME 环境隔离问题，不是本机必现。
 
 ---
 
@@ -47,7 +47,7 @@
 | 4 | P-B：`rsi_round` 两行都是 round_no=1、delta 恒 `{}` | **真实，但不是代码 bug**：每个 goal 一个 session，`MAX(round_no) WHERE session_id=?` 是对的；跨轮比较本就跨 session | 文档提议按 session 加锁/去重 | **不适用**：加锁解决不了跨轮；需要按 domain 建“轮次序列” | 采纳问题，改方案 |
 | 5 | #14 基准冷/温漂移，23.012s vs 14.5s vs 11.3s | **真实**：本机冷/温 build 20.56 vs 2.85s（7.2×），test 26.15 vs 7.36s（3.6×） | 文档记录现象 | **未生效**：R2 的 -50% 是缓存假象；R3 的 build -7% 与“本轮未改代码”自相矛盾 | 采纳 #14 现象，重定基准协议 |
 | 6 | #15 `/rsi` 文档端点 404 | **真实但只是文档错**：8 个真实端点都在；`/rsi` 从未有别名 | 改文档 | **生效**：文档已列真实端点 | 采纳（文档修复） |
-| 7 | #4b unset `AGENTWORK_HOME` 后 `go: command not found`（127） | **环境层面可能真实**：daemon PATH 无 `/usr/local/go/bin`；生产复现不可得 | 手工 unset + 前置检查 | **未真正修复**：只是绕过；根因在子进程环境继承 | 归入 P-A，做环境消毒 |
+| 7 | #4b unset `OUROFLOW_HOME` 后 `go: command not found`（127） | **环境层面可能真实**：daemon PATH 无 `/usr/local/go/bin`；生产复现不可得 | 手工 unset + 前置检查 | **未真正修复**：只是绕过；根因在子进程环境继承 | 归入 P-A，做环境消毒 |
 | 8 | depends_on：sg-O 必须在 sg-B 验证后才跑 | **真实**：这是自迭代编排的硬需求 | 创建时门控 + 验证后唤醒 | **happy path 生效**；依赖失败后**会永久卡死**；唤醒 run 丢失 trigger comment 锚点 | 修后采纳（阻断合并） |
 | 9 | RSI 图/指标能定位串行、丢失并行、重试放大 | **场景真实**（R1/R3 确实串行、重试多），但指标实现不可信 | 读时装配 + 冻结快照 + 9 类规则 | **作为决策依据未生效**：CP 扇入重复计数、seq 边进 CP、review 无边、lost_parallelism 恒假 | 只采纳脚手架，先修 P0 |
 | 10 | 9 类 finding + human_wait 能指导优化 | 部分真实 | 规则表 | **部分生效**：serial/split 可算但被污染；lost/retry-L2 死；human_wait 不进指标 | 修规则后再用 |
@@ -56,7 +56,7 @@
 | 13 | AGENTS.md 被 `.gitignore` 忽略时 `git add` 点名 exclude 会 exit 1 | **真实，已复现** | `check-ignore` 为真时不加 pathspec | **生效**：exit 0 且正确跳过；但 project-skills 的 exclude 仍未加守卫 | 采纳 + 扩展 |
 | 14 | 根级 AGENTS.md 被平台注入，tracked 后集成 merge 冲突 | **真实**：平台每次注入未跟踪文件，tracked 版本会让 `git merge` 拒绝覆盖 | 删 tracked AGENTS.md、忽略之、约定迁 playbook §6 | **生效**：集成冲突根因消除；代价是 fresh clone 少指引 | 采纳 |
 | 15 | 需要一个可复用的“轮次报告生成器” | **真实需求**；实现只是 R3 一次性打印器 | `scripts/rsi-round-report.sh` 454 行 | **未生效**：硬编码 R3 结论、`--since/--until` 会崩、API 挂时仍 exit 0 | 不采纳为可信工具，重写 |
-| 16 | P-A：`AGENTWORK_HOME` 泄漏进 verify 子进程，污染测试仓库 | **真实（代码+复现）**：`verify.go` 的 `sh -c` 不传 `c.Env`；`paths.go` 优先 AGENTWORK_HOME | 文档提议 unset/隔离 | **v2 未实现**；且 R2 fetch-128 根因未能复现 | 采纳方向，补实现与回归测试 |
+| 16 | P-A：`OUROFLOW_HOME` 泄漏进 verify 子进程，污染测试仓库 | **真实（代码+复现）**：`verify.go` 的 `sh -c` 不传 `c.Env`；`paths.go` 优先 OUROFLOW_HOME | 文档提议 unset/隔离 | **v2 未实现**；且 R2 fetch-128 根因未能复现 | 采纳方向，补实现与回归测试 |
 | 17 | 文档与代码一致 | 约 10 条真、8 条假/陈旧 | 改文档 | 部分 | 逐条修（见 §3.10） |
 
 ---
@@ -88,14 +88,14 @@
 
 - before 树（`112d50f`）确实 FAIL（rc=1），但红因是 **`codes_test.go:102` 缺码断言**：CDN 返回合法 JSON、缺少 `AW.10000025`，不是 decode 失败。proposal 里的“decode 失败”诊断不准确。
 - CDN 实测 HTTP 200：zh-cn 543 keys、en-us 351 keys，两个 locale 都恰好缺 `AW.10000025–30`；23/24 存在；31/32 不在仓库导出范围。
-- HEAD 没有 `AGENTWORK_SKIP_CDN_DRIFT`（v1 `8ca9957` 有，且判断写成 `!= ""` 的 bug）。
+- HEAD 没有 `OUROFLOW_SKIP_CDN_DRIFT`（v1 `8ca9957` 有，且判断写成 `!= ""` 的 bug）。
 
 **修改**：网络不可达、非 200、畸形 body、缺码四条路径全部 `t.Skipf`；缺码 SKIP 时打印 6 个码。
 
 **效果与问题**：
 
 - CI 从红变绿，但**守卫已无 FAIL 路径**。用 200+HTML 的 scratch 验证畸形 body 也走 SKIP。真出现新的 CDN 漂移时，测试会静默跳过，等于把“漂移检测器”改成了“漂移消音器”。
-- 正确方向应是：**默认 strict**（缺码 FAIL），配一个**带过期时间的 allowlist**（当前只放行已知的 6 个码），再加显式开关 `AGENTWORK_SKIP_CDN_DRIFT=1`（判断必须 `== "1"`）；畸形 JSON 可以 SKIP，但要有告警；再加一个定时 strict job。
+- 正确方向应是：**默认 strict**（缺码 FAIL），配一个**带过期时间的 allowlist**（当前只放行已知的 6 个码），再加显式开关 `OUROFLOW_SKIP_CDN_DRIFT=1`（判断必须 `== "1"`）；畸形 JSON 可以 SKIP，但要有告警；再加一个定时 strict job。
 
 **结论**：不要原样采纳；按上述修订后采纳。
 
@@ -259,7 +259,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 提交只给测试加了 `newPeerNoRead`/`StartReadLoop` 和 `NewPeerForTest`；**生产调用点仍是** `NewPeer` → `Handle`：
 
 - `internal/server/server.go:249`（connect）与 `:512`（/rpc）
-- `cmd/agentwork-cli/connect.go:172`、`rpc.go:45`
+- `cmd/ouroflow-cli/connect.go:172`、`rpc.go:45`
 
 所以该提交对生产“method not found”无效，只能算测试稳定性修复。要修就改生产顺序：先注册 handler，再 `startReadLoop`，并加双启动保护。
 
@@ -274,13 +274,13 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 
 **结论**：不能当轮次工具用。要重写成“数据驱动 + 缺数据 fail loud + 模板只留结构”，并把标题约定写进生成器/测试。
 
-#### P-A：AGENTWORK_HOME 泄漏
+#### P-A：OUROFLOW_HOME 泄漏
 
-**真实**：`internal/daemon/verify.go:171-186` 和 `:373-381` 的 `sh -c` 不传 `c.Env`，子进程继承 daemon 环境；`internal/paths/paths.go:29-43` 优先 `AGENTWORK_HOME`。复现：设置 `AGENTWORK_HOME=/tmp/p-a-leak-home` 跑测试，测试通过但仓库写到了 `/tmp/p-a-leak-home/repos/dom-1`，无视 `t.Setenv("HOME")`。
+**真实**：`internal/daemon/verify.go:171-186` 和 `:373-381` 的 `sh -c` 不传 `c.Env`，子进程继承 daemon 环境；`internal/paths/paths.go:29-43` 优先 `OUROFLOW_HOME`。复现：设置 `OUROFLOW_HOME=/tmp/p-a-leak-home` 跑测试，测试通过但仓库写到了 `/tmp/p-a-leak-home/repos/dom-1`，无视 `t.Setenv("HOME")`。
 
-**但 R2 fetch-128 的具体机制未复现**：同一 AGENTWORK_HOME 下 `TestParallelConsultWorktreeDetaches` 两次都通过（0.145s/0.052s）。所以“P-A 是 R2 失败根因”目前只是强相关假设，不能写成已证实。
+**但 R2 fetch-128 的具体机制未复现**：同一 OUROFLOW_HOME 下 `TestParallelConsultWorktreeDetaches` 两次都通过（0.145s/0.052s）。所以“P-A 是 R2 失败根因”目前只是强相关假设，不能写成已证实。
 
-**v2 未实现 P-A**：没有 `c.Env`/sanitize，没有测试，也没有对应提交。提案方向对但不完整：要同时覆盖 `runVerifyOutput`，把 `AGENTWORK_HOME` 和 `HOME` 都指向 per-run 临时目录（只 unset 仍会落到真实 HOME），保留 PATH/GOCACHE/proxy 并探测 toolchain，加回归测试。
+**v2 未实现 P-A**：没有 `c.Env`/sanitize，没有测试，也没有对应提交。提案方向对但不完整：要同时覆盖 `runVerifyOutput`，把 `OUROFLOW_HOME` 和 `HOME` 都指向 per-run 临时目录（只 unset 仍会落到真实 HOME），保留 PATH/GOCACHE/proxy 并探测 toolchain，加回归测试。
 
 ---
 
@@ -380,7 +380,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 
 ### 合并策略建议
 
-不建议把 v2 整分支直接 merge 回 `agentwork-int`：v2 把 R2 的 P1/P2/P3 用**不同 SHA** 重放（`e08cb72`/`e2bda1d` vs `3cf2116`/`8ca9957`/`18a8c3c`），整分支合并会制造重复/冲突历史，且会把坏的门控、报告脚本、指标一起带进去。
+不建议把 v2 整分支直接 merge 回 `ouroflow-int`：v2 把 R2 的 P1/P2/P3 用**不同 SHA** 重放（`e08cb72`/`e2bda1d` vs `3cf2116`/`8ca9957`/`18a8c3c`），整分支合并会制造重复/冲突历史，且会把坏的门控、报告脚本、指标一起带进去。
 
 更稳的做法：**按类别 cherry-pick**——先 P3、P1、gitignore、AGENTS.md 四组；再单独一个 PR 修 depends_on liveness；RSI 分析器作为“实验特性”单独 PR，默认关闭或只读展示，P0 修完再启用。
 
@@ -421,7 +421,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 
 | 证据 | 位置/命令 |
 |---|---|
-| 全量测试 | `cd /home/sinkear/developer/agentwork-v2-review && GOCACHE=/tmp/gocache-v2-cold go test ./... -count=1` |
+| 全量测试 | `cd /home/sinkear/developer/ouroflow-v2-review && GOCACHE=/tmp/gocache-v2-cold go test ./... -count=1` |
 | 冷构建 | `GOCACHE=/tmp/gocache-v2-cold go build ./...`（23.103s） |
 | CP 扇入 | `internal/service/zz_core_probe_test.go`（probe build tag）；日志 `/tmp/probe.log` |
 | 400 次确定性 | probe `TestProbeDeterminism`；结果 sg-a 361 / sg-b 39 |
@@ -429,7 +429,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 | P2 复现 | `codes_test.go:102`（before）；CDN 543/351 keys；`review-claims.md` |
 | P3 分类 | `goal.go:109-127,1427-1429`；14 例表 |
 | gitignore 复现 | 临时仓库 + `.gitignore=AGENTS.md`；`gitwork.go:185-216` |
-| AGENTWORK_HOME 泄漏 | `AGENTWORK_HOME=/tmp/p-a-leak-home go test …`；`verify.go:171-186` |
+| OUROFLOW_HOME 泄漏 | `OUROFLOW_HOME=/tmp/p-a-leak-home go test …`；`verify.go:171-186` |
 | 报告脚本 | `scripts/rsi-round-report.sh`；DB copy + 两个临时 daemon（47899/47898） |
 | UI 构建 | `web: tsc --noEmit`、`next build`（19/19） |
 | 审计报告 | `review-core.md`、`review-web.md`、`review-claims.md`、`review-process.md`（各 worktree，未提交） |
@@ -438,7 +438,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 
 ## 8. 局限与未决
 
-1. **生产数据不可得**：`/root/.agentwork` 无权限，R1–R3 的 run/round 原始行无法独立核对；“12/15”“31 run”等只能引用分析文档。
+1. **生产数据不可得**：`/root/.ouroflow` 无权限，R1–R3 的 run/round 原始行无法独立核对；“12/15”“31 run”等只能引用分析文档。
 2. **R2 fetch-128 根因未证实**：P-A 泄漏本身有代码与复现，但“它就是 R2 那 6 个失败的原因”未能复现闭环。
 3. **机器差异**：本机 16 核 amd64 vs 文档 7 vCPU arm64，绝对耗时不可直接对比；本报告只接受同机受控 A/B。
 4. **UI 未做真机截图**：没有对应 daemon，只做了类型/构建/契约验证。
@@ -459,7 +459,7 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 
 ## 10. 修复落地（2026-11-14）
 
-"修后可拿"范围的修复已落在分支 `agentwork-int-v2-fix`（worktree `/home/sinkear/developer/agentwork-v2-fix`，基线 `ae12054`，已 push 到 origin），逐项场景→修复→证据见 `docs/rsi/fix-v2.md`。要点：
+"修后可拿"范围的修复已落在分支 `ouroflow-int-v2-fix`（worktree `/home/sinkear/developer/ouroflow-v2-fix`，基线 `ae12054`，已 push 到 origin），逐项场景→修复→证据见 `docs/rsi/fix-v2.md`。要点：
 
 - 指标核心：CP 扇入重复计数修正；推断 seq 边移出 CP；review 与执行分离统计；`parallel_speedup=work_sum/wall`；`serialization_loss=wall-cp`；队列等待拆依赖/派发；human_wait 进入 metrics；retry 放大取最大 Attempt；baseline/轮次按 domain。
 - 门控 liveness：依赖失败/取消级联失败仍 gated 的子任务；释放 run 保留 dispatch 锚点；机器验证补 `verification_result` 行；RetrySubGoal 不得绕过门控。
@@ -467,4 +467,4 @@ tracked 的根 AGENTS.md 会导致“平台注入未跟踪 AGENTS.md + 集成 me
 - 验证：`go test ./...` 全绿；`go vet ./...` 无输出；web `tsc --noEmit` / `next build` 通过；报告脚本 fixture 五节 + 死 API exit 1；指标前后对比与 23 行场景表见 `fix-v2.md`。
 - OCR 复核（2026-11-14）：`ocr delegate preview --from ae12054 --to HEAD` 覆盖 20 个可审文件（tests/docs 被默认排除），逐文件复核后追加 `b007146`：queue split 在 `created_at` 损坏时归零（+回归测试）、detail 指标仅 ready 展示、报告脚本校验 API ID 并容忍脏 score、schema 轮次注释 per-domain；复核未发现新的阻断项，其余为已在文档记录的低风险/边界项。
 
-仍未解决（见 `fix-v2.md` §4）：P-A `AGENTWORK_HOME` 泄漏未实现；link 未做真实 daemon 集成；循环 depends_on 未拒绝；retry 链无 dispatch 锚点；全仓 286 个 755 文件未清理；CLI/MCP 创建 goal 仍缺 execution_mode/depends_on；workflow_edge 仍作预留表；报告脚本仅 fixture 验证；UI 无 live daemon 截图。
+仍未解决（见 `fix-v2.md` §4）：P-A `OUROFLOW_HOME` 泄漏未实现；link 未做真实 daemon 集成；循环 depends_on 未拒绝；retry 链无 dispatch 锚点；全仓 286 个 755 文件未清理；CLI/MCP 创建 goal 仍缺 execution_mode/depends_on；workflow_edge 仍作预留表；报告脚本仅 fixture 验证；UI 无 live daemon 截图。

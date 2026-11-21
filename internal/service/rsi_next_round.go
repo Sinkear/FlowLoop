@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // StartNextRoundFromProposal is the explicit link between "a proposal was

@@ -15,7 +15,7 @@ func TestNormalizeNilSlicesOmitsHeadersAsEmptyArray(t *testing.T) {
 	req := NewSessionRequest{
 		Cwd: "/tmp",
 		McpServers: []McpServer{{
-			Type: "http", Name: "agentwork", URL: "http://127.0.0.1:7373/mcp/test",
+			Type: "http", Name: "ouroflow", URL: "http://127.0.0.1:7373/mcp/test",
 			// Headers intentionally nil.
 		}},
 	}
