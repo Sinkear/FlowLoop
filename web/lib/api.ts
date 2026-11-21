@@ -534,8 +534,22 @@ export const resolveHeldGate = (
     { method: "POST", body: JSON.stringify(body) }
   );
 
+// 计划 vs 实际对账（BUG-4）：只读 join，UI 用它替代「人眼对比两张图」。
+export const getPlanAlignment = (goalId: string) =>
+  api<import("./types").PlanAlignment>(`/goals/${goalId}/plan-alignment`);
+
+// scratch 环境变更账本（BUG-4 P2）：执行者对作业环境做了什么（前/后版本、
+// 快照、manifest sha256），让交付可归因、可回滚、可审计。
+export const getEnvChanges = (goalId: string) =>
+  api<import("./types").EnvChange[]>(`/goals/${goalId}/env-changes`);
+
 export const getBlueprint = (id: string) =>
   api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
+
+// 删除蓝本（连带其版本与提案）。非终态目标仍钉住它的某个版本时服务端 409，
+// 错误消息原样展示；终态目标保留历史 pin，不会被改写。
+export const deleteBlueprint = (id: string) =>
+  api<void>(`/blueprints/${id}`, { method: "DELETE" });
 
 export const newBlueprintDraft = (id: string, changelog: string) =>
   api<import("./types").BlueprintVersion>(`/blueprints/${id}/versions`, {
@@ -548,6 +562,11 @@ export const updateBlueprintDraft = (versionId: string, content: string) =>
     method: "PUT",
     body: JSON.stringify({ content }),
   });
+
+// 删除一个草稿版本（乱填草稿的清理口）：已发布版本是蓝本的权威与历史，服务端 409；
+// 被目标钉住或被提案引用的草稿同样 409，错误消息原样展示。
+export const deleteBlueprintVersion = (versionId: string) =>
+  api<void>(`/blueprint-versions/${versionId}`, { method: "DELETE" });
 
 export const publishBlueprintVersion = (versionId: string, changelog: string) =>
   api<import("./types").BlueprintVersion>(`/blueprint-versions/${versionId}/publish`, {
@@ -579,6 +598,14 @@ export const rejectBlueprintProposal = (proposalId: string) =>
   api<import("./types").BlueprintProposal>(`/blueprint-proposals/${proposalId}/reject`, {
     method: "POST",
   });
+
+// 提案 → 下一轮（RSI 闭环的显式入口）：发布应用版本 + 克隆原训练目标 + 钉新版
+// （start=true 直接开跑；false 落 backlog）。
+export const startNextRoundFromProposal = (proposalId: string, start = true) =>
+  api<{ goal: import("./types").Goal; created: boolean }>(
+    `/blueprint-proposals/${proposalId}/next-round`,
+    { method: "POST", body: JSON.stringify({ start }) }
+  );
 
 // 同题 A/B（§12.3）：两个 goal 执行指标并排 + delta。
 export const compareBlueprintAB = (blueprintId: string, goalA: string, goalB: string) =>

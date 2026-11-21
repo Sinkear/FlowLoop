@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowRight,
   Check,
@@ -25,8 +25,10 @@ import {
   ThumbsUp,
   ThumbsDown,
   GitCompareArrows,
+  Play,
+  Trash2,
 } from "lucide-react";
-import { Badge, Button, Dialog, Empty, Field, PageBody, SectionCard, Skeleton, inputCls } from "@/components/ui";
+import { Badge, Button, ConfirmDialog, Dialog, Empty, Field, PageBody, SectionCard, Skeleton, inputCls } from "@/components/ui";
 import {
   useBlueprint,
   useBlueprintGraph,
@@ -37,7 +39,10 @@ import {
   useBlueprintProposalDiff,
   useApproveBlueprintProposal,
   useRejectBlueprintProposal,
+  useStartNextRoundFromProposal,
   useBlueprintAB,
+  useDeleteBlueprint,
+  useDeleteBlueprintVersion,
 } from "@/lib/queries";
 import type { BlueprintProposal } from "@/lib/types";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
@@ -181,6 +186,7 @@ function ABRow({ metric, a, b, delta }: { metric: string; a: number | string | u
 export default function BlueprintDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
+  const router = useRouter();
   const { data: detail, isLoading, isError, error, refetch } = useBlueprint(id);
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
 
@@ -227,7 +233,20 @@ export default function BlueprintDetailPage() {
   const proposalDiff = useBlueprintProposalDiff(diffProposalId);
   const approveProposal = useApproveBlueprintProposal(id);
   const rejectProposal = useRejectBlueprintProposal(id);
+  const startNextRound = useStartNextRoundFromProposal(id);
   const [confirmApproveId, setConfirmApproveId] = useState<string | null>(null);
+  const [confirmNextRoundId, setConfirmNextRoundId] = useState<string | null>(null);
+  const [nextRoundResult, setNextRoundResult] = useState<{ id: string; title: string; status: string } | null>(null);
+
+  async function doNextRound(proposalId: string, start: boolean) {
+    try {
+      const { goal } = await startNextRound.mutateAsync({ proposalId, start });
+      setConfirmNextRoundId(null);
+      setNextRoundResult({ id: goal.id, title: goal.title, status: goal.status });
+    } catch {
+      // 错误在对话框里展示（startNextRound.error）
+    }
+  }
 
   async function doApprove(proposalId: string) {
     try {
@@ -246,6 +265,34 @@ export default function BlueprintDetailPage() {
   const ab = useBlueprintAB(id, abGoalA.trim() || null, abGoalB.trim() || null);
 
   const mutError = (e: unknown) => (e instanceof Error ? e.message : null);
+
+  // ── 删除本蓝本（连带版本/提案）：被活跃目标 pin 住时服务端 409 ──
+  const del = useDeleteBlueprint();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  async function confirmDelete() {
+    try {
+      await del.mutateAsync(id);
+      router.push("/blueprints");
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // ── 删除草稿版本（乱填草稿的清理口）：已发布/被引用的由服务端 409 拒绝 ──
+  const delVersion = useDeleteBlueprintVersion();
+  const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<string | null>(null);
+  const [deleteVersionError, setDeleteVersionError] = useState("");
+  async function confirmDeleteVersion() {
+    if (!confirmDeleteVersionId) return;
+    try {
+      await delVersion.mutateAsync(confirmDeleteVersionId);
+      setConfirmDeleteVersionId(null);
+      setDeleteVersionError("");
+    } catch (e) {
+      setDeleteVersionError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   function openEdit() {
     if (!selected) return;
@@ -303,6 +350,18 @@ export default function BlueprintDetailPage() {
             {detail?.blueprint?.name ?? "蓝本"}
           </h1>
           {selected && <Badge status={selected.status} />}
+          {detail?.blueprint && (
+            <Button
+              variant="outline"
+              className="ml-auto gap-1.5 border-red-500/30 text-red-300 hover:bg-red-500/10"
+              onClick={() => {
+                setDeleteError("");
+                setDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> 删除蓝本
+            </Button>
+          )}
         </div>
         {detail?.blueprint?.description && (
           <p className="mt-1.5 max-w-3xl whitespace-pre-wrap text-sm leading-relaxed text-ink-3">
@@ -501,6 +560,17 @@ export default function BlueprintDetailPage() {
                       >
                         <Rocket className="h-3.5 w-3.5" /> 发布此版本
                       </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setDeleteVersionError("");
+                          setConfirmDeleteVersionId(selected.id);
+                        }}
+                        className="gap-1.5 border-red-500/40 text-red-300 hover:bg-red-500/10"
+                        title="删除这个草稿版本（已发布版本不可删；被引用时会拒绝）"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> 删除草稿
+                      </Button>
                     </>
                   )}
                   {selected.status === "published" && (
@@ -533,6 +603,15 @@ export default function BlueprintDetailPage() {
             count={proposals.data?.proposals?.length ?? 0}
             desc="结构化补丁提案：批准 = 以假设为说明开一个新草稿（不自动发布）；拒绝 = 一锤定音。提案可由 RSI finding 翻译而来，也接受手工创建"
           >
+            {nextRoundResult && (
+              <div className="mx-4 mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                已创建下一轮：
+                <Link href={`/goals/${nextRoundResult.id}`} className="font-medium underline underline-offset-2">
+                  {nextRoundResult.title}
+                </Link>
+                <span className="text-emerald-300/70">（{nextRoundResult.status === "active" ? "已开跑" : "backlog，待启动"}）</span>
+              </div>
+            )}
             {proposals.isLoading ? (
               <div className="p-4"><Skeleton className="h-16 w-full" /></div>
             ) : (proposals.data?.proposals?.length ?? 0) === 0 ? (
@@ -574,6 +653,14 @@ export default function BlueprintDetailPage() {
                           <GitCompareArrows className="h-3 w-3" />
                           {diffProposalId === pr.id ? "收起 diff" : "看 diff"}
                         </Button>
+                        {pr.status === "approved" && (
+                          <Button
+                            className="gap-1 text-[11px]"
+                            onClick={() => setConfirmNextRoundId(pr.id)}
+                          >
+                            <Play className="h-3 w-3" /> 开始下一轮
+                          </Button>
+                        )}
                         {pr.status === "pending" && (
                           <>
                             <Button
@@ -855,6 +942,48 @@ export default function BlueprintDetailPage() {
           </div>
         </Dialog>
       )}
+      {/* ── 提案 → 下一轮（RSI 闭环）── */}
+      {confirmNextRoundId && (
+        <Dialog
+          title="开始下一轮训练？"
+          onClose={() => setConfirmNextRoundId(null)}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setConfirmNextRoundId(null)}>取消</Button>
+              <Button
+                variant="outline"
+                disabled={startNextRound.isPending}
+                onClick={() => void doNextRound(confirmNextRoundId, false)}
+              >
+                只建 backlog
+              </Button>
+              <Button
+                disabled={startNextRound.isPending}
+                className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                onClick={() => void doNextRound(confirmNextRoundId, true)}
+              >
+                {startNextRound.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                发布并立即开始
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-3 text-xs leading-relaxed text-ink-2">
+            <p>
+              这一步把 RSI 串成闭环：<strong className="text-ink">发布</strong>提案的应用版本（若仍是草稿）→
+              复制原训练目标的域、小队/执行者、验收级别、采样率与预算 →
+              <strong className="text-ink">钉住新版本</strong>创建下一轮（execution_mode=train）。
+            </p>
+            <p className="text-ink-3">
+              「立即开始」会当场创建 active 目标并派发 owner run（产生真实执行成本）；「只建 backlog」等你之后手动启动。
+              两种都会编译规范图，下一轮的执行会与原目标同口径对比。
+            </p>
+            {mutError(startNextRound.error) && (
+              <ErrorBox title="创建下一轮失败：" message={mutError(startNextRound.error)!} />
+            )}
+          </div>
+        </Dialog>
+      )}
       {/* ── 批准提案确认（Phase C §12.1）── */}
       {confirmApproveId && (
         <Dialog
@@ -884,6 +1013,34 @@ export default function BlueprintDetailPage() {
             )}
           </div>
         </Dialog>
+      )}
+      {confirmDeleteVersionId && (
+        <ConfirmDialog
+          title="删除草稿版本"
+          message={`确定删除这个草稿版本吗？${
+            versions.find((v) => v.id === confirmDeleteVersionId)?.version
+              ? `（v${versions.find((v) => v.id === confirmDeleteVersionId)!.version}）`
+              : ""
+          }内容与变更说明会一并消失，不可恢复。已发布版本是蓝本的权威与历史，不会被删除；被目标钉住或被提案引用的草稿也会被服务端拒绝并说明原因。${deleteVersionError ? ` 删除失败：${deleteVersionError}` : ""}`}
+          loading={delVersion.isPending}
+          onConfirm={() => void confirmDeleteVersion()}
+          onClose={() => {
+            setConfirmDeleteVersionId(null);
+            setDeleteVersionError("");
+          }}
+        />
+      )}
+      {deleteOpen && detail?.blueprint && (
+        <ConfirmDialog
+          title="删除蓝本"
+          message={`删除蓝本「${detail.blueprint.name}」会同时删除它的 ${versions.length} 个版本与全部提案，不可恢复。仍有未结束的目标钉住它的某个版本时会被拒绝——先结束/取消那些目标。${deleteError ? ` 删除失败：${deleteError}` : ""}`}
+          loading={del.isPending}
+          onConfirm={() => void confirmDelete()}
+          onClose={() => {
+            setDeleteOpen(false);
+            setDeleteError("");
+          }}
+        />
       )}
     </PageBody>
   );

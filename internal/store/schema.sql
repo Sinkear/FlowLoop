@@ -829,3 +829,46 @@ CREATE TABLE IF NOT EXISTS hook_run (
 );
 CREATE INDEX IF NOT EXISTS idx_hook_run_goal ON hook_run(goal_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_hook_run_hook ON hook_run(hook_id, started_at);
+
+-- blueprint_write (BUG-4 attribution): one row per delivered commit, the
+-- owner-write ledger. A commit whose message carries a
+-- "Blueprint-Node: <node_key>" trailer is attributed to that spec node;
+-- anything else is an UNATTRIBUTED owner write (recorded, not blocked —
+-- plan-alignment reports it as a deviation). Rows are written at deliver
+-- time, never at run time.
+CREATE TABLE IF NOT EXISTS blueprint_write (
+    id          TEXT PRIMARY KEY,
+    goal_id     TEXT NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
+    node_key    TEXT NOT NULL DEFAULT '',
+    commit_sha  TEXT NOT NULL,
+    subject     TEXT NOT NULL DEFAULT '',
+    attributed  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    UNIQUE(goal_id, commit_sha)
+);
+CREATE INDEX IF NOT EXISTS idx_blueprint_write_goal ON blueprint_write(goal_id, created_at);
+
+-- env_change (BUG-4 §K): the environment-mutation ledger for scratch
+-- domains. A repo domain records commits in `change`; a scratch domain's
+-- deliverable is an environment actually changed (versions swapped,
+-- snapshots taken), which had no row anywhere before. One row per env
+-- mutation attempt; credentials NEVER go here (only refs / hashes).
+CREATE TABLE IF NOT EXISTS env_change (
+    id              TEXT PRIMARY KEY,
+    goal_id         TEXT NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
+    run_id          TEXT NOT NULL DEFAULT '',
+    node_key        TEXT NOT NULL DEFAULT '',
+    env_id          TEXT NOT NULL,               -- logical environment id (e.g. "opencode")
+    before_version  TEXT NOT NULL DEFAULT '',
+    after_version   TEXT NOT NULL DEFAULT '',
+    snapshot_ref    TEXT NOT NULL DEFAULT '',    -- rollback anchor (id/path/url — no secrets)
+    manifest_sha256 TEXT NOT NULL DEFAULT '',    -- sha256 of the deploy manifest, hex
+    status          TEXT NOT NULL,               -- started|succeeded|failed|rolled_back
+    operator        TEXT NOT NULL DEFAULT '',    -- agent id / human
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT NOT NULL DEFAULT '',
+    error           TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_env_change_goal ON env_change(goal_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_env_change_env ON env_change(env_id, started_at);

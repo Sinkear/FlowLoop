@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate } from "@/lib/queries";
+import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment, useEnvChanges } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -15,6 +15,141 @@ import { CategoryBadge } from "@/components/category-badge";
 import { Badge, AttentionChip, PageBody, SectionCard } from "@/components/ui";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import type { Goal, HeldGate } from "@/lib/types";
+
+// ── scratch 环境变更账本（BUG-4 P2）──
+// 作业环境是 scratch 域的「交付物」：没有 git 分支/change 行。执行者用
+// agentwork env-change record 记账（前/后版本、快照、manifest），这里把它
+// 列出来，让一次交付能被归因、回滚与审计。
+function EnvChangesCard({ goalId }: { goalId: string }) {
+  const { data, isLoading } = useEnvChanges(goalId);
+  const changes = data ?? [];
+  if (isLoading || changes.length === 0) return null;
+  return (
+    <SectionCard
+      title="环境变更账本"
+      count={changes.length}
+      desc="执行者对作业环境的实变记录（agentwork env-change record）；含前/后版本、快照引用与 manifest sha256"
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-ink-3 border-b border-line">
+              <th className="py-1 pr-3 font-medium">环境</th>
+              <th className="py-1 pr-3 font-medium">版本</th>
+              <th className="py-1 pr-3 font-medium">状态</th>
+              <th className="py-1 pr-3 font-medium">执行者</th>
+              <th className="py-1 font-medium">开始</th>
+            </tr>
+          </thead>
+          <tbody>
+            {changes.map((c) => (
+              <tr key={c.id} className="border-b border-line/50 align-top">
+                <td className="py-1 pr-3 font-mono text-ink">{c.env_id}</td>
+                <td className="py-1 pr-3 text-ink-2">
+                  {c.before_version || "—"} → {c.after_version || "—"}
+                </td>
+                <td className="py-1 pr-3">
+                  <span className={c.status === "succeeded" ? "text-emerald-400" : c.status === "failed" ? "text-red-300" : "text-ink-2"}>
+                    {c.status}
+                  </span>
+                </td>
+                <td className="py-1 pr-3 font-mono text-ink-2">{c.operator || "—"}</td>
+                <td className="py-1 text-ink-3">{c.started_at ? new Date(c.started_at).toLocaleString() : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {changes.some((c) => c.error) && (
+        <p className="mt-2 text-xs text-red-300">
+          {changes.filter((c) => c.error).map((c) => `${c.env_id}: ${c.error}`).join("；")}
+        </p>
+      )}
+    </SectionCard>
+  );
+}
+
+// ── 计划 vs 实际对账（BUG-4）──
+// 以前「蓝本（计划）」与「编排（实际）」并排，靠人眼比较；这张卡把
+// blueprint_node ↔ sub_goal ↔ run ↔ consult_request 逐节点 join 出来，
+// 偏离（未物化/计划外子任务/节点无执行/咨询化执行）直接列成文字。
+function PlanAlignmentCard({ goalId }: { goalId: string }) {
+  const { data, isLoading } = usePlanAlignment(goalId);
+  if (isLoading || !data || !data.pinned) return null;
+  const deviations = data.deviations ?? [];
+  return (
+    <SectionCard
+      title="计划 vs 实际"
+      count={data.planned}
+      desc="逐节点对账：计划节点是否有对应的执行子任务与 run；「计划外子任务」「咨询化执行」都会列在下方"
+    >
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-2 mb-3">
+        <span>计划节点 <span className="font-mono text-ink">{data.planned}</span></span>
+        <span>已结算 <span className="font-mono text-ink">{data.settled}</span></span>
+        <span>已落地 <span className="font-mono text-ink">{data.executed}</span></span>
+        <span>计划外子任务 <span className="font-mono text-ink">{data.unplanned_sub_goals}</span></span>
+        <span>咨询派发 <span className="font-mono text-ink">{data.consult_count}</span></span>
+        {data.writes > 0 && (
+          <span>
+            交付提交 <span className="font-mono text-ink">{data.writes}</span>（归户{" "}
+            <span className="font-mono text-ink">{data.attributed_writes}</span>）
+          </span>
+        )}
+        {!data.materialized && (
+          <span className="px-2 py-0.5 text-xs rounded-md bg-red-500/10 text-red-300">计划未物化</span>
+        )}
+      </div>
+      {deviations.length > 0 ? (
+        <ul className="mb-3 space-y-1">
+          {deviations.map((d, i) => (
+            <li key={i} className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+              {d}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-emerald-400 mb-3">执行与计划一致（无偏离）。</p>
+      )}
+      {(data.unattributed_commits ?? []).length > 0 && (
+        <ul className="mb-3 space-y-1">
+          {data.unattributed_commits.map((c, i) => (
+            <li key={i} className="text-xs text-ink-3 font-mono">
+              {c}
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.nodes.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-ink-3 border-b border-line">
+                <th className="py-1 pr-3 font-medium">节点</th>
+                <th className="py-1 pr-3 font-medium">类型</th>
+                <th className="py-1 pr-3 font-medium">状态</th>
+                <th className="py-1 pr-3 font-medium">子任务</th>
+                <th className="py-1 font-medium">Runs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.nodes.map((n) => (
+                <tr key={n.node_key} className="border-b border-line/50">
+                  <td className="py-1 pr-3 font-mono text-ink">{n.node_key}</td>
+                  <td className="py-1 pr-3 text-ink-2">{n.node_type}</td>
+                  <td className="py-1 pr-3 text-ink-2">{n.state}</td>
+                  <td className="py-1 pr-3 text-ink-2">
+                    {n.sub_goal_id ? (n.sub_goal_status || "已映射") : <span className="text-amber-300">无</span>}
+                  </td>
+                  <td className="py-1 text-ink-2">{n.runs?.length ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
 
 export default function GoalDetailPage() {
   // useSearchParams 要求 Suspense 边界。
@@ -56,7 +191,7 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
     <SectionCard
       title="等待你的决策"
       count={gates.length}
-      desc="蓝本人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；超时未决策将自动执行超时动作"
+      desc="蓝本人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；声明了自动判定的门会先按上游产出自动决策，超时未决策则按超时策略处理"
     >
       <div className="flex flex-col gap-4">
         {gates.map((g) => (
@@ -73,7 +208,13 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
             <p className="mt-2 text-sm text-ink-2 whitespace-pre-wrap">{g.prompt}</p>
             {g.timeout_after && (
               <p className="mt-1 text-xs text-ink-3">
-                超过 {g.timeout_after} 无人决策 → 自动「{g.timeout_action}」
+                超过 {g.timeout_after} 无人决策 → {" "}
+                {g.timeout_action ? `自动「${g.timeout_action}」` : "仅标记挂起（park）"}
+              </p>
+            )}
+            {g.auto_when && (
+              <p className="mt-1 text-xs text-emerald-300/90 font-mono">
+                自动判定：{g.auto_when} → 「{g.auto_action}」
               </p>
             )}
             <div className="mt-3 flex items-center gap-2 flex-wrap">
@@ -245,6 +386,12 @@ function GoalDetailPageInner() {
           />
         </SectionCard>
       )}
+
+      {/* 计划 vs 实际（BUG-4）：蓝本目标的逐节点对账，偏离直接可见 */}
+      {goal.blueprint_version_id && <PlanAlignmentCard goalId={id} />}
+
+      {/* scratch 环境变更账本（BUG-4 P2）：有记录才渲染 */}
+      <EnvChangesCard goalId={id} />
 
       {/* 编排：live DAG（训练分析里冻结的是同一张图的终态版本） */}
       <SectionCard

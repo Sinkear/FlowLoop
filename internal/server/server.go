@@ -818,6 +818,56 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			return out, nil
 		})
 
+		// env_change.record — the scratch 环境变更 ledger: identity (goal,
+		// run, operator) comes from the run token; the request carries only
+		// the mutation itself (versions, snapshot ref, manifest hash, result).
+		peer.Handle(link.MethodEnvChangeRecord, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+			id, rpcErr := resolve(raw)
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			var p link.EnvChangeRecordParams
+			if err := json.Unmarshal(raw, &p); err != nil ||
+				strings.TrimSpace(p.EnvID) == "" || strings.TrimSpace(p.Status) == "" {
+				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "env_id and status are required"}
+			}
+			operator := strings.TrimSpace(p.Operator)
+			if operator == "" {
+				operator = id.AgentID
+			}
+			out, err := s.goalSvc.RecordEnvChange(ctx, service.EnvChangeInput{
+				GoalID:         id.GoalID,
+				RunID:          id.RunID,
+				NodeKey:        p.NodeKey,
+				EnvID:          p.EnvID,
+				BeforeVersion:  p.BeforeVersion,
+				AfterVersion:   p.AfterVersion,
+				SnapshotRef:    p.SnapshotRef,
+				ManifestSHA256: p.ManifestSHA256,
+				Status:         p.Status,
+				Operator:       operator,
+				StartedAt:      p.StartedAt,
+				FinishedAt:     p.FinishedAt,
+				Error:          p.Error,
+			})
+			if err != nil {
+				return nil, envChangeRPCError(err)
+			}
+			return out, nil
+		})
+
+		peer.Handle(link.MethodEnvChangeList, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+			id, rpcErr := resolve(raw)
+			if rpcErr != nil {
+				return nil, rpcErr
+			}
+			out, err := s.goalSvc.ListEnvChanges(ctx, id.GoalID)
+			if err != nil {
+				return nil, envChangeRPCError(err)
+			}
+			return out, nil
+		})
+
 		peer.Handle(link.MethodChangeIntegrateBegin, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
 			id, rpcErr := resolve(raw)
 			if rpcErr != nil {
@@ -1138,4 +1188,15 @@ func authMiddleware(settingsSvc *service.SettingsService, next http.Handler) htt
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// envChangeRPCError maps a service validation error to the RPC invalid-params
+// code so an agent sees "your input is wrong" instead of "the server broke".
+// Everything else stays internal (the caller cannot act on it).
+func envChangeRPCError(err error) *link.RPCError {
+	code := link.CodeInternal
+	if errors.Is(err, service.ErrValidation) {
+		code = link.CodeInvalidParams
+	}
+	return &link.RPCError{Code: code, Message: err.Error()}
 }

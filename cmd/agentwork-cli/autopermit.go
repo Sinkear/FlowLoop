@@ -31,10 +31,27 @@ type autopermit struct {
 	mu    sync.Mutex
 	terms map[string]*autoTerm
 	cwd   string
+	// readOnly enforces the consult role at the TOOL layer: the platform's
+	// contract says a consulted agent answers with an opinion and produces no
+	// work, so write-permissioned tools (fs write / terminal / edit|execute
+	// permission requests) are denied here rather than trusted to the prompt.
+	readOnly bool
 }
 
-func newAutopermit(cwd string) *autopermit {
-	return &autopermit{terms: map[string]*autoTerm{}, cwd: cwd}
+func newAutopermit(cwd string, readOnly bool) *autopermit {
+	return &autopermit{terms: map[string]*autoTerm{}, cwd: cwd, readOnly: readOnly}
+}
+
+// consultReadOnlyKind reports whether a tool-call kind writes (files, system,
+// or external state). read/search/think are allowed for a consult; fetch is
+// NOT: an outbound request can carry data out even without touching the file
+// system, and a consult is an opinion, not an action.
+func consultReadOnlyKind(kind string) bool {
+	switch kind {
+	case "edit", "delete", "move", "execute", "fetch":
+		return true
+	}
+	return false
 }
 
 // HandleRequestPermission approves with the narrowest allow option the
@@ -46,6 +63,21 @@ func (a *autopermit) HandleRequestPermission(ctx context.Context, req acp.Reques
 		opts = append(opts, string(o.Kind)+":"+o.OptionID)
 	}
 	cliLogf("autopermit: permission request tool=%q title=%q kind=%s options=%v", req.ToolCall.Title, req.ToolCall.Kind, req.ToolCall.Status, opts)
+	if a.readOnly && consultReadOnlyKind(req.ToolCall.Kind) {
+		cliLogf("autopermit: policy_violation consult read-only denied tool=%q kind=%s", req.ToolCall.Title, req.ToolCall.Kind)
+		for _, o := range req.Options {
+			if o.Kind == acp.PermissionRejectOnce || o.Kind == acp.PermissionRejectAlways {
+				id := o.OptionID
+				return &acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{
+					Outcome:  acp.PermissionOutcomeSelected,
+					OptionID: &id,
+				}}, nil
+			}
+		}
+		return &acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{
+			Outcome: acp.PermissionOutcomeCancelled,
+		}}, nil
+	}
 	var allowAlways string
 	for _, o := range req.Options {
 		switch o.Kind {
@@ -85,6 +117,10 @@ func (a *autopermit) HandleReadTextFile(ctx context.Context, req acp.ReadTextFil
 
 func (a *autopermit) HandleWriteTextFile(ctx context.Context, req acp.WriteTextFileRequest) (*acp.WriteTextFileResponse, error) {
 	cliLogf("autopermit: fs write %s (%d bytes)", req.Path, len(req.Content))
+	if a.readOnly {
+		cliLogf("autopermit: policy_violation consult read-only denied fs write %s", req.Path)
+		return nil, fmt.Errorf("consult runs are read-only: file writes are denied by the platform")
+	}
 	if err := os.MkdirAll(filepath.Dir(req.Path), 0o755); err != nil {
 		return nil, err
 	}
@@ -100,6 +136,10 @@ func (a *autopermit) HandleWriteTextFile(ctx context.Context, req acp.WriteTextF
 // wait, kill, release.
 
 func (a *autopermit) HandleCreateTerminal(ctx context.Context, req acp.CreateTerminalRequest) (*acp.CreateTerminalResponse, error) {
+	if a.readOnly {
+		cliLogf("autopermit: policy_violation consult read-only denied terminal %q %v", req.Command, req.Args)
+		return nil, fmt.Errorf("consult runs are read-only: terminal execution is denied by the platform")
+	}
 	cmd := exec.Command(req.Command, req.Args...)
 	cmd.Dir = a.cwd
 	env := os.Environ()

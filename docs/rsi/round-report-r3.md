@@ -137,11 +137,11 @@
 - [`de0753f`](https://github.com/Sinkear/agentwork/commit/de0753f) chore: 独立发行版基线（CI、上游补丁同步脚本、MIT 衍生声明）
 - [`051d73a`](https://github.com/Sinkear/agentwork/commit/051d73a) chore: 合并上游 master(82b0b68) 作为独立主线起点
 
-**历轮改进点与效果数字（来源：docs/rsi/proposals.md、benchmark-report-r2.md、benchmark-report-r3.md、impl-notes.md；口径冲突时以最新复测报告为准）：**
+**历轮改进点与效果数字（来源：docs/rsi/proposals.md、docs/reports/benchmark-report-r2.md、docs/reports/benchmark-report-r3.md、docs/reports/impl-notes.md；口径冲突时以最新复测报告为准）：**
 
 | 轮 | 提案 | 改进 | commit | 效果数字（before → after） |
 |---|---|---|---|---|
-| R2 | P1 | 并行化 internal/daemon 独立顶层测试（70 个测试函数加 t.Parallel） | [`e08cb72`](https://github.com/Sinkear/agentwork/commit/e08cb72) | internal/daemon 包测试中位 5.911s（R2 复测基准，P1 后保持；R3 复测 5.855s 持平）；详见 benchmark-report-r2.md §3、benchmark-report-r3.md §4 |
+| R2 | P1 | 并行化 internal/daemon 独立顶层测试（70 个测试函数加 t.Parallel） | [`e08cb72`](https://github.com/Sinkear/agentwork/commit/e08cb72) | internal/daemon 包测试中位 5.911s（R2 复测基准，P1 后保持；R3 复测 5.855s 持平）；详见 docs/reports/benchmark-report-r2.md §3、docs/reports/benchmark-report-r3.md §4 |
 | R2 | P2 | CDN 漂移守卫对畸形响应 fail 改 skip | [`8ca9957`](https://github.com/Sinkear/agentwork/commit/8ca9957) | 14 包 0 FAIL（修复前该守卫对畸形响应直接 FAIL） |
 | R2 | P3 | 失败重试引入不可重试错误快速失败 | [`18a8c3c`](https://github.com/Sinkear/agentwork/commit/18a8c3c) | 确定性错误（如模型不可用）不再烧尽重试预算（R1 曾 12 条 run 同因全败） |
 | R3 | R3-1 | 轮次演进报告生成器 + AGENTS.md 收尾约定 | 本工作项 commit（合入后由下轮报告回填链接） | 可感知性 5 缺口 → 5 节报告覆盖；每轮收尾强制产出 |
@@ -157,7 +157,7 @@
 | R2 | rounds 账本 | 5 | 5 | 41.6m | 46.8m | 41.6m | 36.6m | 1 | 2 | 1.51 | 重试放大：平均每节点 2.5 次 run |
 | R3 | session 实时（未冻结） | 14 | 22 | 142.1m | 197.2m | 320.5m | 1.2s | 2.26 | 3 | 2.31 | — |
 
-解读提示（含 bench R3 复测结论，权威来源 benchmark-report-r3.md）：
+解读提示（含 bench R3 复测结论，权威来源 docs/reports/benchmark-report-r3.md）：
 - `重试放大`（top finding）从 R1「平均每节点 3.5 次 run」降到 R2「2.5 次」，仍是两轮共同首要发现。
 - R1/R2 的 wall_ms/critical_path 差异部分来自基准任务规格不同（R1 纯基准、R2 含实施），跨轮结论看趋势不看点值。
 - 基准口径（P-C）：跨轮对比 build 只采冷列——R2 基线 44.417s → R3 新基线 e7c2572 41.285s（约 -7%），R2 已批准提案收益在新基线重建中得到保持；温列（R2 中位 4.387s / R3 中位 4.672s）仅参照不采信。

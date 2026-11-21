@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eushing/agentwork/internal/events"
 	"github.com/eushing/agentwork/internal/store"
@@ -459,3 +461,151 @@ func TestReopenReasonInFeed(t *testing.T) {
 // agent's final message as a comment. The agent communicates results via
 // `goal comment` (its own CLI call); the run's output stream is internal
 // (chat_message). Only failures leave a platform comment (system comment).
+
+// TestMarkDeliveredIdempotent: the deliver close is safe to REPLAY (BUG-1).
+// MarkDelivered now runs its transaction through withBusyRetry and the daemon
+// replays pending approves; a second close on an already-done goal must
+// succeed, keep the goal done, and leave review_request cleared — while a
+// missing goal stays a real ErrNotFound (a rolled-back retry must not mask it).
+func TestMarkDeliveredIdempotent(t *testing.T) {
+	gs, rs, _, st := newTestCluster(t)
+	ctx := context.Background()
+	agentA := seedAgent(t, st, "A")
+	domID := seedDomainWithGates(t, st)
+
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	run := enqueueFirst(t, rs, g)
+	finishWithMergeGate(t, st, rs, run, "ok")
+	if _, err := gs.ResolveReview(ctx, g.ID, run.ID, "approve", "", "human"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	first, err := gs.MarkDelivered(ctx, g.ID, true, "merged", nil)
+	if err != nil {
+		t.Fatalf("first mark delivered: %v", err)
+	}
+	if first.Status != "done" {
+		t.Fatalf("first deliver must close the goal, got %q", first.Status)
+	}
+	second, err := gs.MarkDelivered(ctx, g.ID, true, "merged", nil)
+	if err != nil {
+		t.Fatalf("second MarkDelivered must be idempotent, got error: %v", err)
+	}
+	if second.Status != "done" {
+		t.Fatalf("replayed deliver must keep the goal done, got %q", second.Status)
+	}
+	if second.ReviewRequest != "" {
+		t.Fatalf("replayed deliver must leave review_request empty, got %q", second.ReviewRequest)
+	}
+	if _, err := gs.MarkDelivered(ctx, "no-such-goal", true, "", nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing goal must stay ErrNotFound (never retried), got %v", err)
+	}
+}
+
+// TestResolveReviewStaleApproveRetriggersDeliver: BUG-2 — the duplicate-approve
+// guard used to reject forever, even when the deliver had died. Past
+// approveRetriggerGrace (2m on the latest approve's decided_at) a repeated
+// approve must instead re-publish goal:approved and return the goal STILL in
+// review, without recording another gate_decision and without publishing
+// goal:review_resolved (the async deliver closes it).
+func TestResolveReviewStaleApproveRetriggersDeliver(t *testing.T) {
+	gs, rs, _, st := newTestCluster(t)
+	ctx := context.Background()
+	agentA := seedAgent(t, st, "A")
+	domID := seedDomainWithGates(t, st)
+
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	run := enqueueFirst(t, rs, g)
+	finishWithMergeGate(t, st, rs, run, "ok")
+
+	// Subscribe BEFORE the first approve so both publishes are observed.
+	reasons := make(chan string, 4)
+	unsub := gs.bus.Subscribe("goal:approved", func(_ context.Context, e events.Event) {
+		reason := ""
+		if m, ok := e.Payload.(map[string]any); ok {
+			reason, _ = m["reason"].(string)
+		}
+		reasons <- reason
+	})
+	defer unsub()
+
+	if _, err := gs.ResolveReview(ctx, g.ID, run.ID, "approve", "", "human"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	select {
+	case got := <-reasons:
+		if got != "" {
+			t.Fatalf("first approve reason = %q, want empty", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first approve did not publish goal:approved")
+	}
+
+	// Backdate the approve well past the grace window: the deliver either
+	// never started or died mid-flight.
+	past := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := st.DB().ExecContext(ctx,
+		`UPDATE gate_decision SET decided_at=? WHERE goal_id=?`, past, g.ID); err != nil {
+		t.Fatalf("backdate gate_decision: %v", err)
+	}
+
+	got, err := gs.ResolveReview(ctx, g.ID, run.ID, "approve", "再试一次交付", "human")
+	if err != nil {
+		t.Fatalf("stale re-approve must re-trigger the deliver, not reject: %v", err)
+	}
+	if got.Status != "review" {
+		t.Fatalf("re-trigger must leave the goal parked until the deliver closes, got %q", got.Status)
+	}
+	select {
+	case reason := <-reasons:
+		if reason != "再试一次交付" {
+			t.Fatalf("re-trigger reason = %q, want %q", reason, "再试一次交付")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stale re-approve must publish goal:approved")
+	}
+	var n int
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM gate_decision WHERE goal_id=?`, g.ID).Scan(&n); err != nil {
+		t.Fatalf("count gate_decision: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("re-trigger must NOT record a gate_decision row, got %d", n)
+	}
+	// Exactly one re-trigger event — no duplicate publish.
+	select {
+	case extra := <-reasons:
+		t.Fatalf("re-trigger must publish exactly once, got extra event reason=%q", extra)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// TestResolveReviewRecentApproveStillRejected: inside approveRetriggerGrace the
+// duplicate approve is still refused — the deliver may be merging right now,
+// and a replay would race it.
+func TestResolveReviewRecentApproveStillRejected(t *testing.T) {
+	gs, rs, _, st := newTestCluster(t)
+	ctx := context.Background()
+	agentA := seedAgent(t, st, "A")
+	domID := seedDomainWithGates(t, st)
+
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	run := enqueueFirst(t, rs, g)
+	finishWithMergeGate(t, st, rs, run, "ok")
+	if _, err := gs.ResolveReview(ctx, g.ID, run.ID, "approve", "", "human"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := gs.ResolveReview(ctx, g.ID, run.ID, "approve", "重复点击", "human"); err == nil {
+		t.Fatal("a duplicate approve inside the grace window must still be rejected")
+	}
+	var n int
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM gate_decision WHERE goal_id=?`, g.ID).Scan(&n); err != nil {
+		t.Fatalf("count gate_decision: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("a rejected duplicate must not record a decision, got %d", n)
+	}
+	if after, _ := gs.Get(ctx, g.ID); after.Status != "review" {
+		t.Fatalf("rejected duplicate must leave the goal in review, got %q", after.Status)
+	}
+}

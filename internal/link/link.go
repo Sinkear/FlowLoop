@@ -65,6 +65,8 @@ const (
 	MethodSubGoalGet            = "subgoal.get"
 	MethodSubGoalVerifications  = "subgoal.verifications"
 	MethodChangeList            = "change.list"
+	MethodEnvChangeRecord       = "env_change.record"
+	MethodEnvChangeList         = "env_change.list"
 	MethodChangeIntegrateBegin  = "change.integrate_begin"
 	MethodChangeIntegrateFinish = "change.integrate_finish"
 	MethodGoalWait              = "goal.wait"
@@ -278,6 +280,29 @@ type ChangeIntegrateFinishParams struct {
 	ChangeID string `json:"change_id"`
 	OK       bool   `json:"ok"`
 	Output   string `json:"output,omitempty"`
+}
+
+// EnvChangeRecordParams appends one row to the scratch 环境变更 ledger. The
+// goal/run/operator identity are resolved server-side from the run token;
+// only the mutation's own fields travel in the request.
+type EnvChangeRecordParams struct {
+	RPCToken
+	EnvID          string `json:"env_id"`
+	NodeKey        string `json:"node_key,omitempty"`
+	BeforeVersion  string `json:"before_version,omitempty"`
+	AfterVersion   string `json:"after_version,omitempty"`
+	SnapshotRef    string `json:"snapshot_ref,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	Status         string `json:"status"`
+	Operator       string `json:"operator,omitempty"` // '' = the run's agent id
+	StartedAt      string `json:"started_at,omitempty"`
+	FinishedAt     string `json:"finished_at,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+// EnvChangeListParams lists the run's goal environment-mutation history.
+type EnvChangeListParams struct {
+	RPCToken
 }
 
 // GoalWaitParams blocks the CLI until the goal's sub-goals settle

@@ -384,7 +384,7 @@ OpenTelemetry 的 GenAI 语义约定把 span 定义为「一次逻辑操作」�
 - van der Aalst, *Process Mining: Data Science in Action* — https://link.springer.com/book/10.1007/978-3-662-49851-4
 - PM4Py（conformance checking / fitness / precision）— https://pm4py.fit.fraunhofer.de/
 - `scipy.stats.bootstrap` — https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html
-- 本仓库：`internal/store/schema.sql`、`internal/proto/proto.go`、`internal/proto/acpbackend/session.go:230`、`backend.go:304`、`DESIGN.md`
+- 本仓库：`internal/store/schema.sql`、`internal/proto/proto.go`、`internal/proto/acpbackend/session.go:230`、`backend.go:304`、`../design/DESIGN.md`
 
 ---
 

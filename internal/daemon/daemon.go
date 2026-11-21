@@ -115,6 +115,19 @@ const runawayScanInterval = time.Minute
 // broke and only the DB-level reaper can free the owner single-flight.
 const runawayGrace = 5 * time.Minute
 
+// deliverRecoveryInterval is how often the daemon re-checks review goals whose
+// approve never delivered. Startup replay only covers a crash (BUG-1, live
+// incident: the failed close stayed invisible for 50 minutes because a restart
+// was the only retry) — the periodic sweep lets a normal long-lived daemon heal
+// a lost deliver without a restart.
+const deliverRecoveryInterval = 10 * time.Minute
+
+// deliverRecoveryMinAge keeps the periodic sweep off delivers that are still
+// IN FLIGHT: only approves older than this are replayed, so the sweep cannot
+// race a deliver that a human approved a few seconds ago. The startup pass
+// passes 0 (nothing of ours is in flight after a crash).
+const deliverRecoveryMinAge = 5 * time.Minute
+
 // idleWindow is the no-activity budget after which the idle watchdog notifies
 // the human (it no longer cancels — the silence may be a recoverable rate-limit
 // backoff, not a stuck run). max_run_duration is the platform's only unilateral
@@ -153,6 +166,12 @@ type Daemon struct {
 	mu          sync.Mutex
 	workers     map[string]*agentWorker // agentID → per-agent scheduler
 	domainLocks map[string]*domainLock  // per-domain git lock (fetch + deliver)
+	// deliverInFlight is the single-flight guard for deliverGoal: a stale
+	// re-approve (BUG-2) now PUBLISHES goal:approved instead of rejecting, and
+	// the periodic recovery sweep can fire while a deliver is still inside
+	// deliverWaitForRuns — both would otherwise run two merges on the same
+	// goal branch at once. goalID → struct{}; the zero value is ready to use.
+	deliverInFlight sync.Map
 	// sessionPool is the persistent (agent, goal) session pool (决策 6-21).
 	// Its own mutex (sessionMu) guards it — see session_pool.go.
 	msgBuffers  map[string]*msgBuffer          // runID → aggregated text row (persistEvent)
@@ -471,12 +490,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.sweepStuckImportGoals(ctx)
 	// Decision 2-9, trigger side: an approve followed by a crash leaves the
 	// goal in review with the approve recorded and no deliver — re-run the
-	// deliver (its merge/push idempotency makes the replay safe).
-	if n, err := d.recoverPendingDelivers(ctx); err != nil {
+	// deliver (its merge/push idempotency makes the replay safe). Startup uses
+	// minAge=0: nothing from this process is in flight, so every pending
+	// deliver is stale by definition.
+	if n, err := d.recoverPendingDelivers(ctx, 0); err != nil {
 		logging.Errorf("daemon: recover pending delivers: %v", err)
 	} else if n > 0 {
 		logging.Infof("daemon: re-delivering %d goal(s) whose approve never delivered", n)
 	}
+	deliverTick := time.NewTicker(deliverRecoveryInterval)
 	dispatchTick := time.NewTicker(dispatchTickInterval)
 	scheduleTick := time.NewTicker(scheduleTickInterval)
 	staleTick := time.NewTicker(scheduleStaleSweepInterval)
@@ -492,6 +514,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer digestTick.Stop()
 	defer issueTick.Stop()
 	defer runawayTick.Stop()
+	defer deliverTick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -512,6 +535,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.dispatchIssues(ctx)
 		case <-runawayTick.C:
 			d.reapRunawayRuns(ctx)
+		case <-deliverTick.C:
+			// BUG-1 self-heal: a deliver that died (or whose close hit
+			// SQLITE_BUSY and was dropped) strands the goal in review. Replay
+			// only approves older than deliverRecoveryMinAge so an in-flight
+			// deliver is never raced.
+			if n, err := d.recoverPendingDelivers(ctx, deliverRecoveryMinAge); err != nil {
+				logging.Errorf("daemon: periodic recover pending delivers: %v", err)
+			} else if n > 0 {
+				logging.Infof("daemon: re-delivering %d stale goal(s) whose approve never delivered", n)
+			}
 		}
 	}
 }
@@ -1917,6 +1950,21 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 			dispatchEnv["AGENTWORK_ISSUE_NUMBER"] = srcNumber
 			if srcKind == issue.RefPull {
 				dispatchEnv["AGENTWORK_SOURCE_KIND"] = "pull"
+			}
+		}
+		// Dispatch-time plan backstop: a pinned goal whose ledger is empty must
+		// not start work (the incident's "consult-only execution"). Compile the
+		// spec lazily; if it cannot compile, the run fails with the reason
+		// instead of improvising.
+		if runRole == "owner" || runRole == "subgoal" {
+			compiled, err := d.goalSvc.EnsurePlanMaterialized(ctx, q.GoalID)
+			if err != nil {
+				logging.Errorf("daemon: goal %s run %s: plan materialization failed: %v", q.GoalID, q.RunID, err)
+				d.failRun(ctx, q, "blueprint plan could not be materialized: "+err.Error())
+				return
+			}
+			if compiled {
+				logging.Infof("daemon: lazily compiled blueprint plan for goal %s before dispatching %s run %s", q.GoalID, runRole, q.RunID)
 			}
 		}
 		machinePrompt := d.assemblePrompt(ctx, q, promptInputs{

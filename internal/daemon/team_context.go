@@ -50,6 +50,18 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	var blueprintVersionID string
 	_ = d.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&blueprintVersionID)
+	// A pin alone does NOT mean the spec was compiled. Telling the owner
+	// "the plan is COMPILED" when blueprint_node=0 (the incident's state)
+	// made it improvise through consults. The contract is truthful only
+	// when the ledger actually holds the plan.
+	blueprintDriven := false
+	if blueprintVersionID != "" {
+		var nodes int
+		if err := d.st.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM blueprint_node WHERE goal_id=?`, goalID).Scan(&nodes); err == nil {
+			blueprintDriven = nodes > 0
+		}
+	}
 	var b strings.Builder
 	b.WriteString("# Background & Requirements\n")
 	b.WriteString("You are working on agentwork — a multi-agent collaboration platform.\n")
@@ -92,6 +104,12 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 		b.WriteString("\"template\":\"...\"}, \"files\":[{\"path\":\"...\",\"sha256\":\"...\"}]}.\n")
 		b.WriteString("It makes the deliverable's versions and files explicit, so a version\n")
 		b.WriteString("mismatch is visible at delivery instead of hidden in a chat log.\n")
+		b.WriteString("ENV LEDGER: whenever your work changes an environment's version or state,\n")
+		b.WriteString("record it with `agentwork env-change record --env <id> --status\n")
+		b.WriteString("started|succeeded|failed --before <v> --after <v>` (add --snapshot,\n")
+		b.WriteString("--manifest-sha256, --error as applicable). The platform ledger is how a\n")
+		b.WriteString("scratch delivery is attributed, audited and rolled back — a change that\n")
+		b.WriteString("never reached the ledger did not happen as far as the platform knows.\n")
 	}
 
 	b.WriteString("\n# Who You Are\n")
@@ -104,7 +122,14 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	// natively; the per-run role contract stays here.
 	b.WriteString(self)
 	b.WriteString("\n")
-	b.WriteString(roleContract(runRole, isLeader, squadID, blueprintVersionID != ""))
+	b.WriteString(roleContract(runRole, isLeader, squadID, blueprintDriven))
+	if blueprintVersionID != "" && !blueprintDriven {
+		b.WriteString("\nPLAN NOT MATERIALIZED: this goal is pinned to blueprint " + blueprintVersionID + "\n" +
+			"but its plan was never compiled (blueprint_node=0). Do NOT invent a plan and\n" +
+			"do NOT route the work through consults (a consult is an opinion, never\n" +
+			"execution). Post one comment explaining that the plan is missing and park;\n" +
+			"the platform/human must compile it (activate the pinned goal) first.\n")
+	}
 
 	// Identity & instruction ownership (F1, 身份唯一性 + 指令归属): every
 	// run shares its workdir with other agents' runs (executor, verifier,
@@ -376,7 +401,9 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 		return "You are consulted (READ-ONLY): answer the question with\n" +
 			"`agentwork goal comment` — that is how your answer reaches the\n" +
 			"feed. Do not modify files, do not commit, do not execute the task\n" +
-			"itself — your edits are discarded by the platform.\n"
+			"itself — your edits are discarded by the platform. The platform\n" +
+			"ENFORCES this at the tool layer: file writes, terminals and\n" +
+			"edit/execute tool calls are denied for a consult run.\n"
 	case "review":
 		return "You REVIEW ONLY — give your opinion, never do the work.\n" +
 			"BEFORE you form an opinion, pull the goal's comment feed with\n" +

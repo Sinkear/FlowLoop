@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, GitBranchPlus, PlusCircle, Waypoints } from "lucide-react";
-import { Badge, Empty, PageBody, PageHeader, SectionCard, Skeleton, StatStrip } from "@/components/ui";
-import { useBlueprints } from "@/lib/queries";
+import { ArrowUpRight, GitBranchPlus, PlusCircle, Trash2, Waypoints } from "lucide-react";
+import { Badge, Button, ConfirmDialog, Empty, PageBody, PageHeader, SectionCard, Skeleton, StatStrip } from "@/components/ui";
+import { useBlueprints, useDeleteBlueprint } from "@/lib/queries";
 import { relTime } from "@/lib/utils";
 import type { Blueprint } from "@/lib/types";
 import { DASH, fmtInt } from "@/components/training/format";
@@ -54,14 +55,14 @@ function StateChips({ bp }: { bp: Blueprint }) {
   );
 }
 
-function BlueprintRow({ bp }: { bp: Blueprint }) {
+function BlueprintRow({ bp, onDelete }: { bp: Blueprint; onDelete: () => void }) {
   // 摘要只取第一行——列表页是索引，不是详情。
   const descLine = (bp.description ?? "").split("\n")[0] ?? "";
   return (
-    <li>
+    <li className="group flex items-start gap-1 px-4 py-3.5 transition-colors hover:bg-surface-2/50 focus-within:bg-surface-2/50">
       <Link
         href={`/blueprints/${bp.id}`}
-        className="group flex items-start gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/50 focus-visible:bg-surface-2/50"
+        className="flex min-w-0 flex-1 items-start gap-3 focus-visible:outline-none"
       >
         <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-ink-3 transition-colors group-hover:text-accent">
           <Waypoints className="h-4 w-4" />
@@ -97,6 +98,15 @@ function BlueprintRow({ bp }: { bp: Blueprint }) {
           <StateChips bp={bp} />
         </div>
       </Link>
+      <button
+        type="button"
+        onClick={onDelete}
+        title="删除蓝本"
+        aria-label={`删除蓝本 ${bp.name}`}
+        className="mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-300 focus-visible:opacity-100 focus-visible:outline-none group-hover:opacity-100"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
     </li>
   );
 }
@@ -104,6 +114,21 @@ function BlueprintRow({ bp }: { bp: Blueprint }) {
 export default function BlueprintsPage() {
   const { data: blueprints, isLoading, isError, error, refetch } = useBlueprints();
   const list = blueprints ?? [];
+
+  // 删除：只允许删无活跃目标钉住的蓝本；被拒绝时把服务端原因原样放进确认框。
+  const del = useDeleteBlueprint();
+  const [deleting, setDeleting] = useState<Blueprint | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  async function confirmDelete() {
+    if (!deleting) return;
+    try {
+      await del.mutateAsync(deleting.id);
+      setDeleting(null);
+      setDeleteError("");
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // 概览条：只放三个判断工作流健康度真正用得上的数——有多少蓝本、有多少
   // 真的能绑定任务、有多少还停在草稿。
@@ -175,11 +200,24 @@ export default function BlueprintsPage() {
         ) : (
           <ul className="divide-y divide-line">
             {list.map((bp) => (
-              <BlueprintRow key={bp.id} bp={bp} />
+              <BlueprintRow key={bp.id} bp={bp} onDelete={() => { setDeleteError(""); setDeleting(bp); }} />
             ))}
           </ul>
         )}
       </SectionCard>
+
+      {deleting && (
+        <ConfirmDialog
+          title="删除蓝本"
+          message={`删除蓝本「${deleting.name}」会同时删除它的 ${deleting.version_count} 个版本与全部提案，不可恢复。仍有未结束的目标钉住它的某个版本时会被拒绝——先结束/取消那些目标。${deleteError ? ` 删除失败：${deleteError}` : ""}`}
+          loading={del.isPending}
+          onConfirm={() => void confirmDelete()}
+          onClose={() => {
+            setDeleting(null);
+            setDeleteError("");
+          }}
+        />
+      )}
     </PageBody>
   );
 }

@@ -276,7 +276,7 @@
         }
       ],
       "tokenNote": "per-run token（AGENTWORK_TOKEN）是唯一身份——自报 id 被忽略，owner 检查服务端强制。",
-      "fullModel": "完整模型见 Collaboration.v2.md →"
+      "fullModel": "完整模型见 docs/design/Collaboration.v2.md →"
     }
   },
   "footer": {

@@ -1,13 +1,13 @@
 # 设计提案：工作流蓝图（Blueprint）— 把编排权威从自然语言迁到可序列化图数据
 
 > **状态：已批准（2026-11-17）— Phase A 启动**；Q1/Q2/Q4 开放问题按推荐定稿（见 §8）。
-> 批准后动作：DESIGN.md 增补决策条目（编号顺延）→ 本提案升格为设计基线 → 启动 Phase A。
-> 变更纪律遵循 DESIGN.md 头部条款：**先改文档、后改代码。实现与文档冲突时以文档为准。**
+> 批准后动作：design/DESIGN.md 增补决策条目（编号顺延）→ 本提案升格为设计基线 → 启动 Phase A。
+> 变更纪律遵循 design/DESIGN.md 头部条款：**先改文档、后改代码。实现与文档冲突时以文档为准。**
 >
-> **证据基线**（本仓库根目录归档，三份独立调研交叉收敛）：
-> - `research-workflow-dsl-definitions.md` — 7 平台工作流定义格式（官方文档 + Dify 源码 + 262 个真实 DSL 导出语料）
-> - `research-llm-supervisor-orchestration.md` — LLM 编排确定性的测量证据与业界退场史
-> - `research-archive-turn3-main-report-and-self-iteration.md` — 自迭代工作流学术/工业 10 案 + 主报告
+> **证据基线**（本仓库 `docs/research/` 归档，三份独立调研交叉收敛）：
+> - `research/research-workflow-dsl-definitions.md` — 7 平台工作流定义格式（官方文档 + Dify 源码 + 262 个真实 DSL 导出语料）
+> - `research/research-llm-supervisor-orchestration.md` — LLM 编排确定性的测量证据与业界退场史
+> - `research/research-archive-turn3-main-report-and-self-iteration.md` — 自迭代工作流学术/工业 10 案 + 主报告
 >
 > **一句话**：确定性控制流在外（结构化图数据定义），弹性推理在节点内部（LLM 被封装成带受限输出空间的节点）——这是 LangGraph / Dify / n8n / Coze / Airflow / Temporal / CrewAI 全部收敛后的唯一生产架构，Anthropic 把它写成了显式建议。
 
@@ -91,7 +91,7 @@ blueprint_version.content ──(编译: CompileBlueprint)──▶ sub_goal row
 | `task` | 派给 agent 的执行节点；**verify 是它的属性**（对应 sub_goal 同时承担工作+质量责任，符合 domain model） | `done` / `failed` | 1:1 编译为 sub_goal（assignee、verifier 来自节点配置；重试循环是引擎内部行为，不出现在图上——LangGraph/Temporal 同样把 retry 视为引擎内部） |
 | `condition` | **确定性**分支：受限操作符表达式（存在性/相等/比较/包含，参照 Dify if-else 操作符集），编译后在 Go 里求值，零 LLM | 每个声明的 case id + `else` | 求值结果记入 blueprint_node.resolved_config；按命中 case 释放下游 |
 | `router` | **受限 LLM 选择分支**（见 §4.4）：给定选项、LLM 选 ID | 每个 class id + `fallback` | 释放时跑一次 processor 型路由 run（结构化输出约束枚举），决策写入 resolved_config 可审计 |
-| `gate` | 人工卡点：表单/证据 + 决策按钮 + 超时分支（Dify Human Input 同构） | 每个 action id + `timeout` | 推荐复用 goal review 态机制（status='review' + review_request + human_iterations，schema.sql:204-208），决策以结构化评论回流；精确映射 Phase B 定稿 |
+| `gate` | 决策点：表单/证据 + 决策按钮 + **可选的运行时自动判定**（`auto`）+ 超时策略（Dify Human Input 同构） | 每个 action id + 可选 `timeout`（无/无 action = park）；`auto.action` 只能取已声明 action | 复用 goal review 态机制（status='review' + review_request + human_iterations）；sweeper 每轮先按 `auto.when` 对**直接上游节点的 sealed output** 求值，命中即以 `decided_by=auto` 落决策，否则等人/超时 |
 | `spawn` | 动态拆分口袋：运行时由指定 agent 拆分出**基数不定但必须登记**的子任务 | `done` / `failed`（spawn 自身在全部登记子项 settle 后 settle） | 拆分产物 = sub_goal + blueprint_node 行（node_key=`<spawn键>#<序号>`，带 parent_key）——**受控涌现：图知道范围** |
 | `end` | 终点汇（显式终点让校验与渲染干净，Dify 同款） | —（汇） | 编译完成判据的一部分 |
 
@@ -137,7 +137,7 @@ blueprint JSON 是唯一规范格式。**校验器是纯代码（零 LLM），�
 |---|---|---|
 | V1 | node id 唯一且匹配 `[a-z][a-z0-9_]{0,63}`；边引用的节点必须存在；source_handle 必须是源节点声明过的端口 | 结构完整性 |
 | V2 | 无环（拓扑排序）；从起点可达所有节点；每个节点可达某个 end（无死路） | 治"漏跑一半的图" |
-| V3 | condition 每个声明的 case、router 每个 class、gate 每个 action **都必须有出边**；router 必须声明 fallback；gate 必须声明 timeout 去向 | 治"分支悬空" |
+| V3 | condition 每个声明的 case、router 每个 class、gate 每个 action **都必须有出边**；router 必须声明 fallback；gate 的 timeout 可选，声明了 `action` 才要求 timeout 出边（无 action = park）；`auto.when` 必须是单条 `node.<id>.output <op> "literal"` 运行时测试，且该节点是 gate 的**直接上游**，`auto.action` 必须是已声明 action（2026-11-21 实现，见 [use-case BUG-4](use-cases/2026-11-21-blueprint-self-iteration/findings-bug4-plan-vs-actual.md)） | 治"分支悬空"与"自动判定无证据/无出口" |
 | V4 | task 的 assignee 必须解析到已注册 agent/squad | 治"派给不存在的执行者" |
 | V5 | 模板插值 `{{goal.*}}` / `{{node.<id>.output}}` 引用的字段必须存在于声明 | 治"参数断链" |
 | V6 | content_hash（sha256）随版本快照落库，读取时校验 | 治"漂移" |
@@ -206,6 +206,8 @@ infer 运行 ──▶ 执行图同构检测 ──▶ finding: 建议固化 blu
 - 新增视图 1：**规范图只读渲染**（blueprint_version.content，节点/边形状与执行图同构，渲染成本极低）。
 - 新增视图 2：**双图叠加 diff**——未执行节点红框（漏跑）、图外 sub_goal 红虚线（越权）、顺序违背琥珀色（乱序）、v1↔v2 版本三色 diff。
 - gate 节点在前端渲染为决策卡（表单 + 按钮流），对接既有 review 决策路径。
+- **蓝本管理（2026-11-21 补）**：列表页每行与详情页页头都有删除入口 → `DELETE /blueprints/{id}`（`BlueprintService.Delete`）。同一事务内删除提案、版本、蓝本本体；仍有 `backlog|active|review` 目标钉住其任一版本时返回 409（删掉会让在跑的绑定目标失去规范权威）；终态目标保留历史 pin，不重写。UI 在确认框里原样展示服务端拒绝原因。
+- **草稿版本删除（2026-11-21 补）**：详情页选中草稿版本时提供「删除草稿」→ `DELETE /blueprint-versions/{versionId}`（`BlueprintService.DeleteVersion`）。只删 `draft`：已发布版本是蓝本的权威与不可变历史，返回 409；草稿仍被任何 goal pin（含终态目标的历史 pin）或被提案的 `base_version_id`/`applied_version_id` 引用时同样 409，并在消息里带计数——先处理引用再删。删除语句带 `AND status='draft'`，与并发发布竞争时不会误删权威版本。
 
 ---
 
@@ -268,7 +270,7 @@ CREATE INDEX IF NOT EXISTS idx_blueprint_node_goal ON blueprint_node(goal_id, cr
 
 ## 6. 与既有决策的调和（升级而非推翻）
 
-| 既有决策（docs/research/rsi-summary.md / DESIGN.md） | 本提案的调和 |
+| 既有决策（docs/research/rsi-summary.md / docs/design/DESIGN.md） | 本提案的调和 |
 |---|---|
 | "提案改产生图的策略，不直接改图" | **"策略"从自然语言升级为结构化数据**。instructions 文本补丁无法保证下次编译出同样的图；blueprint 补丁可以（content_hash 确定性编译）。提案对象从"策略"收敛为"规范图本身"，但"改的是可复用的规范、经人工批准、A/B 复测"三条护栏原样保留 |
 | Coze 固定画布回潮风险条款 | 坚持只读渲染、JSON 导入导出；且蓝图**只定骨架**（结构/顺序/分支），内容由 leader 实例化填充——不是 Coze 式"用户画每个节点" |
@@ -403,7 +405,13 @@ AFlow 式 MCTS 在补丁空间搜索，A/B 门控，预算（goal.budget_usd）�
                                                      "label": { "type": "string" } } } },
             "timeout":  { "type": "object",
                           "properties": { "after": { "type": "string", "comment": "如 72h" },
-                                          "action": { "$ref": "#/$defs/portId" } } }
+                                          "action": { "$ref": "#/$defs/portId" } } },
+            "auto":     { "type": "object",
+                          "required": ["when", "action"],
+                          "comment": "运行时自动判定：上游 sealed output 满足 when 时自动执行 action（decided_by=auto）；不满足则继续等人",
+                          "properties": {
+                            "when":   { "type": "string", "comment": "单条 node.<id>.output <op> \"literal\"；<id> 必须是直接上游" },
+                            "action": { "$ref": "#/$defs/portId" } } }
           }
         },
         "spawn": {
@@ -600,6 +608,7 @@ finding/人 ──▶ 补丁提案（add/update/delete node/edge）──▶ 校
 - **校验器双检**：创建时 apply→V1–V6 全量校验（不合法当场拒）；批准时**重新** apply+校验（base 内容不可变 + patches 不可变 ⇒ 确定性，双检防的是库被旁路改动的漂移，同 V6 content_hash 精神）。
 - **批准 = 开新草稿**（changelog=hypothesis，applied_version_id 记录），**不自动发布**——发布仍是独立人工动作（W-RSI「提案不自动应用」原则原样保留）。绑定新任务的采纳决策因此也永远是人的决策。
 - finding_id 可选字段：W-RSI finding（suggestion 文本）→ 人把建议结构化成补丁 → 提案闭环。finding→patch 的翻译由人完成（LLM+P 分工：人/LLM 提议，校验器执法）；Phase D 才让机器自动翻译。
+- **显式「下一轮」入口**（2026-11-21）：批准只开草稿这一事实会让 RSI 停在「人不推、迭代不转」。`POST /blueprint-proposals/{proposalId}/next-round` 把后续两步合成一次**人工触发**的动作：发布 applied 版本（若仍 draft）→ 由 finding→report→training_session 反查原训练目标 → 继承 domain/assignee/验收/采样/预算，建 `execution_mode=train`、`source_ref="rsi-proposal:<id>"` 的新目标并钉新版；`{"start":false}` 只建 backlog，默认直接 active。幂等（重复调用返回同一 goal）。批准本身仍不发布、不建目标。
 
 ### 12.2 三色 diff（提案视图）
 
