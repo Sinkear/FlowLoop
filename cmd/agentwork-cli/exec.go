@@ -101,6 +101,20 @@ func (e *executor) cancelRun(p link.RunCancelParams) {
 	}
 }
 
+// execSessionSpec builds the ACP session spec for a dispatched run: the
+// connection, the run's workdir, the machine's autopermit handler, the
+// agent's extra MCP servers, and the agent's configured model (an empty
+// model keeps the CLI's default — applyModel then does nothing).
+func execSessionSpec(p link.RunDispatchParams, conn proto.Conn, workdir string) proto.SessionSpec {
+	return proto.SessionSpec{
+		Conn:          conn,
+		Cwd:           workdir,
+		ClientHandler: newAutopermit(workdir),
+		McpServers:    p.McpServers,
+		Model:         p.Model,
+	}
+}
+
 // execute runs one dispatched run to completion.
 func (e *executor) execute(p link.RunDispatchParams) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -119,9 +133,9 @@ func (e *executor) execute(p link.RunDispatchParams) {
 		cancel()
 	}()
 
-	// Workdir: processor runs get the proc dir (compile-on-repo = a
-	// detached worktree of origin/<default>); scratch domains derive the
-	// local directory layout (mirrors the daemon's); git domains get a
+	// Workdir: processor runs get the proc dir (intake: a plain scratch
+	// directory); scratch domains derive the local directory layout
+	// (mirrors the daemon's); git domains get a
 	// worktree on the goal branch — and the completed run's changes are
 	// committed + pushed as agentwork/<branch> (中转, Phase 3).
 	var workdir, repo, branch, sessionID string
@@ -230,12 +244,7 @@ func (e *executor) execute(p link.RunDispatchParams) {
 		// platform judges the OUTCOME, not individual tool calls (live:
 		// an unhandled permission request came back as "The user rejected
 		// permission" and killed the agent's work).
-		sess, err := backend.OpenSession(ctx, proto.SessionSpec{
-			Conn:          conn,
-			Cwd:           workdir,
-			ClientHandler: newAutopermit(workdir),
-			McpServers:    p.McpServers,
-		})
+		sess, err := backend.OpenSession(ctx, execSessionSpec(p, conn, workdir))
 		if err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("session: %w", err)
@@ -389,24 +398,6 @@ loop:
 	case proto.StatusCancelled:
 		status = "cancelled"
 	}
-	// Scratch machine verification (W1): the domain's frozen acceptance
-	// policy runs HERE, after the agent exited and before the terminal
-	// report — a scratch deliverable has no diff for the daemon to judge.
-	// A failed check flips the run to failed (the platform's local-path
-	// semantics: verification failure = run failure), and the evidence
-	// bundle travels with the report so delivery can require it.
-	evidence := ""
-	if status == "completed" && p.Scratch && !p.Proc && p.Checks != nil && len(p.Checks.Verify) > 0 {
-		report, passed, results := runScratchChecks(context.Background(), workdir, p.Checks)
-		evidence = buildScratchEvidence(workdir, p.Checks, results, passed, report)
-		if !passed {
-			cliLogf("exec: run %s scratch verification FAILED", p.RunID)
-			status = "failed"
-			result.Output = "verification failed:\n" + report
-		} else {
-			cliLogf("exec: run %s scratch verification passed (%d command(s))", p.RunID, len(results))
-		}
-	}
 	headSHA := ""
 	if status == "completed" && !p.Scratch && !p.Proc {
 		sha, err := commitAndPush(context.Background(), p, workdir, repo, branch, p.RunID, pushedProfile)
@@ -428,7 +419,7 @@ loop:
 	// structured side effects, never agent stdout). Digest goal runs too:
 	// the dispatch lists the goal-directory files (manifest + articles) the
 	// daemon collects — same channel, not a processor run.
-	finishParams := link.RunFinishedParams{RunID: p.RunID, Status: status, Summary: result.Output, Token: p.Token, HeadSHA: headSHA, SessionID: sessionID, WorkDir: workdir, Evidence: evidence}
+	finishParams := link.RunFinishedParams{RunID: p.RunID, Status: status, Summary: result.Output, Token: p.Token, HeadSHA: headSHA, SessionID: sessionID, WorkDir: workdir}
 	if (p.Proc || len(p.ArtifactFiles) > 0) && status == "completed" {
 		finishParams.Artifacts = map[string]string{}
 		for _, f := range p.ArtifactFiles {

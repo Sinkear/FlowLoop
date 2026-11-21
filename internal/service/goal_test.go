@@ -37,12 +37,10 @@ func newTestCluster(t *testing.T) (*GoalService, *RunService, *CommentService, *
 	return gs, rs, cs, st
 }
 
-// seedDomain inserts a domain with a FROZEN empty acceptance policy (NO
-// gates — completed runs promote to done, so the pre-v2 test semantics
-// hold) and returns its id. The freeze matters: an unfrozen policy forces
-// the human checkpoint by design (决策 2-4/2-5 confirmation gate). v2:
-// agent-executed goals require a domain (DESIGN.md §2). Review-path
-// tests freeze gates separately.
+// seedDomain inserts a domain and returns its id. Acceptance is the
+// goal-level 验收级别 now: a HITL goal (the default) parks completed runs in
+// review; tests that want the auto-complete path create the goal with
+// Category "hootl". Agent-executed goals require a domain (DESIGN.md §2).
 func seedDomain(t *testing.T, st *store.Store) string {
 	t.Helper()
 	ctx := context.Background()
@@ -50,9 +48,6 @@ func seedDomain(t *testing.T, st *store.Store) string {
 	d, err := ds.Create(ctx, Domain{Name: "test-domain", GitURL: "https://example.com/test.git"})
 	if err != nil {
 		t.Fatalf("seed domain: %v", err)
-	}
-	if _, err := ds.FreezeChecks(ctx, d.ID, Checks{}, "medium"); err != nil {
-		t.Fatalf("freeze seed domain checks: %v", err)
 	}
 	return d.ID
 }
@@ -98,7 +93,7 @@ func TestReconcileNormalCompletion(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "A")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "do thing", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	g, err := gs.Create(ctx, Goal{Title: "do thing", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID, Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
@@ -167,7 +162,7 @@ func TestHandoffNoteClearedOnOwnerDone(t *testing.T) {
 	agentA := seedAgent(t, st, "A")
 	domID := seedDomain(t, st)
 	// Pre-seed a handoff note directly (Assign takes one, or a child wake sets it).
-	g, err := gs.Create(ctx, Goal{Title: "x", AssigneeType: "agent", AssigneeID: agentA, Status: "active", HandoffNote: "scope note", DomainID: domID})
+	g, err := gs.Create(ctx, Goal{Title: "x", AssigneeType: "agent", AssigneeID: agentA, Status: "active", HandoffNote: "scope note", DomainID: domID, Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

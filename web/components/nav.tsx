@@ -18,14 +18,13 @@ import {
   ScrollText,
   Settings,
   MessagesSquare,
-  LayoutDashboard,
   BarChart3,
   Waypoints,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // 导航按“我现在要做什么”排序，而不是按代码里的资源类型排：
-//   工作台（每天用）→ 组织（谁在干活）→ 运行环境（在哪跑）→ 资源（用什么）。
+//   开始（动手）→ 工作台（回看/管理）→ 组织（谁在干活）→ 运行环境（在哪跑）→ 资源（用什么）。
 // 「系统」不进主列表——日志和设置是低频、排障时才来的地方，压到左下角的角标上，
 // 主列表就只留下日常要点的东西。
 type NavItem = {
@@ -37,25 +36,32 @@ type NavItem = {
 
 export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
+    // 最上面只放两个动作：开始干活。任务/蓝本等“回看和管理”的入口退到下一组。
+    title: "开始",
+    items: [
+      { href: "/goals/new", label: "新建任务", icon: Plus, newTask: true },
+      { href: "/chat", label: "对话", icon: MessageSquare },
+    ],
+  },
+  {
     title: "工作台",
     items: [
-      { href: "/", label: "总览", icon: LayoutDashboard },
       { href: "/goals", label: "任务", icon: Target },
       // 蓝本（Phase A）：结构化编排权威——goal 钉住 published 版本，Activate
       // 时编译成 gated sub_goal。放工作台：定义「任务怎么跑」的日常面。
       { href: "/blueprints", label: "蓝本", icon: Waypoints },
       // 训练分析与任务平级：它是“回看任务怎么跑”的入口，不做二级菜单。
       { href: "/training", label: "训练分析", icon: BarChart3 },
-      { href: "/chat", label: "对话", icon: MessageSquare },
-      { href: "/goals/new", label: "新建任务", icon: Plus, newTask: true },
       { href: "/schedules", label: "定时任务", icon: Clock },
     ],
   },
   {
+    // 组织：先有项目，再有人——顺序即项目-小队-智能体-IM。
     title: "组织",
     items: [
-      { href: "/agents", label: "智能体", icon: Bot },
+      { href: "/domains", label: "项目", icon: Boxes },
       { href: "/squads", label: "小队", icon: Users },
+      { href: "/agents", label: "智能体", icon: Bot },
       { href: "/im", label: "IM", icon: MessagesSquare },
     ],
   },
@@ -69,7 +75,6 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "资源",
     items: [
-      { href: "/domains", label: "项目仓库", icon: Boxes },
       { href: "/templates", label: "模板", icon: LayoutTemplate },
       { href: "/skills", label: "技能", icon: Sparkles },
       { href: "/hooks", label: "Hooks", icon: Webhook },
@@ -87,10 +92,7 @@ const SYSTEM_ITEMS: NavItem[] = [
 export function Nav() {
   const pathname = usePathname();
 
-  // 「新建任务」是 /goals 的子路径，但它是独立页面：同时亮会让人以为是同一件事。
   const isActive = (item: NavItem) => {
-    // "/" 必须精确匹配：startsWith("/") 会让所有路由都亮。
-    if (item.href === "/") return pathname === "/";
     if (item.newTask) return pathname === "/goals/new";
     if (item.href === "/goals") {
       return pathname === "/goals" || (pathname.startsWith("/goals/") && pathname !== "/goals/new");
@@ -100,10 +102,10 @@ export function Nav() {
 
   return (
     <nav className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-line bg-surface-1/60 p-3 backdrop-blur">
-      {/* Logo：等宽字体 + 绿色状态点，终端产品名而不是渐变字。点它回总览。 */}
+      {/* Logo：等宽字体 + 绿色状态点，终端产品名而不是渐变字。点它回任务板。 */}
       <Link
-        href="/"
-        title="返回总览"
+        href="/goals"
+        title="返回任务"
         className="flex items-center gap-2 rounded-md px-3 pb-4 pt-2 transition-colors hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />

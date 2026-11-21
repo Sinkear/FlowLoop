@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 // TestProbeCLIsDetectsFakeCLI plants a fake `claude` executable at the front
@@ -495,4 +497,290 @@ func TestSetMergedProbeTableLoadsAndMerges(t *testing.T) {
 	if !slices.ContainsFunc(mergedProbeTable, func(e probeEntry) bool { return e.Name == "claude" }) {
 		t.Fatalf("builtins must still be present, got %v", mergedProbeTable)
 	}
+}
+
+// ── model detection ──
+
+// TestParseModelsOutputLines: one model id per line, trimmed, comments and
+// headers skipped, duplicates dropped.
+func TestParseModelsOutputLines(t *testing.T) {
+	raw := "Available models:\n# comment\nclaude-sonnet-4\n  claude-opus-4  \n\nclaude-sonnet-4\n"
+	got := parseModelsOutput(raw)
+	want := []string{"claude-sonnet-4", "claude-opus-4"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d models, got %+v", len(want), got)
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("model %d: expected %q, got %q", i, id, got[i].ID)
+		}
+	}
+}
+
+// TestParseModelsOutputJSONArray: a JSON array is accepted — both string
+// entries and {id|modelId,name,description} objects.
+func TestParseModelsOutputJSONArray(t *testing.T) {
+	got := parseModelsOutput(`[
+	  {"id":"m1","name":"Model One","description":"first"},
+	  {"modelId":"m2","name":"Model Two"},
+	  "m3",
+	  {"id":"m1","name":"dup"}
+	]`)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 models, got %+v", got)
+	}
+	if got[0].ID != "m1" || got[0].Name != "Model One" || got[0].Description != "first" {
+		t.Fatalf("object model mismatch: %+v", got[0])
+	}
+	if got[1].ID != "m2" || got[1].Name != "Model Two" {
+		t.Fatalf("modelId fallback mismatch: %+v", got[1])
+	}
+	if got[2].ID != "m3" {
+		t.Fatalf("string entry mismatch: %+v", got[2])
+	}
+
+	// A malformed JSON array falls back to line parsing (the whole text is
+	// then one model id) rather than dropping the detection.
+	if models := parseModelsOutput("[\nnot-json\n"); len(models) == 0 {
+		t.Fatalf("malformed JSON must fall back to line parsing, got %+v", models)
+	}
+	if models := parseModelsOutput("   "); len(models) != 0 {
+		t.Fatalf("blank output must yield no models, got %+v", models)
+	}
+}
+
+// TestParseACPModels covers the three accepted session/new result shapes:
+// result.models.availableModels, result.models array, and top-level
+// availableModels.
+func TestParseACPModels(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+		want   []string
+	}{
+		{
+			name:   "models.availableModels",
+			result: `{"sessionId":"s1","models":{"availableModels":[{"modelId":"a","name":"A","description":"da"}]}}`,
+			want:   []string{"a"},
+		},
+		{
+			name:   "models array",
+			result: `{"sessionId":"s1","models":[{"id":"b","name":"B"}]}`,
+			want:   []string{"b"},
+		},
+		{
+			name:   "top-level availableModels",
+			result: `{"sessionId":"s1","availableModels":[{"modelId":"c"},{"modelId":"d"}]}`,
+			want:   []string{"c", "d"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseACPModels([]byte(tc.result))
+			if len(got) != len(tc.want) {
+				t.Fatalf("expected %d models, got %+v", len(tc.want), got)
+			}
+			for i, id := range tc.want {
+				if got[i].ID != id {
+					t.Fatalf("model %d: expected %q, got %q", i, id, got[i].ID)
+				}
+			}
+		})
+	}
+	if got := parseACPModels([]byte(`{"sessionId":"s1"}`)); len(got) != 0 {
+		t.Fatalf("a result without models must yield none, got %+v", got)
+	}
+	if got := parseACPModels(nil); len(got) != 0 {
+		t.Fatalf("nil result must yield none, got %+v", got)
+	}
+}
+
+// TestParseACPModelsConfigOptions covers the configOptions shape `opencode
+// acp` (verified 2.2.5) and other ACP-only agents such as hermes-acp return
+// instead of result.models: [{id:"model",category:"model",type:"select",
+// options:[{value,name,description}]}].
+func TestParseACPModelsConfigOptions(t *testing.T) {
+	// id=="model" selector: value/name/description become the ModelInfo.
+	got := parseACPModels([]byte(`{
+	  "sessionId":"s1",
+	  "configOptions":[
+	    {"id":"model","category":"model","type":"select","currentValue":"opencode/sonnet",
+	     "options":[
+	       {"value":"opencode/sonnet","name":"Sonnet"},
+	       {"value":"opencode/opus","name":"Opus","description":"deep"}
+	     ]},
+	    {"id":"mode","category":"mode","type":"select","options":[{"value":"plan","name":"Plan"}]},
+	    {"id":"model_toggle","category":"model","type":"boolean"}
+	  ]}`))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 model options (non-model configs ignored), got %+v", got)
+	}
+	if got[0].ID != "opencode/sonnet" || got[0].Name != "Sonnet" || got[0].Description != "" {
+		t.Fatalf("first option mismatch: %+v", got[0])
+	}
+	if got[1].ID != "opencode/opus" || got[1].Name != "Opus" || got[1].Description != "deep" {
+		t.Fatalf("second option mismatch: %+v", got[1])
+	}
+
+	// category=="model" alone is enough (the id is implementation-defined).
+	got = parseACPModels([]byte(`{"configOptions":[{"id":"primary","category":"model","type":"select","options":[{"value":"h3","name":"Hermes 3"}]}]}`))
+	if len(got) != 1 || got[0].ID != "h3" || got[0].Name != "Hermes 3" {
+		t.Fatalf("category-only model option mismatch: %+v", got)
+	}
+
+	// Both shapes present: dedupe by id, first shape (.models) wins.
+	got = parseACPModels([]byte(`{
+	  "models":{"availableModels":[{"modelId":"m1","name":"from models"}]},
+	  "configOptions":[{"id":"model","type":"select","options":[
+	    {"value":"m1","name":"from configOptions"},{"value":"m2","name":"only config"}]}]}`))
+	if len(got) != 2 {
+		t.Fatalf("expected deduped 2 models, got %+v", got)
+	}
+	if got[0].ID != "m1" || got[0].Name != "from models" {
+		t.Fatalf("first shape should win on duplicate id: %+v", got[0])
+	}
+	if got[1].ID != "m2" || got[1].Name != "only config" {
+		t.Fatalf("configOptions-only model missing: %+v", got[1])
+	}
+}
+
+// TestDetectCLIModelsUsesModelsCmd: a fake CLI whose `models` subcommand
+// prints ids → detection parses them (and the cache serves the second call).
+func TestDetectCLIModelsUsesModelsCmd(t *testing.T) {
+	resetModelsCache()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fakecli")
+	body := "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then echo one; echo two; else echo 1.0.0; fi\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := probeEntry{Name: "fakecli", ProbeCmd: "fakecli --version", ModelsCmd: "fakecli models", ACPSpawn: []string{script, "acp"}}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got := detectCLIModels(context.Background(), e, e.ACPSpawn, "")
+	if len(got) != 2 || got[0].ID != "one" || got[1].ID != "two" {
+		t.Fatalf("models_cmd detection mismatch: %+v", got)
+	}
+	// Second call is served from the cache (remove the script → same result).
+	if err := os.Remove(script); err != nil {
+		t.Fatal(err)
+	}
+	if cached, ok := cachedModels("fakecli"); !ok || len(cached) != 2 {
+		t.Fatalf("detection must be cached, got %+v (ok=%v)", cached, ok)
+	}
+}
+
+// TestDetectCLIModelsACPFallback: no models_cmd → the CLI is spawned as an
+// ACP stdio server; initialize + session/new replies carry the models.
+func TestDetectCLIModelsACPFallback(t *testing.T) {
+	resetModelsCache()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "acpcli")
+	body := `#!/bin/sh
+read line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read line
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","models":{"availableModels":[{"modelId":"acp-model","name":"ACP Model"}]}}}'
+read line
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := probeEntry{Name: "acpcli", ProbeCmd: "acpcli --version", ACPSpawn: []string{script}}
+	got := detectCLIModels(context.Background(), e, e.ACPSpawn, "")
+	if len(got) != 1 || got[0].ID != "acp-model" || got[0].Name != "ACP Model" {
+		t.Fatalf("ACP fallback detection mismatch: %+v", got)
+	}
+}
+
+// TestDetectCLIModelsACPFallbackConfigOptions: an ACP-only CLI (hermes-acp,
+// which has no models_cmd) advertises its model selector as session/new
+// result.configOptions — the opencode shape. Detection must cover it too,
+// including option names/descriptions, and cache the result.
+func TestDetectCLIModelsACPFallbackConfigOptions(t *testing.T) {
+	resetModelsCache()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "hermes-acp")
+	body := `#!/bin/sh
+read line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read line
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","configOptions":[{"id":"model","category":"model","type":"select","currentValue":"hermes-3","options":[{"value":"hermes-3","name":"Hermes 3"},{"value":"hermes-4","name":"Hermes 4","description":"newer"}]}]}}'
+read line
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := probeEntry{Name: "hermes", ProbeCmd: "hermes-acp --version", ACPSpawn: []string{script}}
+	got := detectCLIModels(context.Background(), e, e.ACPSpawn, "")
+	if len(got) != 2 {
+		t.Fatalf("configOptions ACP detection mismatch: %+v", got)
+	}
+	if got[0].ID != "hermes-3" || got[0].Name != "Hermes 3" {
+		t.Fatalf("first configOption model mismatch: %+v", got[0])
+	}
+	if got[1].ID != "hermes-4" || got[1].Name != "Hermes 4" || got[1].Description != "newer" {
+		t.Fatalf("second configOption model mismatch: %+v", got[1])
+	}
+	// Cached like every other detection.
+	if cached, ok := cachedModels("hermes"); !ok || len(cached) != 2 {
+		t.Fatalf("configOptions detection must be cached, got %+v (ok=%v)", cached, ok)
+	}
+}
+
+// TestProbeModelsViaACPRealOpencode exercises the introspection against the
+// real `opencode acp` when the binary is installed (skipped otherwise — no
+// network requirement). It asserts only that advertised ids are well-formed;
+// an unauthenticated install may advertise none, which is not a failure.
+func TestProbeModelsViaACPRealOpencode(t *testing.T) {
+	path, err := exec.LookPath("opencode")
+	if err != nil {
+		t.Skip("opencode not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	models := probeModelsViaACP(ctx, []string{path, "acp"})
+	for _, m := range models {
+		if m.ID == "" {
+			t.Fatalf("advertised model has an empty id: %+v", m)
+		}
+	}
+	if len(models) == 0 {
+		t.Log("opencode acp advertised no models (unauthenticated/offline install?) — parse shapes covered by the fake-agent tests")
+	}
+}
+
+// TestDetectCLIModelsFailureIsEmpty: a CLI that yields nothing (bad models
+// subcommand, dead ACP spawn) reports an empty list and does not error.
+func TestDetectCLIModelsFailureIsEmpty(t *testing.T) {
+	resetModelsCache()
+	e := probeEntry{Name: "missing", ProbeCmd: "missing --version", ModelsCmd: "missing models", ACPSpawn: []string{"missing", "acp"}}
+	got := detectCLIModels(context.Background(), e, e.ACPSpawn, "")
+	if got == nil || len(got) != 0 {
+		t.Fatalf("failed detection must return an empty slice, got %+v", got)
+	}
+}
+
+// TestProbeCLIsReportsModels: probeCLIs attaches detected models to the
+// reported ProbeCLI (the wire field the daemon persists).
+func TestProbeCLIsReportsModels(t *testing.T) {
+	resetModelsCache()
+	resetMergedProbeTable(t)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	body := "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then echo claude-sonnet-4; else echo 2.1.0; fi\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	clis := probeCLIs(context.Background(), nil)
+	for _, c := range clis {
+		if c.Name != "claude" {
+			continue
+		}
+		if len(c.Models) != 1 || c.Models[0].ID != "claude-sonnet-4" {
+			t.Fatalf("probe report must carry detected models, got %+v", c.Models)
+		}
+		return
+	}
+	t.Fatalf("fake claude not detected, got %+v", clis)
 }

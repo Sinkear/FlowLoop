@@ -53,7 +53,7 @@ const (
 	MethodGoalComment           = "goal.comment"
 	MethodGoalComments          = "goal.comments"
 	MethodGoalList              = "goal.list"
-	MethodGoalAssign            = "goal.assign" // agent handoff — actor resolved from the run token (the HTTP surface carries no agent identity)
+	MethodGoalAssign            = "goal.assign"    // agent handoff — actor resolved from the run token (the HTTP surface carries no agent identity)
 	MethodGoalAuthorize         = "goal.authorize" // agent parks the goal at a human-authorization gate — approve = continue (F1)
 	MethodAgentList             = "agent.list"
 	MethodSquadList             = "squad.list"
@@ -97,6 +97,16 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return e.Message }
 
+// ModelInfo is one model a CLI advertises (probe-time detection): the
+// stable identifier used to select it (agent.model), plus optional
+// human-facing name/description. Shared by the probe report, the runtime
+// row's persisted models JSON, and the /runtimes/{id}/models response.
+type ModelInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 // ProbeCLI is one agent CLI found on the machine during probing. The
 // daemon turns these into runtime rows (Phase 2); until then they are
 // displayed in the machines list.
@@ -111,6 +121,10 @@ type ProbeCLI struct {
 	// the commit excludes every probed dir. '' = the executor's fallback.
 	ProjectSkillsDir string   `json:"project_skills_dir,omitempty"`
 	ProfileFiles     []string `json:"profile_files,omitempty"` // CLAUDE.md / AGENTS.md / SOUL.md …
+	// Models is the CLI's detected model list (best effort: models_cmd
+	// output, else ACP session/new introspection). Empty = detection was
+	// unavailable; the daemon keeps the previously persisted list.
+	Models []ModelInfo `json:"models,omitempty"`
 }
 
 // RegisterParams is the machine.register request payload.
@@ -272,17 +286,6 @@ type GoalWaitParams struct {
 	RPCToken
 }
 
-// RunChecks is the scratch-domain acceptance policy shipped to the machine.
-// Setup runs first (environment preparation, e.g. dependency installs), then
-// Verify; any non-zero exit fails the run. VerifyTimeout is in seconds (0 =
-// the platform default). Excludes/Gates are repo-only and never shipped to
-// a scratch run.
-type RunChecks struct {
-	Setup         []string `json:"setup,omitempty"`
-	Verify        []string `json:"verify,omitempty"`
-	VerifyTimeout int      `json:"verify_timeout,omitempty"`
-}
-
 // ── run dispatch (machine link, Phase 2) ──
 
 // RunDispatchParams is the daemon → machine dispatch: EVERYTHING the
@@ -300,9 +303,7 @@ type RunDispatchParams struct {
 	Prompt    string `json:"prompt"` // fixed block + wake line, fully assembled
 
 	// Processor runs (goal-less, platform-internal): the machine works in
-	// its proc dir (compile-on-repo gets a detached worktree of
-	// origin/<default>; scratch/intake a plain directory) and uploads the
-	// artifact files with run.finished.
+	// its proc dir and uploads the artifact files with run.finished.
 	Proc          bool     `json:"proc,omitempty"`
 	ArtifactFiles []string `json:"artifact_files,omitempty"`
 
@@ -320,22 +321,18 @@ type RunDispatchParams struct {
 
 	// Runtime spawn config (from the machine-owned runtime row).
 	ACPSpawn []string `json:"acp_spawn"` // argv of the ACP stdio server
+	// Model: the agent's configured model id (agent.model) — the executor
+	// applies it to the ACP session it opens (config option when the agent
+	// advertises one, session/set_model otherwise). '' = no selection: the
+	// agent CLI's default model.
+	Model string `json:"model,omitempty"`
 	// ProjectSkillsDir: the run's CLI's project-level skills directory
 	// (from the machine's probe report) — the executor stages the agent's
 	// skills there. '' = not probed; the executor falls back to its own
 	// CLI mapping.
 	ProjectSkillsDir string `json:"project_skills_dir,omitempty"`
-	// Checks: the scratch-domain acceptance policy to run on the MACHINE
-	// after the agent exits (setup → verify in the workdir). A scratch
-	// deliverable has no git diff for the daemon to verify, so the machine
-	// executes the domain's Verify commands and uploads a signed evidence
-	// bundle with run.finished; the daemon refuses delivery without a
-	// passed bundle when the domain is frozen with a Verify policy. Nil =
-	// no machine-side verification (legacy daemon or no frozen policy).
-	Checks *RunChecks `json:"checks,omitempty"`
-
 	// RunProfile: the run's full CONTEXT layer — platform background, the
-	// goal (title + acceptance policy), the team (squad roster + playbook
+	// goal (title + description), the team (squad roster + playbook
 	// + leader protocol), the agent's role contract, and the tool surface.
 	// Persona material: the executor merges it into the workdir's
 	// AGENTS.md at spawn. The Prompt is the TASK and nothing else.
@@ -534,7 +531,7 @@ type RunFinishedParams struct {
 	// resume pointer for the NEXT writable run of this goal/sub-goal.
 	SessionID string `json:"session_id,omitempty"`
 	WorkDir   string `json:"workdir,omitempty"`
-	// Artifacts: processor runs' FILE results (checks.json etc.), uploaded
+	// Artifacts: processor runs' FILE results (intake.json), uploaded
 	// from the machine — the platform reads structured side effects, never
 	// agent stdout (决策 5.3/§9).
 	Artifacts map[string]string `json:"artifacts,omitempty"`

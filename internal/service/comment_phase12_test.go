@@ -128,7 +128,7 @@ func TestHumanReplyToAgentCommentWakesOwner(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "owner")
 	domID := seedDomain(t, st)
-	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID, Category: "hootl"})
 	first := enqueueFirst(t, rs, g)
 
 	// The agent's prior comment in the feed — the reply target.
@@ -152,7 +152,7 @@ func TestHumanReplyToAgentCommentWakesOwner(t *testing.T) {
 	reply, err := cs.Create(ctx, Comment{
 		GoalID: g.ID, AuthorType: "human", AuthorID: "ui",
 		ParentID: agentCmt.ID,
-		Content: "[@owner](mention://agent/" + agentA + ") 用 JSON",
+		Content:  "[@owner](mention://agent/" + agentA + ") 用 JSON",
 	})
 	if err != nil {
 		t.Fatalf("human reply: %v", err)
@@ -250,7 +250,7 @@ func TestHumanReplyToAgentCommentReopensTerminalGoal(t *testing.T) {
 	if _, err := cs.Create(ctx, Comment{
 		GoalID: g.ID, AuthorType: "human", AuthorID: "ui",
 		ParentID: agentCmt.ID,
-		Content: "再改一下",
+		Content:  "再改一下",
 	}); err != nil {
 		t.Fatalf("human reply on terminal: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestHumanReplyToAgentCommentOnSquadGoalWakesLeader(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 
-	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "squad", AssigneeID: sq.ID, Status: "active", DomainID: domID})
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "squad", AssigneeID: sq.ID, Status: "active", DomainID: domID, Category: "hootl"})
 	// The squad's first run is on the leader (owner). Finish it so the reply
 	// enqueues a fresh owner run rather than coalescing.
 	first := enqueueFirst(t, rs, g)
@@ -309,7 +309,7 @@ func TestHumanReplyToAgentCommentOnSquadGoalWakesLeader(t *testing.T) {
 	if _, err := cs.Create(ctx, Comment{
 		GoalID: g.ID, AuthorType: "human", AuthorID: "ui",
 		ParentID: memberCmt.ID,
-		Content: "确认通过",
+		Content:  "确认通过",
 	}); err != nil {
 		t.Fatalf("human reply to member: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestAskHumanReleasesOnHumanReply(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "owner")
 	domID := seedDomain(t, st)
-	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID, Category: "hootl"})
 	ownerRun := enqueueFirst(t, rs, g)
 
 	// Agent asks, ends its turn → goal holds active (TestAskHumanHoldsGoalActive).
@@ -506,7 +506,7 @@ func TestAskHumanAnsweredDoesNotHold(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "owner")
 	domID := seedDomain(t, st)
-	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID, Category: "hootl"})
 	ownerRun := enqueueFirst(t, rs, g)
 	_ = st
 
@@ -541,7 +541,7 @@ func TestNonAskAgentCommentDoesNotHold(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, gs.st, "owner")
 	domID := seedDomain(t, gs.st)
-	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID})
+	g, _ := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: agentA, Status: "active", DomainID: domID, Category: "hootl"})
 	ownerRun := enqueueFirst(t, rs, g)
 	// A plain agent comment (AskHuman=false) — a progress note, not a question.
 	if _, err := cs.Create(ctx, Comment{

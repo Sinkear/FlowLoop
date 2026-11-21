@@ -703,9 +703,6 @@ func TestApplyProjectFullFlow(t *testing.T) {
 	if res.Domain == nil || res.Domain.Name != "订单中心" || res.Domain.GitURL == "" {
 		t.Fatalf("domain not created properly: %+v", res.Domain)
 	}
-	if res.Domain.PolicyText == "" {
-		t.Fatal("policy_text from template not persisted")
-	}
 	if res.Squad == nil || len(res.Agents) != 2 {
 		t.Fatalf("team not created: squad=%v agents=%d", res.Squad, len(res.Agents))
 	}

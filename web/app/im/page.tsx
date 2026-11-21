@@ -281,7 +281,7 @@ function FeishuConnectSection() {
 }
 
 // 每日摘要时间。平台设置是整体覆盖：保存时必须回传 intake_agent 与 webhook_secret，
-// 否则会把已有的平台 secret 清掉（webhook secret 的录入入口在项目仓库页）。
+// 否则会把已有的平台 secret 清掉（webhook secret 的录入入口在项目配置里）。
 function DailyDigestSection() {
   const { data: settings, isLoading } = usePlatformSettings();
   const save = useSavePlatformSettings();

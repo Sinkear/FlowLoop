@@ -8,8 +8,11 @@ import {
   useMachines,
   useGoalEvents,
   useAgents,
+  useRuntimeModels,
 } from "@/lib/queries";
 import {
+  Button,
+  Dialog,
   Empty,
   PageBody,
   PageHeader,
@@ -18,16 +21,18 @@ import {
   Skeleton,
   StatStrip,
   Toolbar,
+  inputCls,
 } from "@/components/ui";
 import { relTime } from "@/lib/utils";
-import type { Agent, Runtime } from "@/lib/types";
+import type { Agent, Runtime, RuntimeModel } from "@/lib/types";
 
 // 行网格：左侧主信息 + 中间元信息列 + 右侧操作；窄屏退化为标签-值行。
+// 模型列只放一个紧凑的只读入口（「N 个模型」），不再需要容纳长模型串。
 const ROW_GRID =
-  "grid grid-cols-1 gap-1.5 px-4 py-3 md:grid-cols-[minmax(0,1fr)_88px_150px_128px_52px_60px] md:items-center md:gap-3";
+  "grid grid-cols-1 gap-1.5 px-4 py-3 md:grid-cols-[minmax(0,1fr)_88px_104px_128px_52px_60px] md:items-center md:gap-3";
 
 const HEAD_GRID =
-  "hidden md:grid md:grid-cols-[minmax(0,1fr)_88px_150px_128px_52px_60px] md:gap-3 border-b border-line px-4 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3";
+  "hidden md:grid md:grid-cols-[minmax(0,1fr)_88px_104px_128px_52px_60px] md:gap-3 border-b border-line px-4 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3";
 
 // 运行时有三种读时状态：active=CLI 探测在；inactive=机器心跳丢失（存储仍是
 // active，List 读时 join 出来的）；absent=机器最新探测里已经没有这个 CLI。
@@ -47,10 +52,117 @@ function cliType(name: string): string {
   return at > 0 ? name.slice(0, at) : name;
 }
 
-function modelsOf(agents: Agent[]): string {
-  if (agents.length === 0) return "—";
-  const models = Array.from(new Set(agents.map((a) => a.model).filter(Boolean)));
-  return models.length ? models.join(" / ") : "runtime 默认";
+// 模型目录弹窗：只读展示运行时探测上报的模型。优先取 GET
+// /runtimes/{id}/models，请求期间用列表行里已有的 models 垫底。
+function RuntimeModelsDialog({ rt, onClose }: { rt: Runtime; onClose: () => void }) {
+  const { data, isLoading, isError } = useRuntimeModels(rt.id);
+  const [query, setQuery] = useState("");
+  const models: RuntimeModel[] = data?.models ?? rt.models ?? [];
+  const detectedAt = data?.detected_at ?? rt.models_at ?? "";
+  const loading = isLoading && !data;
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? models.filter(
+        (m) => m.id.toLowerCase().includes(q) || (m.name ?? "").toLowerCase().includes(q)
+      )
+    : models;
+
+  return (
+    <Dialog
+      title={`${rt.name} · 可用模型`}
+      onClose={onClose}
+      footer={
+        <Button variant="outline" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      <div className="flex items-center justify-between gap-3 text-xs text-ink-3">
+        {loading && !detectedAt ? (
+          <Skeleton className="h-3 w-28" />
+        ) : (
+          <span>
+            {detectedAt ? (
+              <span title={new Date(detectedAt).toLocaleString()}>
+                最近探测：{relTime(detectedAt)}
+              </span>
+            ) : models.length > 0 ? (
+              // 有目录但没有探测时间戳（列表行 fallback 的老数据）——别误称未探测。
+              "探测时间未知"
+            ) : (
+              "尚未探测到模型"
+            )}
+          </span>
+        )}
+        {models.length > 0 && (
+          <span className="shrink-0 font-mono tabular-nums">共 {models.length} 个</span>
+        )}
+      </div>
+
+      {isError && (
+        <p className="text-xs text-amber-300">
+          探测结果读取失败{models.length ? "，以下为列表中的最近一次上报" : ""}。
+        </p>
+      )}
+
+      {models.length > 8 && (
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className={`${inputCls} !py-1.5 text-xs`}
+          placeholder="搜索模型名称 / ID…"
+          aria-label="搜索模型"
+        />
+      )}
+
+      {loading && models.length === 0 ? (
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-lg border border-line px-3 py-2.5">
+              <Skeleton className="h-3.5 w-40" />
+              <Skeleton className="mt-1.5 h-3 w-56" />
+            </div>
+          ))}
+        </div>
+      ) : models.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
+          <p className="text-sm text-ink-2">暂无模型目录</p>
+          <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-ink-3">
+            机器每次执行 <code className="font-mono">agentwork connect</code>
+            ，或在探测上报更新时，会自动重新探测；不需要手动操作，稍后重新打开这里即可看到结果。
+          </p>
+        </div>
+      ) : visible.length === 0 ? (
+        <p className="px-1 py-2 text-xs text-ink-3">没有匹配的模型</p>
+      ) : (
+        <ul className="max-h-[45vh] space-y-1 overflow-y-auto">
+          {visible.map((m) => (
+            <li key={m.id} className="rounded-lg border border-line bg-surface-2/40 px-3 py-2">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span
+                  className={`min-w-0 truncate text-sm text-ink ${
+                    m.name ? "font-medium" : "font-mono"
+                  }`}
+                >
+                  {m.name || m.id}
+                </span>
+                {m.name && m.name !== m.id && (
+                  <span className="font-mono text-[11px] text-ink-3">{m.id}</span>
+                )}
+              </div>
+              {m.description && (
+                <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{m.description}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-[11px] leading-relaxed text-ink-3">
+        模型由运行时探测上报，这里只读展示；配置 Agent 时从这里选择
+      </p>
+    </Dialog>
+  );
 }
 
 function RuntimeRow({
@@ -58,15 +170,17 @@ function RuntimeRow({
   machineName,
   agents,
   onDelete,
+  onOpenModels,
 }: {
   rt: Runtime;
   machineName: string;
   agents: Agent[];
   onDelete: (id: string) => void;
+  onOpenModels: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const st = statusMeta(rt.status);
-  const models = modelsOf(agents);
+  const modelCount = rt.models?.length ?? 0;
   const created = new Date(rt.created_at).toLocaleString();
 
   return (
@@ -89,13 +203,24 @@ function RuntimeRow({
         <span className="font-mono text-ink-2">{cliType(rt.name)}</span>
       </div>
 
-      {/* 模型列是定宽 grid item：父级必须 min-w-0/overflow-hidden，值用 block
-          truncate（inline 的 span 上 truncate 不生效），长模型串才不会压到「机器」。 */}
-      <div className="flex min-w-0 items-center justify-between gap-2 overflow-hidden text-xs md:block md:w-full">
+      {/* 模型列只读：完整目录收在弹窗里，行内只给数量入口（不做任何选择）。
+          定宽 grid item 里用 inline-flex 的紧凑 chip，窄屏仍退化为标签-值行。 */}
+      <div className="flex min-w-0 items-center justify-between gap-2 text-xs md:block md:w-full">
         <span className="shrink-0 text-[11px] text-ink-3 md:hidden">模型</span>
-        <span className="block min-w-0 truncate text-ink-2" title={models}>
-          {models}
-        </span>
+        <button
+          type="button"
+          onClick={onOpenModels}
+          aria-haspopup="dialog"
+          aria-label={`${rt.name}：${modelCount > 0 ? `${modelCount} 个模型` : "未探测"}，查看可用模型`}
+          title={modelCount > 0 ? "查看探测到的模型" : "查看探测说明"}
+          className={
+            modelCount > 0
+              ? "inline-flex items-center rounded-md border border-line-strong bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2 transition-colors hover:border-accent/50 hover:text-ink"
+              : "inline-flex items-center rounded-md border border-dashed border-line-strong px-2 py-0.5 text-[11px] font-medium text-ink-3 transition-colors hover:border-accent/50 hover:text-ink-2"
+          }
+        >
+          {modelCount > 0 ? `${modelCount} 个模型` : "未探测"}
+        </button>
       </div>
 
       <div className="flex items-center justify-between gap-2 text-xs md:block">
@@ -150,10 +275,12 @@ export default function RuntimesPage() {
   const { data: agents } = useAgents();
   const del = useDeleteRuntime();
   const [filter, setFilter] = useState<"all" | "active" | "attention">("all");
+  // 当前打开模型目录弹窗的运行时；null = 关闭。
+  const [modelsFor, setModelsFor] = useState<Runtime | null>(null);
 
   const machineName = (id: string) => machines?.find((m) => m.id === id)?.name ?? id;
 
-  // runtime_id → 该运行时下的 agent（数量与模型都从这里来）。
+  // runtime_id → 该运行时下的 agent（Agent 列的数量从这里来；模型目录走探测接口）。
   const agentsByRuntime = useMemo(() => {
     const map = new Map<string, Agent[]>();
     for (const a of agents ?? []) {
@@ -282,12 +409,17 @@ export default function RuntimesPage() {
                   machineName={machineName(rt.machine_id)}
                   agents={agentsByRuntime.get(rt.id) ?? []}
                   onDelete={(id) => del.mutate(id)}
+                  onOpenModels={() => setModelsFor(rt)}
                 />
               ))}
             </ul>
           </>
         )}
       </SectionCard>
+
+      {modelsFor && (
+        <RuntimeModelsDialog rt={modelsFor} onClose={() => setModelsFor(null)} />
+      )}
     </PageBody>
   );
 }

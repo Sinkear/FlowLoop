@@ -37,6 +37,14 @@ type fakeAgent struct {
 	// returned a success response). The zero-event guard must surface this
 	// as a failed turn, not a false completed.
 	silent bool
+	// Model selection surface: configOptions advertised by session/new, the
+	// recorded set_config_option/set_model calls, and injectable failures
+	// (opencode rejects session/set_model with "Method not found").
+	configOptions []acp.SessionConfigOption
+	configCalls   []acp.SetSessionConfigOptionRequest
+	modelCalls    []acp.SetSessionModelRequest
+	configErr     error
+	modelErr      error
 }
 
 func (f *fakeAgent) OnInitialize(ctx context.Context, req acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -44,7 +52,7 @@ func (f *fakeAgent) OnInitialize(ctx context.Context, req acp.InitializeRequest)
 }
 func (f *fakeAgent) OnNewSession(ctx context.Context, req acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	f.sessionID = "sess-1"
-	return &acp.NewSessionResponse{SessionID: f.sessionID}, nil
+	return &acp.NewSessionResponse{SessionID: f.sessionID, ConfigOptions: f.configOptions}, nil
 }
 func (f *fakeAgent) OnLoadSession(ctx context.Context, req acp.LoadSessionRequest, s acp.SessionEventSender) (*acp.LoadSessionResponse, error) {
 	return &acp.LoadSessionResponse{}, nil
@@ -64,8 +72,23 @@ func (f *fakeAgent) OnListSessions(ctx context.Context, req acp.ListSessionsRequ
 func (f *fakeAgent) OnSetSessionMode(ctx context.Context, req acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
 	return &acp.SetSessionModeResponse{}, nil
 }
+func (f *fakeAgent) OnSetSessionModel(ctx context.Context, req acp.SetSessionModelRequest) (*acp.SetSessionModelResponse, error) {
+	f.mu.Lock()
+	f.modelCalls = append(f.modelCalls, req)
+	f.mu.Unlock()
+	if f.modelErr != nil {
+		return nil, f.modelErr
+	}
+	return &acp.SetSessionModelResponse{}, nil
+}
 func (f *fakeAgent) OnSetSessionConfigOption(ctx context.Context, req acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
-	return &acp.SetSessionConfigOptionResponse{}, nil
+	f.mu.Lock()
+	f.configCalls = append(f.configCalls, req)
+	f.mu.Unlock()
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
+	return &acp.SetSessionConfigOptionResponse{ConfigOptions: f.configOptions}, nil
 }
 func (f *fakeAgent) OnPrompt(ctx context.Context, req acp.PromptRequest, s acp.SessionEventSender) (*acp.PromptResponse, error) {
 	f.mu.Lock()
@@ -100,8 +123,16 @@ func textOf(blocks []acp.ContentBlock) string {
 	return b.String()
 }
 
-// openTestSession wires the backend against the in-memory agent over pipes.
+// openTestSession wires the backend against the in-memory agent over pipes
+// with an empty SessionSpec (no model selection).
 func openTestSession(t *testing.T, f *fakeAgent) proto.Session {
+	t.Helper()
+	return openTestSessionSpec(t, f, proto.SessionSpec{})
+}
+
+// openTestSessionSpec is openTestSession with a caller-built spec (used by
+// the model-selection tests). Conn/Cwd are filled in here.
+func openTestSessionSpec(t *testing.T, f *fakeAgent, spec proto.SessionSpec) proto.Session {
 	t.Helper()
 	cr, sw := io.Pipe() // client reads ← server writes
 	sr, cw := io.Pipe() // server reads ← client writes
@@ -114,7 +145,11 @@ func openTestSession(t *testing.T, f *fakeAgent) proto.Session {
 	}()
 	t.Cleanup(func() { cancel(); _ = cw.Close(); _ = cr.Close(); <-done })
 	conn := proto.Conn{R: cr, W: cw, Close: func() error { cancel(); return nil }}
-	s, err := New().OpenSession(context.Background(), proto.SessionSpec{Conn: conn, Cwd: "/tmp"})
+	spec.Conn = conn
+	if spec.Cwd == "" {
+		spec.Cwd = "/tmp"
+	}
+	s, err := New().OpenSession(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}

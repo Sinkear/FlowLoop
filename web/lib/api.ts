@@ -1,4 +1,4 @@
-import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, Checks, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
+import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
 
 // 默认走同源 /backend/*（Next rewrites 转发到本机 daemon 47813）——反代出
 // 去时浏览器无需直连 daemon。本地直连场景可显式设置 NEXT_PUBLIC_API_URL。
@@ -88,10 +88,13 @@ export const createSkillPullRequest = (id: string, body?: { title?: string; body
     method: "POST",
     body: JSON.stringify(body ?? {}),
   });
-export const createRuntime = (body: Omit<Runtime, "id" | "created_at">) =>
+export const createRuntime = (body: Omit<Runtime, "id" | "created_at" | "models" | "models_at">) =>
   api<Runtime>("/runtimes", { method: "POST", body: JSON.stringify(body) });
 export const deleteRuntime = (id: string) =>
   api<void>(`/runtimes/${id}`, { method: "DELETE" });
+// The runtime's probe-detected model catalog (read-only; never a selector).
+export const getRuntimeModels = (id: string) =>
+  api<import("./types").RuntimeModels>(`/runtimes/${id}/models`);
 
 // ── Agent ──
 export const listAgents = () => api<Agent[]>("/agents");
@@ -280,18 +283,18 @@ export const createDomain = (body: {
   default_branch?: string;
   git_identity?: string;
   git_credentials?: string;
-  policy_text?: string;
-  processor_agent_id?: string;
   issue_repo?: string;
   issue_assignee?: string;
   issue_assignee_type?: string;
   issue_provider?: string;
   pull_assignee?: string; // PR 拉取处理方（'' = 不拉取 PR）
   pull_assignee_type?: string; // agent | squad
+  acceptance_level?: string; // ''（待定） | hitl | hootl
 }) => api<Domain>("/domains", { method: "POST", body: JSON.stringify(body) });
 
 // updateDomain edits a domain's mutable config (issue handler etc.).
 export const updateDomain = (id: string, body: {
+  name?: string;
   git_url?: string;
   default_branch?: string;
   git_identity?: string;
@@ -302,7 +305,11 @@ export const updateDomain = (id: string, body: {
   issue_provider?: string;
   pull_assignee?: string; // PR 拉取处理方（'' = 不拉取 PR）
   pull_assignee_type?: string; // agent | squad
+  acceptance_level?: string; // 非空才覆盖；清空走 setDomainAcceptanceLevel
 }) => api<Domain>(`/domains/${id}`, { method: "PUT", body: JSON.stringify(body) });
+// Set or clear the project-level acceptance mode explicitly ('' = 待定).
+export const setDomainAcceptanceLevel = (id: string, level: string) =>
+  api<Domain>(`/domains/${id}/acceptance`, { method: "PATCH", body: JSON.stringify({ level }) });
 export const deleteDomain = (id: string) =>
   api<void>(`/domains/${id}`, { method: "DELETE" });
 
@@ -355,23 +362,10 @@ export const registerConnectionWebhook = (
 export const stopRun = (goalId: string, runId: string) =>
   api<void>(`/goals/${goalId}/runs/${runId}/stop`, { method: "POST" });
 
-export const compileDomainPolicy = (
-  id: string,
-  body: { policy_text: string; processor_agent_id: string }
-) => api<Run>(`/domains/${id}/compile`, { method: "POST", body: JSON.stringify(body) });
-// The domain's latest compile processor run (null when never compiled) —
-// the compile panel restores its in-flight banner from this after a page
-// refresh (决策 6-23).
-export const getDomainCompileRun = (id: string) =>
-  api<Run | null>(`/domains/${id}/compile-run`);
 // The config-time git probe (决策 6-24): tests UNSAVED form values — repo
 // URL, branch, token read permission — via `git ls-remote` on the daemon.
 export const testDomainGit = (body: { git_url: string; default_branch: string; git_credentials: string }) =>
   api<import("./types").DomainGitTestResult>(`/domains/test`, { method: "POST", body: JSON.stringify(body) });
-export const freezeDomainChecks = (
-  id: string,
-  body: { checks: Checks; verification_strength: string }
-) => api<Domain>(`/domains/${id}/checks`, { method: "POST", body: JSON.stringify(body) });
 
 // ── Logs (daemon file log + runtime level) ──
 export const fetchLogs = (params: { after?: string; before?: string; limit?: number; level?: string }) => {

@@ -71,6 +71,10 @@ type ExecuteSpec struct {
 	// workspace MCP server (http /mcp/{runID}), so agents that do not
 	// delegate tools to client RPCs still reach the workspace through MCP.
 	McpServers []acp.McpServer
+	// Model is the model the run should select on its session ("" = the
+	// agent's default). The ACP backend applies it best-effort after
+	// session/new via the agent's model config option or session/set_model.
+	Model string
 }
 
 // EventType discriminates one stream event. Mirrors the ACP update shapes but
@@ -156,6 +160,9 @@ type SessionSpec struct {
 	Cwd           string
 	ClientHandler acp.ClientRequestHandler
 	McpServers    []acp.McpServer
+	// Model is the model to select on the new session ("" = agent default):
+	// applied best-effort via the model config option, else session/set_model.
+	Model string
 }
 
 // SessionBackend speaks a session-capable wire protocol. ACP MUST support

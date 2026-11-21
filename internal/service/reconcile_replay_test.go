@@ -112,7 +112,7 @@ func TestReconcilePendingTerminalReplaysOwnerRun(t *testing.T) {
 	ctx := context.Background()
 	a := seedAgent(t, st, "owner")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: domID})
+	g, err := gs.Create(ctx, Goal{Title: "g", AssigneeType: "agent", AssigneeID: a, Status: "active", DomainID: domID, Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

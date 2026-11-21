@@ -418,14 +418,10 @@ func (s *TemplateExportService) exportProject(ctx context.Context, opts Template
 		ID:   s.templateID(opts.IDSlug, d.Name, "project", d.ID),
 		Name: d.Name,
 	}
-	if d.PolicyText != "" {
-		meta.Description = strings.TrimSpace(strings.SplitN(d.PolicyText, "\n", 2)[0])
-	}
 	spec := projectSpec{
 		Domain: tplDomain{
 			Type: d.Type, GitURL: d.GitURL, DefaultBranch: d.DefaultBranch, GitIdentity: d.GitIdentity,
 			IssueAssignee: issueAssignee, IssueAssigneeType: d.IssueAssigneeType,
-			PolicyText: d.PolicyText,
 		},
 		Team:      team,
 		Goals:     tplGoals,

@@ -22,8 +22,53 @@ import {
   SessionInfo,
   formatAcpClose,
 } from "./acp";
-import { listAgents, listGoals } from "./api";
+import { listAgents, listBlueprints, listDomains, listGoals, listSquads } from "./api";
+import type { CreateKind } from "./task-template";
 import { describeStewardFailure } from "./steward";
+
+// 每种创建对象的管家指令措辞：CLI 的 kind、要补齐的字段、建好后回哪个
+// 视图。放在 store 里而不是页面，刷新恢复后（只有快照没有页面状态）也能
+// 把同一段流程补完。
+const CREATE_INTENTS: Record<
+  CreateKind,
+  { label: string; cliKind: string; cli: string; fields: string; backView: string }
+> = {
+  goal: {
+    label: "任务",
+    cliKind: "goal",
+    cli: 'agentwork create goal --title "..."',
+    fields: "负责人/项目",
+    backView: "任务视图",
+  },
+  domain: {
+    label: "项目",
+    cliKind: "domain（项目）",
+    cli: 'agentwork create domain --name "..."',
+    fields: "仓库地址/默认分支/验收级别（hitl、hootl 或不设）",
+    backView: "项目列表",
+  },
+  squad: {
+    label: "团队",
+    cliKind: "squad（团队）",
+    cli: 'agentwork create squad --name "..."',
+    fields: "负责人/成员/职责",
+    backView: "小队列表",
+  },
+  agent: {
+    label: "智能体",
+    cliKind: "agent",
+    cli: 'agentwork create agent --name "..."',
+    fields: "所属团队/运行时/模型/职责",
+    backView: "智能体列表",
+  },
+  blueprint: {
+    label: "蓝本",
+    cliKind: "blueprint",
+    cli: 'agentwork create blueprint --name "..."',
+    fields: "步骤/人工卡点/适用场景",
+    backView: "蓝本列表",
+  },
+};
 
 export type NewGoalPhase = "idle" | "connecting" | "ready" | "running" | "created" | "failed";
 
@@ -37,6 +82,7 @@ export interface NewGoalLine {
 
 export interface NewGoalState {
   phase: NewGoalPhase;
+  createdKind: CreateKind;
   lines: NewGoalLine[];
   error: string;
   busy: boolean;
@@ -52,6 +98,9 @@ let lines: NewGoalLine[] = [];
 let error = "";
 let lastAsk: { say: string; first: boolean } | null = null;
 let createdGoal: { id: string; title: string } | null = null;
+// 这一轮在创建什么：任务 / 项目 / 团队 / 智能体 / 蓝本。决定管家指令的
+// 措辞，也决定「建好了没」去轮询哪张表。
+let flowKind: CreateKind = "goal";
 let perm: NewGoalState["perm"] = null;
 
 let stewardId: string | null = null;
@@ -125,6 +174,7 @@ export function getNewGoalState(): NewGoalState {
     busy: phase === "connecting" || phase === "running",
     lastAsk,
     createdGoal,
+    createdKind: flowKind,
     perm,
   };
 }
@@ -144,6 +194,7 @@ interface FlowSnapshot {
   sessionId: string;
   startedAt: number;
   savedAt: number;
+  kind?: CreateKind;
 }
 
 function readSnapshot(): FlowSnapshot | null {
@@ -165,7 +216,7 @@ function readSnapshot(): FlowSnapshot | null {
 function writeSnapshot(): void {
   if (!session || !startedAt) return;
   try {
-    const snap: FlowSnapshot = { sessionId: session, startedAt, savedAt: Date.now() };
+    const snap: FlowSnapshot = { sessionId: session, startedAt, savedAt: Date.now(), kind: flowKind };
     sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
   } catch {
     // 私有模式配额等：刷新恢复降级，实况流程不受影响。
@@ -191,22 +242,44 @@ function stopPoll() {
 
 // 出现「本次提交之后创建」的任务即成功。轮询活在 store 里——用户切去别的
 // 页面它照样跑，回到 /goals/new 才把人送去任务详情。
+// listKindRows 把 5 种创建结果统一成 {id,name,created_at}：轮询只关心
+// 「这次提交之后多出来的那一条」。每张表的分页/字段不同，但列表接口都
+// 返回 id + name + created_at，够用来认领新对象。
+async function listKindRows(
+  kind: CreateKind
+): Promise<{ id: string; name: string; created_at?: string }[]> {
+  switch (kind) {
+    case "domain":
+      return (await listDomains()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
+    case "squad":
+      return (await listSquads()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
+    case "agent":
+      return (await listAgents()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
+    case "blueprint":
+      return (await listBlueprints()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
+    default:
+      return (await listGoals()).map((d) => ({ id: d.id, name: d.title, created_at: d.created_at }));
+  }
+}
+
 function ensurePolling() {
   if (!startedAt) return;
   if (phase === "created" || phase === "failed") return;
   if (pollTimer !== null) return;
   const startISO = new Date(startedAt - 2000).toISOString();
   const deadline = Date.now() + POLL_MAX_MS;
+  const kind = flowKind;
   pollTimer = setInterval(async () => {
     if (Date.now() > deadline) {
       stopPoll();
       return;
     }
+    if (flowKind !== kind) return; // 中途切了类型：让新流程自己起轮询
     try {
-      const goals = await listGoals();
-      const hit = goals.find((g) => g.created_at && g.created_at >= startISO);
+      const rows = await listKindRows(kind);
+      const hit = rows.find((r) => r.created_at && r.created_at >= startISO);
       if (hit) {
-        createdGoal = { id: hit.id, title: hit.title };
+        createdGoal = { id: hit.id, title: hit.name };
         stopPoll();
         clearSnapshot();
         setPhase("created");
@@ -373,11 +446,12 @@ async function ensureClient(): Promise<AcpChatClient> {
 
 // 跟管家说一句话：first=true 把「要做什么」包成一条建任务的指令（让 CLI
 // 直接建，缺字段问我要）；first=false 原文追问。
-export async function ask(say: string, first: boolean): Promise<void> {
+export async function ask(say: string, first: boolean, kind: CreateKind = "goal"): Promise<void> {
   const body = say.trim();
   if (!body || inFlight) return;
   inFlight = true;
   const myAttempt = ++attempt;
+  if (first) flowKind = kind;
   lastAsk = { say: body, first };
   error = "";
   emit();
@@ -398,22 +472,23 @@ export async function ask(say: string, first: boolean): Promise<void> {
         lineId = 0;
         emit();
       }
+      const spec = CREATE_INTENTS[flowKind];
       push({ role: "user", text: body });
       push({
         role: "system",
-        text: "已交给管家：它用 agentwork CLI 建任务，建好会自动切回任务视图。",
+        text: `已交给管家：它用 agentwork CLI 建${spec.label}，建好会自动切回${spec.backView}。`,
       });
       ensurePolling();
       writeSnapshot();
       await c.prompt(
         session,
         [
-          "帮我创建一条任务（goal），需求如下：",
+          `帮我创建一个${spec.label}（${spec.cliKind}），需求如下：`,
           "",
           body,
           "",
-          "请用 `agentwork create goal --title \"...\"` 建出来（负责人/项目能判断就一起带上，缺字段就问我要）。",
-          "建完后用一句话告诉我任务标题，不要做别的改动。",
+          `请用 \`${spec.cli}\` 建出来（${spec.fields}；能判断就一起带上，缺字段就问我要）。`,
+          `建完后用一句话告诉我${spec.label}名称，不要做别的改动。`,
         ].join("\n")
       );
     } else {
@@ -463,7 +538,7 @@ export function retry(): void {
     setPhase("idle");
     return;
   }
-  void ask(last.say, last.first);
+  void ask(last.say, last.first, flowKind);
 }
 
 // 「重来」/创建成功跳转后的复位：彻底清空这一轮流程（连接、记录、快照、
@@ -482,6 +557,7 @@ export function reset(): void {
   lineId = 0;
   error = "";
   createdGoal = null;
+  flowKind = "goal";
   perm = null;
   setPhase("idle");
 }
@@ -514,6 +590,7 @@ export async function resumeIfNeeded(): Promise<void> {
   const snap = readSnapshot();
   if (!snap) return;
   startedAt = snap.startedAt;
+  if (snap.kind) flowKind = snap.kind;
   restorePending = true;
   try {
     await ensureClient();

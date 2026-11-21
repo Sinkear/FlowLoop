@@ -1263,3 +1263,112 @@ func TestWebhookUntrackedRepoLogged(t *testing.T) {
 		t.Fatalf("untracked delivery = domain %q ok %d, want '' and 1", domainID, ok)
 	}
 }
+
+// acceptanceRig seeds an in-memory store with one runtime + agent and wires
+// the services a Poller needs. Used by the acceptance-inheritance tests.
+func acceptanceRig(t *testing.T) (*store.Store, *service.GoalService, *service.RunService, *service.DomainService, context.Context) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	bus := events.NewBus()
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO runtime (id,name,created_at) VALUES ('rt1','rt1',?)`, time.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO agent (id,name,runtime_id,max_concurrent,created_at) VALUES ('a1','worker','rt1',1,?)`, time.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	goalSvc := service.NewGoalService(st, bus)
+	runSvc := service.NewRunService(st, bus)
+	goalSvc.SetRunService(runSvc)
+	runSvc.SetGoalService(goalSvc)
+	return st, goalSvc, runSvc, service.NewDomainService(st, bus), ctx
+}
+
+// TestPollerInheritsDomainAcceptanceLevel: goals created for repo webhook/poll
+// issues AND pull requests inherit the domain's project-level acceptance mode
+// (验收级别) — hitl/hootl when set, and the service default hitl when unset.
+// Both create paths funnel through the poller's create funcs, so this covers
+// the webhook triggers too.
+func TestPollerInheritsDomainAcceptanceLevel(t *testing.T) {
+	cases := []struct{ level, want string }{
+		{"", "hitl"}, // unset → goal service default
+		{"hitl", "hitl"},
+		{"hootl", "hootl"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		name := tc.level
+		if name == "" {
+			name = "unset"
+		}
+
+		t.Run("issue/"+name, func(t *testing.T) {
+			st, goalSvc, runSvc, ds, ctx := acceptanceRig(t)
+			if _, err := ds.Create(ctx, service.Domain{
+				Name: "d1", GitURL: "https://e.com/d1.git",
+				IssueRepo: "x/y", IssueAssignee: "a1", GitCredentials: "tok",
+				AcceptanceLevel: tc.level,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			srv, _ := mockGitHub(t)
+			defer srv.Close()
+			p := NewPoller(st, goalSvc, runSvc)
+			p.newProvider = func(provider, token string) (Provider, error) {
+				c := NewClient(token)
+				c.http = srv.Client()
+				c.baseURL = srv.URL
+				return c, nil
+			}
+			if _, err := p.Poll(ctx); err != nil {
+				t.Fatalf("poll: %v", err)
+			}
+			goals, err := goalSvc.List(ctx)
+			if err != nil || len(goals) != 1 {
+				t.Fatalf("goals: %d %v", len(goals), err)
+			}
+			if goals[0].Category != tc.want {
+				t.Fatalf("issue goal category = %q, want %q", goals[0].Category, tc.want)
+			}
+		})
+
+		t.Run("pull/"+name, func(t *testing.T) {
+			st, goalSvc, runSvc, ds, ctx := acceptanceRig(t)
+			if _, err := ds.Create(ctx, service.Domain{
+				Name: "d1", GitURL: "https://e.com/d1.git",
+				IssueRepo: "x/y", IssueProvider: "github", PullAssignee: "a1", GitCredentials: "tok",
+				AcceptanceLevel: tc.level,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			srv, _ := mockPulls(t, []map[string]any{
+				{"number": 1, "title": "新增导出接口", "body": "实现 /export", "html_url": "https://github.com/x/y/pull/1",
+					"user": map[string]any{"login": "dev1"}, "head": map[string]any{"ref": "feat/export", "sha": "abc"}, "base": map[string]any{"ref": "main"}},
+			})
+			defer srv.Close()
+			p := NewPoller(st, goalSvc, runSvc)
+			p.newProvider = func(provider, token string) (Provider, error) {
+				c := NewClient(token)
+				c.http = srv.Client()
+				c.baseURL = srv.URL
+				return c, nil
+			}
+			if _, err := p.Poll(ctx); err != nil {
+				t.Fatalf("poll: %v", err)
+			}
+			goals, err := goalSvc.List(ctx)
+			if err != nil || len(goals) != 1 {
+				t.Fatalf("goals: %d %v", len(goals), err)
+			}
+			if goals[0].Category != tc.want {
+				t.Fatalf("PR goal category = %q, want %q", goals[0].Category, tc.want)
+			}
+		})
+	}
+}

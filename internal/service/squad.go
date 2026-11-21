@@ -663,9 +663,9 @@ system handles — humans cannot use them and read the feed as prose).
 `
 
 const squadParentStatusOwned = `You drive this goal's execution. When you finish your part, END your turn —
-completion is JUDGED, not declared: the platform's machine verification +
-the domain's gate rules + the human's approval decide whether the goal is
-done. You never set the goal's status yourself, and you do not wait for a
+completion is JUDGED, not declared: the goal's 验收级别 (HITL/HOOTL) and
+the human's approval decide whether the goal is done. You never set the
+goal's status yourself, and you do not wait for a
 "final confirmation" to close it — your run ending is your part done, the
 rest is the platform's and the human's.
 

@@ -247,11 +247,6 @@ func TestBuildDigestCard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ds.FreezeChecks(ctx, dom.ID, service.Checks{
-		Gates: []service.GateRule{{Name: "merge", When: "必审"}},
-	}, "strong"); err != nil {
-		t.Fatal(err)
-	}
 	// run rows reference agent; agent references runtime — seed both.
 	seedAgentRow(t, ctx, st)
 	// A goal parked in review + one done.
@@ -499,8 +494,8 @@ func TestIntakeDraftAgentKind(t *testing.T) {
 	// Save an agent-kind draft (name+runtime known, skills unspecified) → the
 	// next prompt carries the known fields + lists skills as missing.
 	if err := is.SaveDraft(ctx, IntakeDraft{
-		Kind: "agent",
-		Payload: `{"name":"代码审查","runtime_id":"rt1","description":"审查 PR","system_prompt":"你是审查员","skills":[],"skills_specified":false}`,
+		Kind:      "agent",
+		Payload:   `{"name":"代码审查","runtime_id":"rt1","description":"审查 PR","system_prompt":"你是审查员","skills":[],"skills_specified":false}`,
 		CreatedAt: time.Now().Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatal(err)

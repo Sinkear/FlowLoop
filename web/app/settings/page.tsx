@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 // 设置页只放“本机浏览器”的东西：外观与本机缓存。
 // 平台级参数按用途归到各自的页面——飞书连接/摘要时间在「IM」，webhook secret 在
-// 「项目仓库」。以前把这三样混在一页，用户看不出“平台设置”到底管什么。
+// 「项目」。以前把这三样混在一页，用户看不出“平台设置”到底管什么。
 
 // ── 外观：双主题切换 ──
 // 持久化在 localStorage，layout 的首屏脚本在渲染前读回（无闪烁）。
@@ -145,7 +145,13 @@ export default function SettingsPage() {
   const [note, setNote] = useState("");
   const resetLocal = () => {
     try {
-      localStorage.removeItem("agentwork-chat-history");
+      // 对话记录现在按对话拆成多组 key（index / active / conv-*），按前缀清。
+      const doomed: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("agentwork-chat-")) doomed.push(key);
+      }
+      for (const key of doomed) localStorage.removeItem(key);
       localStorage.removeItem("agentwork-goals-view");
     } catch {}
     applyTheme("light");
@@ -158,7 +164,7 @@ export default function SettingsPage() {
     <PageBody>
       <PageHeader
         title="设置"
-        desc="外观与本机数据。平台级参数按用途分散：推送在「IM」，webhook secret 在「项目仓库」。"
+        desc="外观与本机数据。平台级参数按用途分散：推送在「IM」，webhook secret 在「项目」页的项目配置里。"
       />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -214,7 +220,7 @@ export default function SettingsPage() {
                     IM
                   </Link>
                   <Link href="/domains" className="text-accent hover:underline">
-                    项目仓库
+                    项目
                   </Link>
                 </dd>
               </div>

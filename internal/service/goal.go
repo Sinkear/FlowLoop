@@ -30,10 +30,11 @@ type Goal struct {
 	AssigneeType string `json:"assignee_type"` // agent | squad | human
 	AssigneeID   string `json:"assignee_id"`
 	Status       string `json:"status"` // backlog|active|done|failed|review|cancelled
-	// Category is the human-in-the-loop mode (v3): "hitl" (default — acceptance
-	// checkpoint gates park a completed goal in review) | "hootl" (human out of
-	// the loop — a completed run whose finalization guard passed promotes to
-	// done WITHOUT evaluating the gates; the skip is logged as auto_completed).
+	// Category is the goal-level 验收级别 (v3): "hitl" (default — a completed
+	// run parks the goal in review for the human acceptance checkpoint) |
+	// "hootl" (human out of the loop — a completed run whose finalization
+	// guard passed promotes to done without a checkpoint; the skip is logged
+	// as auto_completed).
 	Category        string `json:"category"`
 	HandoffNote     string `json:"handoff_note"`
 	ReviewRequest   string `json:"review_request"`   // gate trigger reason / deliver-failure note
@@ -234,6 +235,31 @@ func (s *GoalService) SetStaleConflictResolver(r StaleConflictResolver) { s.stal
 // and the terminal analysis trigger.
 func (s *GoalService) SetRSI(r *RSIService) { s.rsi = r }
 
+// inheritAcceptanceCategory resolves the project default acceptance mode for
+// a goal created without an explicit task-level category: project default
+// (domain.acceptance_level) > platform default (hitl). Only "hitl"/"hootl" are
+// accepted from the project; a missing domain row, an unset ("") level, or
+// legacy/garbage data all fall back to hitl. The read happens inline on the
+// same DB handle as the create, so no extra connection or transaction is
+// involved. Explicit task-level categories never reach this helper.
+func (s *GoalService) inheritAcceptanceCategory(ctx context.Context, domainID string) string {
+	if domainID == "" {
+		return "hitl"
+	}
+	var level string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT acceptance_level FROM domain WHERE id=?`, domainID).Scan(&level); err != nil {
+		// A missing domain is validated separately (mustExist) for agent/squad
+		// goals and is optional for human goals; either way a failed read must
+		// not change the platform default.
+		return "hitl"
+	}
+	if level == "hitl" || level == "hootl" {
+		return level
+	}
+	return "hitl"
+}
+
 // Create inserts a goal. backlog (the semantic invariant) does not enqueue a
 // run; an ACTIVE agent/squad goal births its first run IN the same
 // transaction (P0-2, 决策 6-15②) — no caller-side enqueue exists anymore.
@@ -259,12 +285,16 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 	if g.CreatedByType == "" {
 		g.CreatedByType = "human"
 	}
-	// v3 HITL/HOOTL: an empty category means the default human-in-the-loop
-	// mode; any other value is a client bug and must be rejected rather than
-	// silently treated as hitl (it would park/goal-done the wrong way).
+	// v3 HITL/HOOTL acceptance precedence: an explicit task-level category
+	// (hitl/hootl) always wins; when the task leaves it empty, inherit the
+	// project default from the domain's 验收级别 (acceptance_level), and fall
+	// back to the platform default hitl. Any other value is a client bug and
+	// must be rejected rather than silently treated as hitl (it would
+	// park/goal-done the wrong way).
+	if g.Category == "" {
+		g.Category = s.inheritAcceptanceCategory(ctx, g.DomainID)
+	}
 	switch g.Category {
-	case "":
-		g.Category = "hitl"
 	case "hitl", "hootl":
 	default:
 		return nil, NewValidationError("category must be hitl or hootl")
@@ -297,8 +327,8 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		return nil, NewValidationError("assignee_type must be agent, squad, or human")
 	}
 	// v2: agent/squad-executed goals must belong to a domain — the domain owns
-	// the worktree and the acceptance policy (DESIGN.md §2). Human/backlog
-	// goals may be domain-less.
+	// the worktree and execution config (DESIGN.md §2). Human/backlog goals
+	// may be domain-less.
 	if g.AssigneeType != "human" {
 		if g.DomainID == "" {
 			return nil, NewFieldRequiredError("domain_id")
@@ -681,9 +711,9 @@ func (s *GoalService) Assign(ctx context.Context, goalID, assigneeType, assignee
 		return nil, NewValidationError("assignee_type must be agent, squad, or human")
 	}
 	// v2: a goal handed to an agent/squad must belong to a domain — the domain
-	// owns the worktree and the acceptance policy. Assigning a domain-less
-	// goal to an agent would produce a run with no worktree, no verification,
-	// and no deliver (the scratch-dir dead path).
+	// owns the worktree. Assigning a domain-less goal to an agent would
+	// produce a run with no worktree and no deliver (the scratch-dir dead
+	// path).
 	if assigneeType != "human" && g.DomainID == "" {
 		return nil, NewValidationError("cannot assign to agent/squad: the goal has no domain (attach a domain first)")
 	}
@@ -1655,18 +1685,22 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 				"goal_id": rc.GoalID, "status": "done", "summary": doneSummary,
 				"category": "hootl", "auto_approved": true,
 			}})
+			// Terminal state: the same post-completion side effects as the
+			// hitl done path (the RSI analysis session seals/analyzes once the
+			// goal is terminal, regardless of which checkpoint decided it).
+			if s.rsi != nil {
+				goalID := rc.GoalID
+				afterCommit = append(afterCommit, func() { s.rsi.OnGoalTerminal(context.Background(), goalID) })
+			}
 			break
 		}
-		// A completed run that passed machine verification has reached the
-		// acceptance-judgment step (D2: inside this transaction). If the
-		// goal's domain has checkpoint gates, the goal parks in review and
-		// the human decides; otherwise it promotes to done as before.
-		// Note: machine verification failures never reach here — the daemon
-		// runs verify before finishing the run and a red verify ends the run
-		// failed, flowing through the retry branch below.
+		// A completed run has reached the acceptance-judgment step (D2:
+		// inside this transaction). The goal-level 验收级别 decides: a hitl
+		// goal parks in review for the human checkpoint; a hootl goal was
+		// auto-completed above and never reaches here.
 		hit, reason, err := s.gatesForGoal(ctx, tx, rc)
 		if err != nil {
-			return fmt.Errorf("check gates: %w", err)
+			return fmt.Errorf("judge acceptance: %w", err)
 		}
 		if hit {
 			// Park in review. The handoff/wakeup note is NOT cleared — if the
@@ -1840,67 +1874,22 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 	return s.commitAndEmit(ctx, tx, pendingEvents, afterCommit, rc.RunID)
 }
 
-// gatesForGoal decides whether a completed run parks the goal in review
-// (DESIGN.md §5, M2 rule engine):
-//
-//  1. The daemon evaluated the gate rules against the run's diff and
-//     recorded the fired gates on the run row (run.gates_hit) — merge always
-//     fires, diff_* fire on pattern match. The goal layer reads that result:
-//     the daemon computes, the goal layer judges.
-//  2. Strength linkage (§5.4): a weak-verification domain with no configured
-//     gates still gets a default merge gate — weak verification must not run
-//     unattended.
-//
-// (The `request` gate is handled directly at the approval request site; it
-// no longer exists — agents cannot request approval, 决策 4-11.)
+// gatesForGoal decides whether a completed run parks the goal in review.
+// The project/task acceptance-policy (compiled checks/gates) subsystem is
+// retired: the only acceptance mode now is the goal's 验收级别 (Category).
+// A hitl goal always parks a completed run for the human checkpoint; a hootl
+// goal never reaches this point (the finalization auto-completes it earlier,
+// see the hootl branch above), so it is judgeable without a gate read here.
 func (s *GoalService) gatesForGoal(ctx context.Context, tx *sql.Tx, rc goalRunContext) (bool, string, error) {
-	var gatesHitJSON string
-	err := tx.QueryRowContext(ctx, `SELECT gates_hit FROM run WHERE id=?`, rc.RunID).Scan(&gatesHitJSON)
-	if err == nil && gatesHitJSON != "" && gatesHitJSON != "[]" {
-		var hit []string
-		if json.Unmarshal([]byte(gatesHitJSON), &hit) == nil && len(hit) > 0 {
-			return true, strings.Join(hit, "; "), nil
+	var category string
+	if err := tx.QueryRowContext(ctx, `SELECT category FROM goal WHERE id=?`, rc.GoalID).Scan(&category); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, "", nil
 		}
+		return false, "", fmt.Errorf("load goal category: %w", err)
 	}
-	// No gate fired for this run. Strength linkage: weak verification with no
-	// gates at all still demands a human checkpoint.
-	var checksJSON, strength, compiledAt, domainType string
-	err = tx.QueryRowContext(ctx,
-		`SELECT d.checks, d.verification_strength, d.checks_compiled_at, COALESCE(d.type,'') FROM goal g JOIN domain d ON d.id = g.domain_id WHERE g.id=?`, rc.GoalID).
-		Scan(&checksJSON, &strength, &compiledAt, &domainType)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, "", nil // no domain → no gates
-	}
-	if err != nil {
-		return false, "", fmt.Errorf("load domain gates: %w", err)
-	}
-	// A scratch domain has no diff — its diff-based gates NEVER fire, and
-	// the deliverable is a subjective artifact the machine cannot judge. The
-	// human checkpoint is unconditional here (regardless of strength or
-	// configured gates): zero-checkpoint scratch goals must not auto-done.
-	// No review_request text — the approval panel itself communicates "your
-	// decision is needed"; the internal reason (no git / no policy / weak
-	// strength) is platform jargon the user does not need.
-	if domainType == "scratch" {
-		return true, "", nil
-	}
-	// The confirmation gate (决策 2-4/2-5): an UNFROZEN acceptance policy is
-	// no acceptance policy — nothing was run against it (the daemon skips
-	// verification for unfrozen domains), so no machine judgment exists and
-	// the goal must NOT promote unattended. The human checkpoint is the
-	// only safe default.
-	if compiledAt == "" {
-		return true, "", nil
-	}
-	var checks Checks
-	if err := json.Unmarshal([]byte(checksJSON), &checks); err != nil {
-		return false, "", fmt.Errorf("parse domain checks: %w", err)
-	}
-	if len(checks.Gates) > 0 {
-		return false, "", nil // gates configured but none fired for this run
-	}
-	if strength == "weak" {
-		return true, "", nil
+	if category == "hitl" {
+		return true, "验收级别 hitl：完成需人工验收", nil
 	}
 	return false, "", nil
 }
@@ -1990,11 +1979,10 @@ func (s *GoalService) ResolveReview(ctx context.Context, goalID, runID, decision
 		}
 	}
 	ts := now()
-	// gate_rule is WHICH rule actually parked the goal — resolved from the
-	// evidence run's gates_hit (the daemon records the fired gate names
-	// there), NOT hardcoded: the health-learning aggregation (GateStats)
-	// groups by rule, and a diff_contains decision recorded as "merge" would
-	// corrupt the learning data.
+	// gate_rule is the stable placeholder "merge": rule evaluation is retired
+	// with the compiled-checks subsystem, and GateStats groups by this value
+	// for the health panel. It is still recorded so every decision has an
+	// audit row.
 	rule, err := s.resolveGateRule(ctx, goalID, runID)
 	if err != nil {
 		return nil, err
@@ -3188,38 +3176,11 @@ func (s *GoalService) deriveOwnerAttentionTx(ctx context.Context, tx *sql.Tx, go
 	return strings.Join(bits, ","), nil
 }
 
-// resolveGateRule names the rule that actually parked the goal in review:
-//   - the named run's gates_hit[0] (the IM card carries the evidence run),
-//   - else the goal's latest completed run's gates_hit[0] (the Web panel),
-//   - else "merge" (the strength-linkage default gate fires with empty
-//     gates_hit).
+// resolveGateRule names the rule that parked the goal in review. The
+// compiled-gate engine is retired; every parked goal is the same human
+// checkpoint, so the recorded rule is the stable constant "merge" (the
+// decision-history schema and GateStats keep working unchanged).
 func (s *GoalService) resolveGateRule(ctx context.Context, goalID, runID string) (string, error) {
-	if runID == "" {
-		// The Web panel resolves without naming a run — use the latest
-		// completed run, whose gates_hit the daemon recorded.
-		err := s.st.DB().QueryRowContext(ctx,
-			`SELECT id FROM run WHERE goal_id=? AND status='completed'
-			 ORDER BY finished_at DESC LIMIT 1`, goalID).Scan(&runID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("find evidence run: %w", err)
-		}
-	}
-	if runID != "" {
-		var hitJSON string
-		err := s.st.DB().QueryRowContext(ctx,
-			`SELECT gates_hit FROM run WHERE id=?`, runID).Scan(&hitJSON)
-		if err == nil && hitJSON != "" && hitJSON != "[]" {
-			var hit []string
-			if json.Unmarshal([]byte(hitJSON), &hit) == nil && len(hit) > 0 {
-				if name, _, ok := strings.Cut(hit[0], ":"); ok && strings.TrimSpace(name) != "" {
-					return strings.TrimSpace(name), nil
-				}
-				return hit[0], nil
-			}
-		}
-	}
-	// No gates_hit recorded — the strength-linkage default gate (weak domain)
-	// or the unfrozen-policy checkpoint fired with empty gates_hit.
 	return "merge", nil
 }
 

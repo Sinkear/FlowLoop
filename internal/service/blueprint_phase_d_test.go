@@ -62,7 +62,7 @@ func runPinnedTrainGoalToDone(t *testing.T, gs *GoalService, rs *RunService, st 
 	// would skip the compile step entirely — that is the engine's guarantee).
 	g, err := gs.Create(ctx, Goal{
 		Title: title, AssigneeType: "agent", AssigneeID: workerID,
-		Status: "backlog", DomainID: domainID, ExecutionMode: "train",
+		Status: "backlog", DomainID: domainID, Category: "hootl", ExecutionMode: "train",
 		BlueprintVersionID: versionID, SampleRate: 1,
 	})
 	if err != nil {
@@ -301,7 +301,7 @@ func TestPhaseDAutoProposalIgnoresInferGoals(t *testing.T) {
 	// each depending on the previous one.
 	g, err := gs.Create(context.Background(), Goal{
 		Title: "D3 infer goal", AssigneeType: "agent", AssigneeID: worker,
-		Status: "active", DomainID: dom, ExecutionMode: "train", SampleRate: 1,
+		Status: "active", DomainID: dom, ExecutionMode: "train", SampleRate: 1, Category: "hootl",
 	})
 	if err != nil {
 		t.Fatalf("goal: %v", err)

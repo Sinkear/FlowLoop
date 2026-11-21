@@ -87,6 +87,9 @@ func Open(path string) (*Store, error) {
 		// The webhook_delivery table comes from schema.sql; only its indexes
 		// need migrating here for DBs created before the table existed.
 		`ALTER TABLE domain ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`,
+		// Project-level acceptance mode ('' = unset → goals default to hitl).
+		// Repo webhook/poll goals inherit it when set.
+		`ALTER TABLE domain ADD COLUMN acceptance_level TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_webhook_delivery_domain ON webhook_delivery(domain_id, received_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_webhook_delivery_repo ON webhook_delivery(repo, received_at)`,
 		// Per-connection webhook routing: one delivery row can now name the
@@ -284,6 +287,12 @@ func Open(path string) (*Store, error) {
 		// fresh DBs; these ALTERs retrofit existing ones.
 		`ALTER TABLE skill ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE skill ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0`,
+
+		// Runtime model detection (2026-11-21): the CLI's model list and its
+		// last successful detection time. Both columns live in schema.sql for
+		// fresh DBs; these ALTERs retrofit existing ones.
+		`ALTER TABLE runtime ADD COLUMN models TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE runtime ADD COLUMN models_at TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

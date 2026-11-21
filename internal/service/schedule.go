@@ -14,8 +14,8 @@ import (
 // Schedule is a cron-triggered goal template. Each firing clones a fresh goal
 // from TitleTemplate/Description, assigns it to AssigneeID, and enqueues a
 // run. assignee may be an agent or a squad. v2 (M1): DomainID is carried into
-// every fired goal — unattended runs need the domain's acceptance policy and
-// worktree, exactly like human-created goals.
+// every fired goal — unattended runs need the domain's worktree and execution
+// config, exactly like human-created goals.
 type Schedule struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -93,7 +93,7 @@ func (s *ScheduleService) validateSchedule(ctx context.Context, sch *Schedule) e
 	default:
 		return NewValidationError("category must be hitl or hootl")
 	}
-	// v2 (M1): unattended goals need a domain (acceptance policy + worktree +
+	// v2 (M1): unattended goals need a domain (worktree + execution config +
 	// deliver). Require it for agent/squad assignees.
 	if sch.DomainID == "" {
 		return NewFieldRequiredError("domain_id")

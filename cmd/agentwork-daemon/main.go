@@ -122,7 +122,6 @@ func main() {
 	squadSvc := service.NewSquadService(st, bus)
 	schedSvc := service.NewScheduleService(st, bus)
 	domainSvc := service.NewDomainService(st, bus)
-	domainSvc.SetRunService(runSvc)
 
 	skillSvc := service.NewSkillService(st)
 	// Platform built-in skills (//go:embed under internal/service/assets): the

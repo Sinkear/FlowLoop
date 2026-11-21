@@ -32,6 +32,7 @@ type AgentHandler interface {
 	OnDeleteSession(ctx context.Context, req DeleteSessionRequest) (*DeleteSessionResponse, error)
 	OnListSessions(ctx context.Context, req ListSessionsRequest) (*ListSessionsResponse, error)
 	OnSetSessionMode(ctx context.Context, req SetSessionModeRequest) (*SetSessionModeResponse, error)
+	OnSetSessionModel(ctx context.Context, req SetSessionModelRequest) (*SetSessionModelResponse, error)
 	OnSetSessionConfigOption(ctx context.Context, req SetSessionConfigOptionRequest) (*SetSessionConfigOptionResponse, error)
 	OnPrompt(ctx context.Context, req PromptRequest, sender SessionEventSender) (*PromptResponse, error)
 	OnLogout(ctx context.Context, req LogoutRequest) (*LogoutResponse, error)
@@ -421,6 +422,12 @@ func (m *mux) route(msg jsonrpcMessage) {
 		if isReq {
 			dispatch(m, msg, func(ctx context.Context, req SetSessionModeRequest) (*SetSessionModeResponse, error) {
 				return m.handler.OnSetSessionMode(ctx, req)
+			})
+		}
+	case "session/set_model":
+		if isReq {
+			dispatch(m, msg, func(ctx context.Context, req SetSessionModelRequest) (*SetSessionModelResponse, error) {
+				return m.handler.OnSetSessionModel(ctx, req)
 			})
 		}
 	case "session/set_config_option":

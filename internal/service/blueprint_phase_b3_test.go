@@ -148,7 +148,7 @@ func routerScenario(t *testing.T, summary string, wantChosen string, wantFallbac
 	g, err := gs.Create(ctx, Goal{
 		Title: "router goal", Description: "d", DomainID: domID,
 		AssigneeType: "agent", AssigneeID: owner, Status: "backlog",
-		BlueprintVersionID: v.ID,
+		Category: "hootl", BlueprintVersionID: v.ID,
 	})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
@@ -279,7 +279,7 @@ func gateScenario(t *testing.T) (*GoalService, *RunService, *store.Store, string
 	g, err := gs.Create(ctx, Goal{
 		Title: "gate goal", Description: "d", DomainID: domID,
 		AssigneeType: "agent", AssigneeID: owner, Status: "backlog",
-		BlueprintVersionID: v.ID,
+		Category: "hootl", BlueprintVersionID: v.ID,
 	})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)

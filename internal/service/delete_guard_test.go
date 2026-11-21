@@ -78,12 +78,9 @@ func TestDeleteAgentDeleteGuards(t *testing.T) {
 
 	// 2) schedule: no longer blocks — it cascades with the agent.
 	{
-		as, _, ds, ss, _, st := newGuardServices(t)
+		as, _, _, ss, _, st := newGuardServices(t)
 		agent := seedAgent(t, st, "a-sched")
 		dom := seedDomain(t, st)
-		if _, err := ds.FreezeChecks(ctx, dom, Checks{}, "medium"); err != nil { // seedDomain already froze; idempotent
-			t.Fatalf("freeze: %v", err)
-		}
 		sched, err := ss.Create(ctx, Schedule{Name: "s", TitleTemplate: "t", AssigneeType: "agent", AssigneeID: agent, DomainID: dom, CronExpression: "*/5 * * * *", Timezone: "UTC"})
 		if err != nil {
 			t.Fatalf("create schedule: %v", err)

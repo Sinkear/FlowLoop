@@ -138,7 +138,7 @@ func gatingTestGoal(t *testing.T, gs *GoalService, st *store.Store) *Goal {
 	domID := seedDomain(t, st)
 	g, err := gs.Create(context.Background(), Goal{
 		Title: "gating goal", Description: "depends_on liveness", DomainID: domID,
-		AssigneeType: "agent", AssigneeID: owner, Status: "active",
+		AssigneeType: "agent", AssigneeID: owner, Status: "active", Category: "hootl",
 	})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)

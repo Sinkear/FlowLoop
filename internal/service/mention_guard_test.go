@@ -71,12 +71,9 @@ func TestMentionCycleFailsGoal(t *testing.T) {
 	}
 }
 
-// TestUnfrozenPolicyForcesReview: a domain whose acceptance policy was never
-// confirmed (checks_compiled_at empty) must park completed runs in review —
-// nothing ran against an unconfirmed definition, so no machine judgment
-// exists and the goal must not promote unattended (决策 2-4/2-5 confirmation
-// gate).
-func TestUnfrozenPolicyForcesReview(t *testing.T) {
+// TestHitlCompletionParksInReview: a HITL goal (the default) parks a
+// completed run in review — the human checkpoint is the acceptance gate.
+func TestHitlCompletionParksInReview(t *testing.T) {
 	gs, rs, _, st := newTestCluster(t)
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "A")
@@ -85,7 +82,6 @@ func TestUnfrozenPolicyForcesReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create domain: %v", err)
 	}
-	// No FreezeChecks — the policy stays unfrozen.
 	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: d.ID, AssigneeType: "agent", AssigneeID: agentA, Status: "active"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
@@ -96,13 +92,11 @@ func TestUnfrozenPolicyForcesReview(t *testing.T) {
 	}
 	after, _ := gs.Get(ctx, g.ID)
 	if after.Status != "review" {
-		t.Fatalf("unfrozen policy must park in review, got %q", after.Status)
+		t.Fatalf("a HITL goal must park in review, got %q", after.Status)
 	}
-	// review_request is empty for human-checkpoint reasons (scratch / unfrozen
-	// / weak strength) — the internal reason is platform jargon the user does
-	// not need; the approval panel itself communicates "your decision is needed".
-	if after.ReviewRequest != "" {
-		t.Fatalf("review_request should be empty for human-checkpoint reasons, got: %q", after.ReviewRequest)
+	// The park reason names the acceptance checkpoint (not a compiled gate).
+	if after.ReviewRequest == "" {
+		t.Fatal("review_request must explain the hitl acceptance checkpoint")
 	}
 }
 
@@ -148,7 +142,7 @@ func TestTerminalMentionReopensGoal(t *testing.T) {
 	agentA := seedAgent(t, st, "A")
 	agentB := seedAgent(t, st, "B")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
@@ -189,7 +183,7 @@ func TestTerminalPlainCommentLandsOnly(t *testing.T) {
 	ctx := context.Background()
 	agentA := seedAgent(t, st, "A")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
@@ -221,7 +215,7 @@ func TestTerminalAgentMentionNoReopen(t *testing.T) {
 	agentA := seedAgent(t, st, "A")
 	agentB := seedAgent(t, st, "B")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
@@ -364,7 +358,7 @@ func TestDoneCancelsQueuedRuns(t *testing.T) {
 	agentA := seedAgent(t, st, "A")
 	agentB := seedAgent(t, st, "B")
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "work", Description: "do it", DomainID: domID, AssigneeType: "agent", AssigneeID: agentA, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

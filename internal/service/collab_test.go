@@ -969,9 +969,10 @@ func TestOwnerRunStaysActiveWithPendingWork(t *testing.T) {
 	ctx := context.Background()
 	a := seedAgent(t, st, "a")
 	b := seedAgent(t, st, "b")
-	// A FROZEN no-gate domain: a completed owner run would normally go done.
+	// A hootl goal with no acceptance checkpoint: a completed owner run would
+	// normally go done.
 	domID := seedDomain(t, st)
-	g, err := gs.Create(ctx, Goal{Title: "g", Description: "d", DomainID: domID, AssigneeType: "agent", AssigneeID: a, Status: "active"})
+	g, err := gs.Create(ctx, Goal{Title: "g", Description: "d", DomainID: domID, AssigneeType: "agent", AssigneeID: a, Status: "active", Category: "hootl"})
 	if err != nil {
 		t.Fatalf("create goal: %v", err)
 	}

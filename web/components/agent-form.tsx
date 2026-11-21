@@ -1,28 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { useCreateAgent, useUpdateAgent, useRuntimes, useSkills } from "@/lib/queries";
+import {
+  useCreateAgent,
+  useUpdateAgent,
+  useRuntimes,
+  useRuntimeModels,
+  useSkills,
+} from "@/lib/queries";
 import type { Agent, McpServer } from "@/lib/types";
 import { Button, Dialog, Field, inputCls } from "@/components/ui";
 
-// 常用模型清单：只是输入便利，不限制可用模型——不在清单里的用「自定义…」。
-// 提交时仍然只写 agent.model 字段，后端/平台不感知这份清单。
-const COMMON_MODELS: string[] = [
-  // Claude
-  "claude-sonnet-4-5",
-  "claude-opus-4-1",
-  "claude-haiku-4-5",
-  // GPT
-  "gpt-5",
-  "gpt-5-mini",
-  "gpt-4.1",
-  // Gemini
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  // DeepSeek
-  "deepseek-chat",
-  "deepseek-reasoner",
-];
+// 模型下拉的来源是「所选运行时探测上报的模型」（GET /runtimes/{id}/models），
+// 这里不再维护写死的常用模型清单；清单外的模型仍可用「自定义…」手输。
 const CUSTOM_MODEL = "__custom__";
 
 // KVRows is a name-value pair list editor (env vars / headers) — a "+"
@@ -76,16 +66,16 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
   const [type, setType] = useState(agent?.type ?? "standard");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [runtimeId, setRuntimeId] = useState(agent?.runtime_id ?? "");
+  // 钩子必须无条件在顶层调用；id 为空时内部 enabled=false，不会发请求。
+  const { data: runtimeModels, isLoading: modelsLoading } = useRuntimeModels(runtimeId || "");
+  const selectedRuntime = runtimes?.find((rt) => rt.id === runtimeId);
   const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt ?? "");
   const [model, setModel] = useState(agent?.model ?? "");
-  // 编辑已有 agent 时，model 不在常用清单里 → 自动落到「自定义…」并回填。
-  const [customModel, setCustomModel] = useState(
-    () => Boolean(agent?.model) && !COMMON_MODELS.includes(agent?.model ?? "")
-  );
-  // 记住上一次手输的模型 ID：在「常用项 ↔ 自定义…」之间来回切时不丢输入。
-  const [customDraft, setCustomDraft] = useState(() =>
-    Boolean(agent?.model) && !COMMON_MODELS.includes(agent?.model ?? "") ? (agent?.model ?? "") : ""
-  );
+  // 是否停在「自定义…」手输模式；编辑已有 agent 时不自动进入——清单外的
+  // 当前模型会注入成一条选项，保证下拉能显示它、保存不会悄悄清空。
+  const [customModel, setCustomModel] = useState(false);
+  // 记住上一次手输的模型 ID：在「探测清单 ↔ 自定义…」之间来回切时不丢输入。
+  const [customDraft, setCustomDraft] = useState("");
   const [envRows, setEnvRows] = useState<{ name: string; value: string }[]>(
     agent?.env ? Object.entries(agent.env).map(([name, value]) => ({ name, value })) : []
   );
@@ -102,6 +92,23 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
       sk.name.toLowerCase().includes(skillQ) ||
       sk.id.toLowerCase().includes(skillQ)
   );
+
+  // 探测清单优先；GET 未回来前用运行时列表行里已有的 models 垫底。
+  const detectedModels = runtimeModels?.models ?? selectedRuntime?.models ?? [];
+  const modelOptions = [...detectedModels];
+  // 已有 agent 的模型不在探测清单里时注入成一条选项，保证下拉显示当前值、
+  // 保存时不会把这个模型悄悄清空。
+  if (model && !customModel && !modelOptions.some((m) => m.id === model)) {
+    modelOptions.push({ id: model });
+  }
+  const modelLoading = Boolean(runtimeId) && modelsLoading;
+  const modelHint = !runtimeId
+    ? "先选择运行时；模型选项来自所选运行时的探测上报"
+    : modelLoading && detectedModels.length === 0
+      ? "正在读取运行时探测到的模型…"
+      : detectedModels.length === 0
+        ? "该运行时尚未探测到模型，可稍后重选或自定义（探测随机器上报自动更新）"
+        : "留空用 runtime 默认；选项来自运行时探测上报";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,15 +224,15 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
           </div>
         </Field>
 
-        <Field label="Model" hint="留空用 runtime 默认">
+        <Field label="Model" hint={modelHint}>
           <select
             value={customModel ? CUSTOM_MODEL : model}
             onChange={(e) => {
               const v = e.target.value;
               if (v === CUSTOM_MODEL) {
                 setCustomModel(true);
-                // 回到上次手输的值；首次进入自定义时 customDraft 为空。
-                setModel(customDraft);
+                // 回到上次手输的值；没有草稿就沿用当前值（如尚未探测到的旧模型）。
+                setModel(customDraft || model);
               } else {
                 if (customModel) setCustomDraft(model);
                 setCustomModel(false);
@@ -233,10 +240,14 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
               }
             }}
             className={inputCls}
+            disabled={!runtimeId}
           >
             <option value="">runtime 默认（留空）</option>
-            {COMMON_MODELS.map((m) => (
-              <option key={m} value={m}>{m}</option>
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name || m.id}
+                {detectedModels.some((d) => d.id === m.id) ? "" : "（当前配置）"}
+              </option>
             ))}
             <option value={CUSTOM_MODEL}>自定义…</option>
           </select>

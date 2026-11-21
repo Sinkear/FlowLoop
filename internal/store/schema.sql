@@ -4,15 +4,15 @@
 -- (they are per-connection pragmas, so setting them here only affects the one
 -- connection that runs this file). Kept here for visibility/documentation.
 --
--- v2 (DESIGN.md): adds the domain layer (asset/evolution domain owning
--- acceptance policy + gates) and the review checkpoint state. M0 has no
--- migration tooling: the DB may be wiped and rebuilt (data is disposable).
+-- v2 (DESIGN.md): adds the domain layer (asset/evolution domain) and the
+-- review checkpoint state. M0 has no migration tooling: the DB may be wiped
+-- and rebuilt (data is disposable).
 
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 -- Two-layer coordination model (see DESIGN.md §2):
---   domain = an asset/evolution domain (shared repo + acceptance policy).
+--   domain = an asset/evolution domain (shared repo or scratch project dir).
 --   goal   = a work item (product plane). The SOLE holder of state authority.
 --   run    = one execution of a goal by one agent (execution plane). No
 --            authority — on terminal status it reports up to the goal layer
@@ -21,13 +21,10 @@ PRAGMA foreign_keys = ON;
 -- A goal can be executed many times / by many agents in succession; full
 -- history is retained across runs.
 
--- domain: an asset/evolution domain. Owns the shared repo, the acceptance
--- policy (NL intent + compiled checks), and default gates. M0 implements
--- type=repo only; other asset types (docs/infra-config/knowledge/backlog)
--- are deferred (DESIGN.md §13). The acceptance policy is defined by the
--- domain owner in natural language (policy_text), compiled by the processor
--- agent into executable checks (checks), and frozen after user confirmation
--- (checks_compiled_at). See DESIGN.md §5 (triangle separation).
+-- domain: an asset/evolution domain. Owns the shared repo (or a scratch
+-- project directory). Acceptance is the project/goal-level 验收级别, not a
+-- compiled per-domain policy. M0 implements type=repo; other asset types
+-- (docs/infra-config/knowledge/backlog) are deferred (DESIGN.md §13).
 CREATE TABLE IF NOT EXISTS domain (
     id                     TEXT PRIMARY KEY,
     type                   TEXT NOT NULL DEFAULT 'repo', -- repo（共享仓+worktree）| scratch（无仓库：持久项目目录 runs/scratch/<name>/goals/<goalID>，交付物=汇报；人卡点强制）
@@ -36,14 +33,7 @@ CREATE TABLE IF NOT EXISTS domain (
     default_branch         TEXT NOT NULL DEFAULT 'main',
     git_identity           TEXT NOT NULL DEFAULT '',     -- "name <email>" for commits
     git_credentials        TEXT NOT NULL DEFAULT '',     -- token/ssh ref; M0 single-user shared
-    policy_text            TEXT NOT NULL DEFAULT '',     -- NL intent (source of truth)
-    checks                 TEXT NOT NULL DEFAULT '[]',   -- compiled: verify cmds + guards + gates (JSON)
-    verification_strength  TEXT NOT NULL DEFAULT 'medium', -- strong|medium|weak (processor-inferred, user-confirmed)
     max_run_duration       INTEGER NOT NULL DEFAULT 7200,  -- seconds per run; 0 = unlimited
-    verify_timeout         INTEGER NOT NULL DEFAULT 600,   -- seconds per verify command
-    processor_agent_id     TEXT NOT NULL DEFAULT '',       -- per-domain override of the global processor agent
-    checks_compiled_at     TEXT NOT NULL DEFAULT '',       -- '' = not compiled yet
-    metrics_baseline       TEXT NOT NULL DEFAULT '{}',     -- JSON: test count / coverage at creation
     issue_repo             TEXT NOT NULL DEFAULT '',       -- M4-B: "owner/repo" to track issues from ('' = none)
     issue_assignee         TEXT NOT NULL DEFAULT '',       -- M4-B: agent|squad id that handles this repo's issues ('' = don't auto-create)
     issue_assignee_type    TEXT NOT NULL DEFAULT 'agent',  -- M4-B: agent | squad (what issue_assignee points at)
@@ -51,6 +41,7 @@ CREATE TABLE IF NOT EXISTS domain (
     pull_assignee          TEXT NOT NULL DEFAULT '',       -- M4-B PR pull: agent|squad id that handles this repo's pull requests ('' = don't pull PRs)
     pull_assignee_type     TEXT NOT NULL DEFAULT 'agent',  -- M4-B PR pull: agent | squad (what pull_assignee points at)
     webhook_secret         TEXT NOT NULL DEFAULT '',        -- repo-level webhook secret ('' = use platform.webhook_secret)
+    acceptance_level       TEXT NOT NULL DEFAULT '',        -- 项目验收级别: '' = 待定/未设置 | hitl（人工验收，默认回落）| hootl（自动验收）
     created_at             TEXT NOT NULL
 );
 
@@ -104,6 +95,11 @@ CREATE TABLE IF NOT EXISTS runtime (
     machine_id    TEXT NOT NULL DEFAULT '',    -- the registered machine that executes this runtime's runs
     args          TEXT NOT NULL DEFAULT '[]',  -- acp_spawn: how the machine starts the CLI
     env           TEXT NOT NULL DEFAULT '{}',  -- runtime env (layered over the machine env at spawn)
+    -- models = the CLI's model list detected at probe time ([]link.ModelInfo).
+    -- Kept here so the web can offer a model picker without re-probing the
+    -- machine; models_at is when detection last succeeded ('' = never).
+    models        TEXT NOT NULL DEFAULT '[]',
+    models_at     TEXT NOT NULL DEFAULT '',
     -- status: active | absent — absent = the machine's latest probe no
     -- longer sees this CLI (uninstalled). The row survives (agents
     -- reference it) but the claim gate rejects it.
@@ -215,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name);
 -- goal: a work item (product plane). The sole holder of state authority.
 -- assignee is polymorphic (agent | squad | human).
 -- domain_id: agent-executed goals must belong to a domain — the domain owns
--- the worktree and the acceptance policy (DESIGN.md §2/§5).
+-- the worktree and execution config (DESIGN.md §2/§5).
 -- status 'review' (v2): the goal is parked waiting for a human checkpoint
 -- decision.
 CREATE TABLE IF NOT EXISTS goal (
@@ -346,22 +342,21 @@ CREATE INDEX IF NOT EXISTS idx_goal_status ON goal(status);
 -- on terminal status the daemon calls GoalService.reconcileOnRunEnd(run),
 -- which checks whether this run still belongs to the current assignee before
 -- touching goal.status. status here is the execution-plane state machine.
--- run_kind 'processor' marks platform-internal runs (e.g. the NL→checks
--- compiler run) — same scheduling mechanism, no goal (DESIGN.md §8).
--- run_type subdivides processor runs by task (M3): compile (NL→checks) and
--- intake (IM natural-language command parsing). The daemon's
--- runProcessorTask dispatches on it; more processor task types (digest
--- generation, health analysis — DESIGN.md §13) extend this enum.
--- evidence: the gate evidence bundle (diff stats + verify output + summary).
+-- run_kind 'processor' marks platform-internal runs (same scheduling
+-- mechanism, no goal, DESIGN.md §8).
+-- run_type subdivides processor runs by task: intake / intake_web (IM
+-- natural-language command parsing). The daemon's runProcessorTask dispatches
+-- on it; more processor task types (digest generation, health analysis —
+-- DESIGN.md §13) extend this enum.
+-- evidence: optional JSON audit bundle (diff stats + summary).
 CREATE TABLE IF NOT EXISTS run (
     id                 TEXT PRIMARY KEY,
     goal_id            TEXT NOT NULL DEFAULT '',     -- '' for processor runs (no goal)
     agent_id           TEXT NOT NULL REFERENCES agent(id),
     run_kind           TEXT NOT NULL DEFAULT 'worker', -- worker|processor
-    run_type           TEXT NOT NULL DEFAULT '',  -- processor tasks: compile|intake (M3)
-    domain_id          TEXT NOT NULL DEFAULT '',  -- processor runs: the domain being processed (compile target)
-    gates_hit          TEXT NOT NULL DEFAULT '[]',-- M2: JSON []string — gate rules this run's outcome triggered
-    prompt             TEXT NOT NULL DEFAULT '',  -- platform-internal runs only (processor): the compile/processing instruction
+    run_type           TEXT NOT NULL DEFAULT '',  -- processor tasks: intake|intake_web (M3)
+    domain_id          TEXT NOT NULL DEFAULT '',  -- processor runs: associated domain ('' for intake)
+    prompt             TEXT NOT NULL DEFAULT '',  -- platform-internal runs only (processor): the processing instruction
     session_id         TEXT NOT NULL DEFAULT '',  -- protocol-returned; for history/future resume
     workdir            TEXT NOT NULL DEFAULT '',
     -- CLI 分支: the machine this run was dispatched to — stamped at dispatch,
@@ -372,7 +367,7 @@ CREATE TABLE IF NOT EXISTS run (
     cancel_reason      TEXT NOT NULL DEFAULT '',  -- structured: idle_watchdog|handoff|stopped|timeout|runaway|goal_terminal|goal_cancelled|'' (decisions don't string-match summaries)
     attempt            INTEGER NOT NULL DEFAULT 1,
     result_summary     TEXT NOT NULL DEFAULT '',
-    evidence           TEXT NOT NULL DEFAULT '',   -- JSON: diff stats + verify output + agent summary
+    evidence           TEXT NOT NULL DEFAULT '',   -- optional JSON audit bundle (diff stats + agent summary); nothing writes it since compiled verification was retired
     trigger_comment_id TEXT NOT NULL DEFAULT '',  -- which comment caused this run (mention/child-done)
     is_leader_run      INTEGER NOT NULL DEFAULT 0,-- 1 if a squad leader run
     squad_id           TEXT NOT NULL DEFAULT '',  -- the squad a leader run belongs to
@@ -515,7 +510,7 @@ CREATE TABLE IF NOT EXISTS gate_decision (
     id              TEXT PRIMARY KEY,
     goal_id         TEXT NOT NULL REFERENCES goal(id),
     run_id          TEXT NOT NULL DEFAULT '',   -- the run whose evidence the decision refers to
-    gate_rule       TEXT NOT NULL,              -- which gate rule fired ("merge", "guard:config", ...)
+    gate_rule       TEXT NOT NULL,              -- stable "merge" placeholder (rule evaluation retired with compiled checks); GateStats groups historical rows by it
     decision        TEXT NOT NULL,              -- approve|reject|redirect
     reason          TEXT NOT NULL DEFAULT '',
     decided_by      TEXT NOT NULL DEFAULT 'human',

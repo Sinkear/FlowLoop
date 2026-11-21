@@ -34,7 +34,7 @@ var topics = []string{
 	"machine:offline",
 	"squad:created", "squad:deleted", "squad:member_added", "squad:member_removed",
 	"schedule:created", "schedule:fired",
-	"domain:created", "domain:deleted", "domain:compiled", "domain:compile_failed",
+	"domain:created", "domain:deleted",
 	// team import lifecycle — published by TeamImportService (team_import.go)
 	// but were missing from this whitelist, so the frontend never received
 	// import completion/failure notifications.

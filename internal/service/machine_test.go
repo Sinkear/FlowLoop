@@ -209,3 +209,68 @@ func TestUpsertProbeRuntimes(t *testing.T) {
 		}
 	}
 }
+
+// TestReconcileProbeRuntimeModels: the probe report's detected model list
+// is cached on the runtime row (models + models_at), and an EMPTY incoming
+// list (transient detection failure) must NOT wipe a previously known list.
+func TestReconcileProbeRuntimeModels(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewMachineService(st)
+	rtSvc := NewRuntimeService(st)
+	ctx := context.Background()
+
+	withModels := []link.ProbeCLI{{
+		Name:     "claude",
+		ACPSpawn: []string{"claude", "--acp"},
+		Models: []link.ModelInfo{
+			{ID: "claude-sonnet-4", Name: "Sonnet 4", Description: "balanced"},
+			{ID: "claude-opus-4"},
+		},
+	}}
+	if err := svc.ReconcileProbeRuntimes(ctx, "m1", "dev", withModels); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	all, err := rtSvc.List(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("expected 1 runtime, got %d (err %v)", len(all), err)
+	}
+	r := all[0]
+	if len(r.Models) != 2 || r.Models[0].ID != "claude-sonnet-4" || r.Models[0].Name != "Sonnet 4" {
+		t.Fatalf("models must persist on the runtime row, got %+v", r.Models)
+	}
+	if r.ModelsAt == "" {
+		t.Fatalf("models_at must be set after a successful detection")
+	}
+	firstDetectedAt := r.ModelsAt
+
+	// Reconcile again with NO models (detection failed this tick): the
+	// previously persisted list and timestamp survive.
+	if err := svc.ReconcileProbeRuntimes(ctx, "m1", "dev", []link.ProbeCLI{{
+		Name: "claude", ACPSpawn: []string{"claude", "--acp"},
+	}}); err != nil {
+		t.Fatalf("reconcile without models: %v", err)
+	}
+	got, err := rtSvc.Get(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("get runtime: %v", err)
+	}
+	if len(got.Models) != 2 || got.Models[1].ID != "claude-opus-4" {
+		t.Fatalf("empty incoming models must not wipe the known list, got %+v", got.Models)
+	}
+	if got.ModelsAt != firstDetectedAt {
+		t.Fatalf("empty incoming models must not touch models_at: %q -> %q", firstDetectedAt, got.ModelsAt)
+	}
+
+	// A NEW non-empty list replaces the old one.
+	if err := svc.ReconcileProbeRuntimes(ctx, "m1", "dev", []link.ProbeCLI{{
+		Name:     "claude",
+		ACPSpawn: []string{"claude", "--acp"},
+		Models:   []link.ModelInfo{{ID: "claude-haiku-4"}},
+	}}); err != nil {
+		t.Fatalf("reconcile with new models: %v", err)
+	}
+	got, _ = rtSvc.Get(ctx, r.ID)
+	if len(got.Models) != 1 || got.Models[0].ID != "claude-haiku-4" {
+		t.Fatalf("a fresh non-empty list must replace the known one, got %+v", got.Models)
+	}
+}

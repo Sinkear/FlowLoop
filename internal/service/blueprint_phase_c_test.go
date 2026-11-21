@@ -195,7 +195,7 @@ func runInferGoalToEnd(t *testing.T, gs *GoalService, rs *RunService, st *store.
 	worker := seedAgent(t, st, "w-"+newID()[:8])
 	g, err := gs.Create(context.Background(), Goal{
 		Title: "t", AssigneeType: "agent", AssigneeID: worker,
-		Status: "active", DomainID: domainID,
+		Status: "active", DomainID: domainID, Category: "hootl",
 	})
 	if err != nil {
 		t.Fatalf("goal: %v", err)
@@ -315,7 +315,7 @@ func differentShapeGoal(t *testing.T, gs *GoalService, rs *RunService, st *store
 	worker := seedAgent(t, st, "w2-"+newID()[:8])
 	g, err := gs.Create(context.Background(), Goal{
 		Title: "t2", AssigneeType: "agent", AssigneeID: worker,
-		Status: "active", DomainID: domainID,
+		Status: "active", DomainID: domainID, Category: "hootl",
 	})
 	if err != nil {
 		t.Fatal(err)

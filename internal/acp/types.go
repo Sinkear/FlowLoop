@@ -357,6 +357,20 @@ type SetSessionModeResponse struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
+// SetSessionModelRequest selects the session's model: session/set_model.
+// Agents that expose the model selector as a config option (category
+// "model") may reject this method — use SetSessionConfigOption there.
+type SetSessionModelRequest struct {
+	Meta      map[string]any `json:"_meta,omitempty"`
+	SessionID SessionId      `json:"sessionId"`
+	ModelID   string         `json:"modelId"`
+}
+
+// SetSessionModelResponse is empty on success.
+type SetSessionModelResponse struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
 // SessionModeState reports available and current modes.
 type SessionModeState struct {
 	Meta           map[string]any `json:"_meta,omitempty"`
@@ -641,7 +655,7 @@ const (
 //	{"outcome": "selected", "optionId": "..."}  — one of the request's options
 //	{"outcome": "cancelled"}                    — the user dismissed the request
 type RequestPermissionOutcome struct {
-	Meta     map[string]any       `json:"_meta,omitempty"`
+	Meta     map[string]any        `json:"_meta,omitempty"`
 	Outcome  PermissionOutcomeKind `json:"outcome"`
 	OptionID *PermissionOptionId   `json:"optionId,omitempty"` // present when "selected"
 }

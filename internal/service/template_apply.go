@@ -128,7 +128,6 @@ type tplDomain struct {
 	GitIdentity       string `yaml:"git_identity"`
 	IssueAssignee     string `yaml:"issue_assignee"`
 	IssueAssigneeType string `yaml:"issue_assignee_type"`
-	PolicyText        string `yaml:"policy_text"`
 }
 
 type tplGoal struct {
@@ -304,6 +303,30 @@ func (s *TemplateApplyService) SetSkillUpdatePusher(p func(skillID string)) { s.
 
 // ── parsing helpers ──
 
+// stripRetiredProjectFields removes acceptance-policy keys that older project
+// templates still contain (domain.policy_text) from the spec mapping node
+// before the strict field decode. Only that one known-retired key is ignored;
+// every other unknown field still fails loudly.
+func stripRetiredProjectFields(node *yaml.Node) {
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "domain" || node.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		dom := node.Content[i+1]
+		kept := dom.Content[:0]
+		for j := 0; j+1 < len(dom.Content); j += 2 {
+			if dom.Content[j].Value == "policy_text" {
+				continue
+			}
+			kept = append(kept, dom.Content[j], dom.Content[j+1])
+		}
+		dom.Content = kept
+	}
+}
+
 // parseTemplate decodes and validates a template YAML document into its meta
 // + decoded spec (strict fields per kind).
 func parseTemplate(raw string) (TemplateMeta, any, error) {
@@ -340,6 +363,11 @@ func parseTemplate(raw string) (TemplateMeta, any, error) {
 		}
 		out = sq
 	case TemplateKindProject:
+		// Retired acceptance-policy field: templates exported before the
+		// compiled-checks subsystem was removed may still carry
+		// domain.policy_text. Drop it before the strict decode so old
+		// templates keep applying; it is never read or exported again.
+		stripRetiredProjectFields(&spec.Spec)
 		pr := &projectSpec{}
 		if err := strictSpec(spec.Spec, pr); err != nil {
 			return TemplateMeta{}, nil, fmt.Errorf("spec 校验失败：%v", err)
@@ -971,7 +999,7 @@ func (s *TemplateApplyService) ApplyProject(ctx context.Context, templateID stri
 	domain := Domain{
 		Type: dType, Name: ov.Name, GitURL: gitURL,
 		DefaultBranch: branch, GitIdentity: spec.Domain.GitIdentity,
-		GitCredentials: ov.GitCredentials, PolicyText: spec.Domain.PolicyText,
+		GitCredentials: ov.GitCredentials,
 	}
 	// IssueAssignee is NOT set on Create (see above) — the assignee name
 	// resolves to an id only after the team section builds its agents.

@@ -23,8 +23,7 @@ import (
 // IM (Feishu path) or stores the result for Web polling (intake_web path).
 //
 // Structured output is read from the file, never from agent stdout
-// (DESIGN.md §5.3, §9): the parser is a processor agent, same as the
-// policy compiler.
+// (DESIGN.md §5.3, §9): the parser is a processor agent.
 func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, prompt, agentID, runType string) {
 	// Scratch workdir (no repo): the parser works from the prompt alone and
 	// writes its result file here.
@@ -40,12 +39,12 @@ func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, promp
 	// full path so the write_file path argument is unambiguous.
 	prompt += fmt.Sprintf("\n\nArtifact file ABSOLUTE path: %s\n(Write it there with your file tools; do NOT guess the working directory, do NOT use shell redirection)\n",
 		filepath.Join(workdir, "intake.json"))
-	var argsJSON, rtEnvJSON, intakeMachineID string
+	var argsJSON, rtEnvJSON, intakeMachineID, agentModel string
 	var maxConcurrent int
 	err := d.st.DB().QueryRowContext(ctx,
-		`SELECT r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent
+		`SELECT r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent, a.model
 		 FROM agent a JOIN runtime r ON r.id = a.runtime_id WHERE a.id=?`, agentID).
-		Scan(&argsJSON, &rtEnvJSON, &intakeMachineID, &maxConcurrent)
+		Scan(&argsJSON, &rtEnvJSON, &intakeMachineID, &maxConcurrent, &agentModel)
 	if err != nil {
 		d.failIntakeRun(ctx, q, "load agent runtime: "+err.Error(), runType)
 		return
@@ -58,8 +57,8 @@ func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, promp
 	_ = json.Unmarshal([]byte(rtEnvJSON), &rtEnv)
 	agentEnv, _ := d.loadAgentEnv(ctx, agentID)
 
-	// CLI 分支 Phase 2: machine-owned intake runtimes dispatch (same shape
-	// as the compile processor — scratch proc dir + intake.json artifact).
+	// CLI 分支 Phase 2: machine-owned intake runtimes dispatch (scratch proc
+	// dir + the uploaded intake.json artifact).
 	if intakeMachineID != "" {
 		dispatchEnv := map[string]string{}
 		for k, v := range rtEnv {
@@ -72,7 +71,7 @@ func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, promp
 			RunID: q.RunID, AgentID: q.AgentID, Attempt: q.Attempt, Token: q.Token,
 			Prompt: prompt, Proc: true, Scratch: true,
 			ArtifactFiles: []string{"intake.json"},
-			ACPSpawn:      args, Env: dispatchEnv,
+			ACPSpawn:      args, Env: dispatchEnv, Model: agentModel,
 			McpServers: d.extraMcpServers(ctx, q.AgentID),
 		}, intakeMachineID)
 		return
@@ -115,8 +114,8 @@ func (d *Daemon) failIntakeRun(ctx context.Context, q *service.ClaimedRow, summa
 		}
 	}
 	// Stamp the run failed directly (P0-5 conditional — a reaper stamp
-	// wins) — NOT via failProcessorRun, whose domain:compile_failed event
-	// is the compile path's signal and would mislabel an intake failure.
+	// wins) — NOT via failProcessorRun, which is the generic processor
+	// failure path and would mislabel an intake failure.
 	res, err := d.st.DB().ExecContext(ctx,
 		`UPDATE run SET status='failed', result_summary=?, finished_at=? WHERE id=? AND status IN ('queued','running')`,
 		summary, nowStr(), q.RunID)
@@ -221,7 +220,7 @@ type squadAction struct {
 }
 
 // domainAction carries the create_domain fields parsed from NL. Technical
-// config (policy_text/processor_agent_id/issue_*) is absent — NL builds a
+// config (issue_*) is absent — NL builds a
 // repo skeleton, the rest is filled in on the Web.
 type domainAction struct {
 	Name           string `json:"name"`

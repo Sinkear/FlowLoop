@@ -46,7 +46,7 @@ type Run struct {
 	GoalID    string `json:"goal_id"`
 	AgentID   string `json:"agent_id"`
 	RunKind   string `json:"run_kind"` // worker|processor (platform-internal)
-	RunType   string `json:"run_type"` // processor tasks: compile|intake (M3)
+	RunType   string `json:"run_type"` // processor tasks: intake|intake_web (M3)
 	DomainID  string `json:"domain_id"`
 	Prompt    string `json:"prompt"` // the assembled task message — processor runs: the processing instruction; worker runs: stored at dispatch so the human can inspect what the agent was told
 	SessionID string `json:"session_id"`
@@ -536,16 +536,15 @@ func (s *RunService) enqueueVerifyRunTx(ctx context.Context, tx *sql.Tx, subGoal
 }
 
 // EnqueueProcessorRun creates a platform-internal processor run (DESIGN.md
-// §8): no goal, a fixed prompt, associated with a domain being processed
-// (compile) or carrying the platform context for the task (intake, M3).
-// runType discriminates the processor task (compile|intake); the daemon's
-// runProcessorTask dispatches on it. Coalesces: if the same (run_type,
-// domain/agent) already has a queued/running processor run, it is returned
-// instead of duplicating (a second compile of the same domain would race the
-// first; a backlog of intake runs on the same agent would duplicate work).
+// §8): no goal, a fixed prompt, carrying the platform context for the task.
+// The only processor run types are the intake pipeline (intake | intake_web);
+// the acceptance-policy compile run type is retired with the checks
+// subsystem. Coalesces: if the same (run_type, domain/agent) already has a
+// queued/running processor run, it is returned instead of duplicating (a
+// backlog of intake runs on the same agent would duplicate work).
 func (s *RunService) EnqueueProcessorRun(ctx context.Context, runType, domainID, agentID, prompt string) (*Run, error) {
-	if runType == "" {
-		runType = "compile" // default: the original processor task
+	if runType != "intake" && runType != "intake_web" {
+		return nil, NewValidationError("processor run type must be intake or intake_web")
 	}
 	tx, err := s.st.DB().BeginTx(ctx, nil)
 	if err != nil {
@@ -1021,29 +1020,6 @@ func (s *RunService) List(ctx context.Context, goalID string) ([]Run, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// LatestCompileRun returns the domain's most recent compile processor run
-// (决策 6-23): the compile panel restores its in-flight state from this
-// after a page refresh — queued/running means still compiling, failed
-// shows the failure, completed needs no banner (the domain query itself
-// carries the compiled checks). (nil, nil) when the domain has never
-// compiled.
-func (s *RunService) LatestCompileRun(ctx context.Context, domainID string) (*Run, error) {
-	row := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,goal_id,agent_id,run_kind,run_type,domain_id,session_id,workdir,status,role,attempt,result_summary,cancel_reason,trigger_comment_id,is_leader_run,squad_id,queued_at,started_at,finished_at,created_at
-		 FROM run WHERE run_kind='processor' AND run_type='compile' AND domain_id=? ORDER BY created_at DESC LIMIT 1`,
-		domainID)
-	var r Run
-	var leaderFlag int
-	if err := row.Scan(&r.ID, &r.GoalID, &r.AgentID, &r.RunKind, &r.RunType, &r.DomainID, &r.SessionID, &r.Workdir, &r.Status, &r.Role, &r.Attempt, &r.ResultSummary, &r.CancelReason, &r.TriggerCommentID, &leaderFlag, &r.SquadID, &r.QueuedAt, &r.StartedAt, &r.FinishedAt, &r.CreatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	r.IsLeaderRun = leaderFlag != 0
-	return &r, nil
 }
 
 // RunMessage is one row of a run's interaction stream (chat_message) — the
