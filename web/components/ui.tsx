@@ -425,6 +425,7 @@ export function SectionCard({
   children,
   className,
   bodyClassName,
+  descInBody = false,
 }: {
   title?: string;
   count?: number;
@@ -433,7 +434,14 @@ export function SectionCard({
   children: React.ReactNode;
   className?: string;
   bodyClassName?: string;
+  /**
+   * 长说明的落点：false（默认）= 标题行内单行截断，保持既有页面布局；
+   * true = 移入卡片体顶部整段展示（可换行，不截断）。标题行只放得下一行，
+   * 长 desc 塞进去必然被省略号吃掉，所以由调用方按说明长度选择。
+   */
+  descInBody?: boolean;
 }) {
+  const descInline = desc && !descInBody;
   return (
     <section className={cn("overflow-hidden rounded-lg border border-line bg-surface-1", className)}>
       {(title || action) && (
@@ -442,9 +450,12 @@ export function SectionCard({
           {typeof count === "number" && (
             <span className="font-mono text-[11px] text-ink-3">{count}</span>
           )}
-          {desc && <span className="truncate text-xs text-ink-3">{desc}</span>}
+          {descInline && <span className="min-w-0 truncate text-xs text-ink-3">{desc}</span>}
           {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
         </header>
+      )}
+      {desc && descInBody && (
+        <p className="border-b border-line px-4 py-2 text-xs leading-relaxed text-ink-3">{desc}</p>
       )}
       <div className={cn(bodyClassName)}>{children}</div>
     </section>
