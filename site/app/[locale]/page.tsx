@@ -96,6 +96,20 @@ export default async function LandingPage({
         <Callout>{t("mentalModel")}</Callout>
       </section>
 
+      {/* 自迭代闭环 — 首页主流程图 */}
+      <section className="mx-auto max-w-7xl px-6 pb-12">
+        <img
+          src={`/ouroflow/ouroflow-self-iteration-${locale === "zh" ? "zh" : "en"}.svg`}
+          alt={t("loopFigureAlt")}
+          width={1200}
+          height={760}
+          className="h-auto w-full rounded-xl border border-border"
+        />
+        <p className="mt-3 text-center text-sm text-muted">
+          {t("loopFigureCaption")}
+        </p>
+      </section>
+
       {/* Features grid — 深色 surface 卡 + 绿图标 + hover 左边框亮绿 */}
       <section className="mx-auto max-w-7xl px-6 py-16">
         <h2 className="mb-10 text-2xl font-bold text-text">{t("featuresTitle")}</h2>
@@ -147,11 +161,8 @@ export default async function LandingPage({
         <h3 className="mb-2 font-semibold text-text">{t("backendTitle")}</h3>
         <CodeBlock label="bash">{`./build.sh   # builds build/ouroflow (CLI) + build/ouroflow-daemon
 
-# Start the daemon (default :47813)
-./build/ouroflow-daemon
-
-# On the machine that runs the agents:
-./build/ouroflow connect --server http://127.0.0.1:47813`}</CodeBlock>
+# Terminal 1 — control plane (default :47813)
+./build/ouroflow-daemon`}</CodeBlock>
 
         <h3 className="mb-2 mt-6 font-semibold text-text">{t("frontendTitle")}</h3>
         <CodeBlock label="bash">{`cd web
@@ -159,6 +170,10 @@ npm install
 npm run dev   # http://127.0.0.1:47814
 
 # production: npm run build && npm start`}</CodeBlock>
+
+        <h3 className="mb-2 mt-6 font-semibold text-text">{t("executionTitle")}</h3>
+        <CodeBlock label="bash">{`# Terminal 3 — execution plane (pull runs, spawn agent CLIs, host chats)
+./build/ouroflow connect --server http://127.0.0.1:47813`}</CodeBlock>
 
         <h3 className="mb-3 mt-6 font-semibold text-text">{t("firstGoalTitle")}</h3>
         <ol className="max-w-3xl list-inside list-decimal space-y-2 text-sm leading-relaxed text-text">

@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+<title id="title">The graph that improves every round — OuroFlow workflow self-iteration</title>
+<desc id="desc">A goal compiles to graph vN, execution records the real graph, RSI diagnoses structural waste, and a human approves graph vN+1.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#080e18"/>
+    <stop offset="0.55" stop-color="#0b1422"/>
+    <stop offset="1" stop-color="#0a1a1c"/>
+  </linearGradient>
+  <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+    <circle cx="1.2" cy="1.2" r="1.2" fill="#1e3044" opacity="0.55"/>
+  </pattern>
+  <marker id="arrow" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto">
+    <path d="M0,0 L0,6 L8,3 z" fill="#3f5b74"/>
+  </marker>
+  <marker id="arrowGreen" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto">
+    <path d="M0,0 L0,6 L8,3 z" fill="#34d399"/>
+  </marker>
+</defs>
+<rect width="1200" height="760" rx="18" fill="url(#bg)"/>
+<rect width="1200" height="760" rx="18" fill="url(#dots)"/>
+<rect x="1" y="1" width="1198" height="758" rx="18" fill="none" stroke="#1b2a3d"/>
+
+<text x="60" y="52" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" letter-spacing="1.6" fill="#34d399">OUROFLOW · GRAPH-DRIVEN WORKFLOW</text>
+<text x="60" y="92" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="31" font-weight="700" fill="#f1f5f9">The graph that improves every round</text>
+<text x="60" y="120" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="14" fill="#8fa3bb">Blueprint goals compile to a graph; execution evidence rewrites the next version.</text>
+<rect x="1006" y="36" width="134" height="24" rx="12" fill="#0d1f1b" stroke="#1d3b34"/>
+<text x="1073" y="52" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#6ee7b7">v0.0.1-beta.1</text>
+
+<g data-card="COMPILE vN">
+<rect x="75" y="180" width="250" height="118" rx="14" fill="#111c2e" stroke="#24344d" stroke-width="1.4"/>
+<circle cx="101" cy="205" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="101" y="209" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">01</text>
+<rect x="251" y="195" width="62" height="19" rx="9.5" fill="rgba(52,211,153,0.12)" stroke="none"/>
+<text x="282.0" y="208.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#6ee7b7">AUTO</text>
+<text x="93" y="225" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">COMPILE vN</text>
+<text x="93" y="250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">Goal → DAG: task, condition,</text>
+<text x="93" y="267" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">router, gate, spawn, end.</text>
+</g>
+<g data-card="EXECUTE">
+<rect x="475" y="180" width="250" height="118" rx="14" fill="#111c2e" stroke="#24344d" stroke-width="1.4"/>
+<circle cx="501" cy="205" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="501" y="209" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">02</text>
+<rect x="651" y="195" width="62" height="19" rx="9.5" fill="rgba(52,211,153,0.12)" stroke="none"/>
+<text x="682.0" y="208.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#6ee7b7">AUTO</text>
+<text x="493" y="225" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">EXECUTE</text>
+<text x="493" y="250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">Agents run the graph in</text>
+<text x="493" y="267" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">isolated worktrees.</text>
+</g>
+<g data-card="TRACE">
+<rect x="875" y="180" width="250" height="118" rx="14" fill="#111c2e" stroke="#24344d" stroke-width="1.4"/>
+<circle cx="901" cy="205" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="901" y="209" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">03</text>
+<rect x="1051" y="195" width="62" height="19" rx="9.5" fill="rgba(52,211,153,0.12)" stroke="none"/>
+<text x="1082.0" y="208.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#6ee7b7">AUTO</text>
+<text x="893" y="225" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">TRACE</text>
+<text x="893" y="250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">Recorded graph: nodes, edges,</text>
+<text x="893" y="267" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">waits, retries, consults.</text>
+</g>
+<g data-card="DIAGNOSE">
+<rect x="875" y="480" width="250" height="118" rx="14" fill="#111c2e" stroke="#24344d" stroke-width="1.4"/>
+<circle cx="901" cy="505" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="901" y="509" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">04</text>
+<rect x="1051" y="495" width="62" height="19" rx="9.5" fill="rgba(52,211,153,0.12)" stroke="none"/>
+<text x="1082.0" y="508.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#6ee7b7">AUTO</text>
+<text x="893" y="525" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">DIAGNOSE</text>
+<text x="893" y="550" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">RSI finds serial chains, lost</text>
+<text x="893" y="567" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">parallelism, rework, waits.</text>
+</g>
+<g data-card="PATCH">
+<rect x="475" y="480" width="250" height="118" rx="14" fill="#111c2e" stroke="#24344d" stroke-width="1.4"/>
+<circle cx="501" cy="505" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="501" y="509" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">05</text>
+<rect x="651" y="495" width="62" height="19" rx="9.5" fill="rgba(52,211,153,0.12)" stroke="none"/>
+<text x="682.0" y="508.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#6ee7b7">AUTO</text>
+<text x="493" y="525" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">PATCH</text>
+<text x="493" y="550" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">Graph diff: add/update/delete</text>
+<text x="493" y="567" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">nodes and edges.</text>
+</g>
+<g data-card="PUBLISH">
+<rect x="75" y="480" width="250" height="118" rx="14" fill="#111c2e" stroke="#fbbf24" stroke-width="1.4"/>
+<circle cx="101" cy="505" r="13" fill="none" stroke="#34d399" stroke-width="1.2" opacity="0.8"/>
+<text x="101" y="509" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" fill="#34d399">06</text>
+<rect x="93" y="525" width="214" height="1" fill="#24344d"/>
+<rect x="241" y="495" width="72" height="19" rx="9.5" fill="rgba(251,191,36,0.14)" stroke="none"/>
+<text x="277.0" y="508.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="9" fill="#fbbf24">HUMAN</text>
+<text x="93" y="525" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#f1f5f9">PUBLISH</text>
+<text x="93" y="550" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">Human approves, V1–V6 rerun,</text>
+<text x="93" y="567" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12.5" fill="#9fb0c7">publishes graph vN+1.</text>
+</g>
+<text x="600" y="350" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="24" font-weight="700" fill="#e2e8f0">THE GRAPH</text>
+<text x="600" y="378" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="15" font-weight="600" fill="#94a3b8">IS THE PROGRAM</text>
+<text x="600" y="407" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#34d399">v1 → v2 → v3 → …</text>
+<text x="600" y="430" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5" fill="#64748b">six node types · one immutable chain</text>
+
+<path d="M330 239 H470" stroke="#2f4a63" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M730 239 H870" stroke="#2f4a63" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M1000 303 V475" stroke="#2f4a63" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M870 539 H730" stroke="#2f4a63" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M470 539 H330" stroke="#2f4a63" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M200 475 V303" stroke="#34d399" stroke-width="1.8" marker-end="url(#arrowGreen)"/>
+<rect x="214" y="368" width="150" height="22" rx="11" fill="#0c1727" stroke="#1d3b34"/>
+<text x="289" y="383" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#6ee7b7">next goal compiles vN+1</text>
+<rect x="1008" y="368" width="118" height="22" rx="11" fill="#0c1727" stroke="#24344d"/>
+<text x="1067" y="383" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#94a3b8">execution graph</text>
+
+
+<rect x="60" y="634" width="1080" height="44" rx="11" fill="#0d1827" stroke="#1b2a3d"/>
+<text x="80" y="661" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5" letter-spacing="1" fill="#34d399">WHAT COMPOUNDS</text>
+<text x="202" y="661" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="12" fill="#a9b8cc">critical path ↓ · parallel speedup ↑ · retries ↓ · rework ↓ · human-wait share visible</text>
+<text x="60" y="712" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif" font-size="11.5" fill="#71829a">No weight training · no self-approval · graph vN+1 ships only with a human signature.</text>
+<text x="1140" y="712" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="10.5" fill="#4f6b83">graph vN → vN+1</text>
+</svg>
