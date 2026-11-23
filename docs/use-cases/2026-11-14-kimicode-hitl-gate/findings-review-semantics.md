@@ -1,6 +1,6 @@
 # Review 状态机逐项分析（findings-review-semantics）
 
-> 范围：goal 的 review 状态机——`internal/service/goal.go`（park 路径 / ResolveReview / reconcile / enqueueSquadReviewTx）、`internal/daemon/daemon.go`（审查简报）、`internal/notify/*`（审批卡）、`web/components/goal-actions.tsx`（审批面板）、`cmd/agentwork-cli/main.go`（agent CLI）。
+> 范围：goal 的 review 状态机——`internal/service/goal.go`（park 路径 / ResolveReview / reconcile / enqueueSquadReviewTx）、`internal/daemon/daemon.go`（审查简报）、`internal/notify/*`（审批卡）、`web/components/goal-actions.tsx`（审批面板）、`cmd/ouroflow-cli/main.go`（agent CLI）。
 > 缺陷编号沿用事故报告：F1（批准/驳回语义倒置）、F2（一态两用、无授权载体）、F3（review_request 为空）、R2（wrapup 中继税）、R3（审查错帧）、C1（连带：带 pending sub_goal 可提审）。
 > 本文为修复前的逐项分析；修复对照见同目录 `analysis.md` §6。
 

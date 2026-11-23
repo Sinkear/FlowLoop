@@ -49,7 +49,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Runtime ──
 export const listRuntimes = () => api<Runtime[]>("/runtimes");
-// Remote machines registered via `agentwork connect` (CLI 分支 Phase 1).
+// Remote machines registered via `ouroflow connect` (CLI 分支 Phase 1).
 export const listMachines = () => api<import("./types").Machine[]>("/machines");
 // Skills library (CLI 分支 Phase 4).
 export const listSkills = () => api<import("./types").Skill[]>("/skills");
@@ -95,6 +95,12 @@ export const deleteRuntime = (id: string) =>
 // The runtime's probe-detected model catalog (read-only; never a selector).
 export const getRuntimeModels = (id: string) =>
   api<import("./types").RuntimeModels>(`/runtimes/${id}/models`);
+// Manual re-detection: asks the owning machine to probe this CLI again and
+// returns the same RuntimeModels shape as the GET above. 404 = runtime gone,
+// 409 = machine offline, 5xx = probe failed (JSON {error}); all surface as
+// ApiError so the dialog can map them to readable copy.
+export const refreshRuntimeModels = (id: string) =>
+  api<import("./types").RuntimeModels>(`/runtimes/${id}/models/refresh`, { method: "POST" });
 
 // ── Agent ──
 export const listAgents = () => api<Agent[]>("/agents");

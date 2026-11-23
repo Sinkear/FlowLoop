@@ -1,7 +1,7 @@
 # RSI 能力自迭代：业界调研
 
 > 调研对象：agent 可观测性 / 评测平台、agent 自优化产品、训练-推理开关与可视化范式。
-> 目的：为 agentwork（Go daemon + Next.js，goal → run → 验证 → 交付，SQLite）设计「训练模式 + 异步训练分析 Tab」提供可借鉴的业界依据。
+> 目的：为 ouroflow（Go daemon + Next.js，goal → run → 验证 → 交付，SQLite）设计「训练模式 + 异步训练分析 Tab」提供可借鉴的业界依据。
 > 方法：官方文档直取（2026-11 抓取）。web_search 在本机因上游 402 不可用，改用已知 URL + 站点 `llms.txt` 索引 + 本地全文检索；抓取失败或只能拿到导航壳的页面统一列入文末「未核实项」，不做脑补。
 
 ---
@@ -10,14 +10,14 @@
 
 1. **trace 的行业标准形状是「树」**：run/span 为节点，parent_span_id 成树，root span 代表一次请求。LangSmith、OpenAI Agents SDK、Arize Phoenix、AgentOps 都是这个模型，差异只在「span 类型枚举」和「容器层级」（project / agent / environment / session）。
 2. **Langfuse 走的是「树在语义、单表在存储」**：observation 可嵌套，但 trace 级属性（user_id、session_id、tags、metadata）会复制到每一条 observation 行，只留一张宽表换取查询与聚合性能。单机 SQLite 场景这个取舍非常值得抄。
-3. **会话是第二层聚合**：LangSmith 的 thread、OpenAI 的 group_id、AgentOps 的 session、Langfuse 的 session 都在回答「这十几个 trace 属于同一次多轮任务」。agentwork 的 goal 天然就是这一层，不需要再造概念。
+3. **会话是第二层聚合**：LangSmith 的 thread、OpenAI 的 group_id、AgentOps 的 session、Langfuse 的 session 都在回答「这十几个 trace 属于同一次多轮任务」。ouroflow 的 goal 天然就是这一层，不需要再造概念。
 4. **指标面板的最小集合**：trace 瀑布（各 span 起止 + 耗时占比）、token/cost、错误率、重试次数、**人工等待时长**。最后一项被大多数平台忽略，Claude Code 却专门定义了 `claude_code.tool.blocked_on_user`（duration_ms + decision + source）——这是最值得直接抄的指标。
-5. **异步分析已经是成熟产品形态**：LangSmith Insights（后台 job，最长 30 分钟，双模型：聚类模型 + 摘要模型，样本上限 1000 trace，1000 threads 约 $1–4）、Braintrust Patterns（定时巡检、发现带证据、可复核/关闭、可一键转成 scorer 或修复任务）。二者正是 agentwork「训练分析 Tab」的直接对标。
-6. **自优化的闭环不是「训练模型」，而是「trace → 数据集 → 评测 → 改 prompt/策略 → 复测」**。DSPy 把这套做成 optimizer（BootstrapFewShot / MIPROv2 / GEPA），Braintrust 把它产品化成 Loop + Experiments + Scorers。agentwork 第一版不应该训练权重，而应该优化 prompt、工具调用策略和验证规则。
+5. **异步分析已经是成熟产品形态**：LangSmith Insights（后台 job，最长 30 分钟，双模型：聚类模型 + 摘要模型，样本上限 1000 trace，1000 threads 约 $1–4）、Braintrust Patterns（定时巡检、发现带证据、可复核/关闭、可一键转成 scorer 或修复任务）。二者正是 ouroflow「训练分析 Tab」的直接对标。
+6. **自优化的闭环不是「训练模型」，而是「trace → 数据集 → 评测 → 改 prompt/策略 → 复测」**。DSPy 把这套做成 optimizer（BootstrapFewShot / MIPROv2 / GEPA），Braintrust 把它产品化成 Loop + Experiments + Scorers。ouroflow 第一版不应该训练权重，而应该优化 prompt、工具调用策略和验证规则。
 7. **开关必须分三层**：采集开关（是否记录）、内容开关（记录不记录 prompt/文件正文）、训练开关（数据能否进入分析/数据集）。OpenAI Agents SDK 默认开 trace 但可用 `trace_include_sensitive_data=False` 只留结构；Claude Code 默认不采集 prompt 内容、只记长度，需 `OTEL_LOG_USER_PROMPTS=1` 才开。把三者合并成一个「训练模式」布尔值是产品设计上的错误。
-8. **成本控制靠三层闸门**：概率采样（LangSmith `LANGSMITH_TRACING_SAMPLING_RATE`）、规则过滤 + 采样率（online evaluator 的 filter + sampling + spend limit）、分析侧样本上限（Insights 1000 条）。agentwork 单机也应该有「每日分析预算」而不只是条数上限。
-9. **可视化不要发明新范式**：W&B Weave 的三栏（列表 / trace 树 / 详情）+ 四种视图（Trace tree、Code composition、Flame graph、Graph）+ 五种 scrubber（Timeline、Peers、Siblings、Stack、Path）已经是充分验证的信息架构；agentwork 直接做「列表 + 瀑布 + 详情 + 对比」即可。
-10. **agentwork 有一个别人没有的优势：验证结果就是天然的 label**。goal → run → 验证 → 交付让每条 trace 自带成功/失败标签，不需要像 LangSmith 那样靠人工 correction 或 LLM-as-judge 去造标签。训练分析的第一版应该围绕「验证通过/失败 + 人工干预事件」做归因，而不是先做聚类。
+8. **成本控制靠三层闸门**：概率采样（LangSmith `LANGSMITH_TRACING_SAMPLING_RATE`）、规则过滤 + 采样率（online evaluator 的 filter + sampling + spend limit）、分析侧样本上限（Insights 1000 条）。ouroflow 单机也应该有「每日分析预算」而不只是条数上限。
+9. **可视化不要发明新范式**：W&B Weave 的三栏（列表 / trace 树 / 详情）+ 四种视图（Trace tree、Code composition、Flame graph、Graph）+ 五种 scrubber（Timeline、Peers、Siblings、Stack、Path）已经是充分验证的信息架构；ouroflow 直接做「列表 + 瀑布 + 详情 + 对比」即可。
+10. **ouroflow 有一个别人没有的优势：验证结果就是天然的 label**。goal → run → 验证 → 交付让每条 trace 自带成功/失败标签，不需要像 LangSmith 那样靠人工 correction 或 LLM-as-judge 去造标签。训练分析的第一版应该围绕「验证通过/失败 + 人工干预事件」做归因，而不是先做聚类。
 
 ---
 
@@ -49,14 +49,14 @@ Langfuse 只有三个概念：observation（单步：LLM 调用、工具调用�
 
 - https://langfuse.com/docs/observability/data-model
 
-对 agentwork 的启示：单机 SQLite 不要做「trace 表 + span 表 + 事件表」的过度规范化；一张 `trace_spans` 宽表 + 少量关联表（标注、发现）就够，树关系用 `parent_span_id` 表达，查询用 `(session_id, started_at_ms)` 复合索引。
+对 ouroflow 的启示：单机 SQLite 不要做「trace 表 + span 表 + 事件表」的过度规范化；一张 `trace_spans` 宽表 + 少量关联表（标注、发现）就够，树关系用 `parent_span_id` 表达，查询用 `(session_id, started_at_ms)` 复合索引。
 
 ### 1.3 会话层与「轨迹」
 
 - thread（LangSmith）/ group_id（OpenAI）/ session（Langfuse、AgentOps）解决「多次交互属于同一任务」。
 - trajectory（LangSmith）是把会话压平成消息序列，用于喂给 LLM 分析或做数据集。压平会丢嵌套，但换来 token 可控与可比较。
 
-agentwork 的映射：**goal ≈ thread**，**run ≈ trace**，**step/tool call ≈ span**。这个映射写进设计文档，后面所有指标口径都以它为准。
+ouroflow 的映射：**goal ≈ thread**，**run ≈ trace**，**step/tool call ≈ span**。这个映射写进设计文档，后面所有指标口径都以它为准。
 
 ### 1.4 富化层：feedback / annotation / attributes
 
@@ -138,7 +138,7 @@ DSPy 的定义很清楚：optimizer 是「调程序参数（prompt 和/或 LM �
 
 - https://dspy.ai/learn/optimization/optimizers/
 
-对 agentwork 的直接含义：**「训练」= 用历史 run 自动改 prompt / few-shot / 工具选择策略 / 验证阈值，然后用验证集复测**。这与 DSPy 的 train→compile→eval 结构同构，只是作用对象从「DSPy program」变成「goal 的 system prompt + 工具白名单 + 验证规则」。
+对 ouroflow 的直接含义：**「训练」= 用历史 run 自动改 prompt / few-shot / 工具选择策略 / 验证阈值，然后用验证集复测**。这与 DSPy 的 train→compile→eval 结构同构，只是作用对象从「DSPy program」变成「goal 的 system prompt + 工具白名单 + 验证规则」。
 
 ### 3.3 产品遥测反哺
 
@@ -159,16 +159,16 @@ Chrome perf bot 与 Uber M3 是常被引用的样本，但本次 **抓取失败*
 | Langfuse | observation/trace/session；单表宽行，trace 属性冗余 | trace 详情、generation 级 token/cost、session 视图 | LLM-as-judge、数据集实验、prompt 管理 | 单机存储用宽表 + 冗余字段，别过度规范化 |
 | Braintrust | trace + span，project 为容器；scorer 为一等实体 | logs 表、trace 视图、experiments 对比 | Loop（分析 agent）+ Patterns（定时巡检、发现可复核/关闭/转任务） | 「发现」要有状态、证据、severity；写操作必须人工批准 |
 | W&B Weave | op/call 树，trace 为调用集合 | 三栏 + 四视图 + 五 scrubber，tokens/cost/latency 可开关 | 评测表、数据集、trace 对比 | 同一对象提供多种可视化心智模型； scrubber 提升定位效率 |
-| Arize Phoenix | OTel + OpenInference，span kind 枚举 | trace 瀑布、span 属性、实验分数 | 预置/自定义 LLM-as-judge、代码 evaluator、批量评测 | span kind 枚举可直接映射为 agentwork 的 span 类型 |
+| Arize Phoenix | OTel + OpenInference，span kind 枚举 | trace 瀑布、span 属性、实验分数 | 预置/自定义 LLM-as-judge、代码 evaluator、批量评测 | span kind 枚举可直接映射为 ouroflow 的 span 类型 |
 | AgentOps | session→agent→workflow→operation→LLM/tool | 会话回放、成本、错误 | 较弱，偏调试 | 会话/工作流层级可直接映射 goal/run/step |
 | Helicone | 请求级代理日志 | 成本、缓存命中、延迟、按用户/自定义属性聚合 | 告警、报告 | 成本要能逐请求算，且区分缓存与流式 |
-| OpenAI Agents SDK | trace + 10 类 span，group_id 关联会话 | 依赖下游平台（本身是埋点层） | 无 | span 类型表可直接作为 agentwork 的埋点规范 |
+| OpenAI Agents SDK | trace + 10 类 span，group_id 关联会话 | 依赖下游平台（本身是埋点层） | 无 | span 类型表可直接作为 ouroflow 的埋点规范 |
 | Claude Code | OTel metrics + events | 会话数、成本、token、代码行、PR、人工等待 | 无（数据出到外部平台） | `blocked_on_user` 式人工卡点指标；默认最小采集 |
 | Cursor Analytics | 设备端签名 + git 比对 | AI 代码占比、Agent Edits、Tab 补全接受率 | 无（洞察驱动人工改进） | 用「最终产物」而非「过程日志」做归因 |
 | Devin Session Insights | 会话级分析报告 | ACU、消息数、规模、问题时间线 | 自动分类 + 可执行建议 | 会话结束即自动产出轻量结论，大会话才跑重分析 |
 | DSPy | program + optimizer（无 trace 产品） | 依赖外部 | BootstrapFewShot / MIPROv2 / GEPA 自动改 prompt 与示例 | 优化 = 指标 + 训练样本 + 搜索，不需要训练权重 |
 
-这张表的核心结论是：**平台的能力分布是「埋点 → 面板 → 分析 → 优化」四级阶梯**，多数产品停在第二、三级；agentwork 若要自称 RSI，必须做到第四级（提案 + 复测），否则只是一个更好看的 trace 浏览器。
+这张表的核心结论是：**平台的能力分布是「埋点 → 面板 → 分析 → 优化」四级阶梯**，多数产品停在第二、三级；ouroflow 若要自称 RSI，必须做到第四级（提案 + 复测），否则只是一个更好看的 trace 浏览器。
 
 ---
 
@@ -185,14 +185,14 @@ Chrome perf bot 与 Uber M3 是常被引用的样本，但本次 **抓取失败*
 - https://openai.github.io/openai-agents-python/tracing/
 - https://code.claude.com/docs/en/monitoring-usage
 
-Claude Code 还有一条很硬的产品规则：**仓库里的 `.claude/settings.json` 不能开启遥测或内容采集（会被忽略），但可以把 exporter 设为 none 关闭信号**；managed settings 还会移除冲突的开发者变量。也就是说「组织策略 > 项目配置 > 个人配置」，且关闭能力永远大于开启能力。agentwork 若面向团队，应照抄这个优先级。
+Claude Code 还有一条很硬的产品规则：**仓库里的 `.claude/settings.json` 不能开启遥测或内容采集（会被忽略），但可以把 exporter 设为 none 关闭信号**；managed settings 还会移除冲突的开发者变量。也就是说「组织策略 > 项目配置 > 个人配置」，且关闭能力永远大于开启能力。ouroflow 若面向团队，应照抄这个优先级。
 
 ### 4.2 采样策略
 
 - 概率采样：按 trace 或按操作，`sampling_rate ∈ [0,1]`。优点是实现简单、成本线性；缺点是会漏掉稀有失败。
 - 规则采样：按 filter 命中再按比例采（LangSmith online evaluator）。适合「只分析失败/低分/高成本」的场景。
 - 分层采样：按 goal 类型、模型、工具分层，保证每层都有样本。单机小样本场景比纯随机更靠谱。
-- 尾部保留：所有失败 trace 100% 保留，成功 trace 低比例保留——这是 agentwork 应该做的默认策略。
+- 尾部保留：所有失败 trace 100% 保留，成功 trace 低比例保留——这是 ouroflow 应该做的默认策略。
 
 ### 4.3 标注与 reward
 
@@ -200,7 +200,7 @@ Claude Code 还有一条很硬的产品规则：**仓库里的 `.claude/settings
 - 隐式：验证通过/失败、重试次数、人工接管、交付后被回滚。
 - LLM-as-judge：便宜但有漂移，需要定期用人工标注校准；LangSmith 的 few-shot correction 就是校准手段。
 
-agentwork 的天然 label 是「验证结果 + 人工干预事件」，隐式信号比显式打分便宜一个数量级，第一版应优先用隐式信号。
+ouroflow 的天然 label 是「验证结果 + 人工干预事件」，隐式信号比显式打分便宜一个数量级，第一版应优先用隐式信号。
 
 ---
 
@@ -228,7 +228,7 @@ Traces 页由三块组成：左侧 trace 列表（可排序分页，带 tokens /
 - Braintrust Patterns 的 verification 按维度分组对比（模型/设置/集成/实验变体）。
 - CI 场景的常规做法是「本次 vs 基线」双列 waterfall + 差值列。
 
-agentwork 的训练分析 Tab 应该有一个固定入口：**本次 run vs 基线 run 的双瀑布对比**，差异 span 高亮，顶部给 cost / latency / steps 的 delta。
+ouroflow 的训练分析 Tab 应该有一个固定入口：**本次 run vs 基线 run 的双瀑布对比**，差异 span 高亮，顶部给 cost / latency / steps 的 delta。
 
 ---
 
@@ -252,7 +252,7 @@ Prometheus 关于 histogram / summary 的说明是分位数口径的权威依据
 
 ---
 
-## 7. 给 agentwork 的落地建议
+## 7. 给 ouroflow 的落地建议
 
 ### 7.1 新 Tab 的信息架构（与 goal 齐平）
 

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // The verify-integrity sweeper (contract 7.3, findings §W6): a verify run can

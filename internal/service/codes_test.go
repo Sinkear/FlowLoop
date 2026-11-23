@@ -79,8 +79,8 @@ var remoteTermURLs = []string{
 
 // skipCDNDriftEnv is the operator escape hatch for a run that cannot reach the
 // CDN (offline dev box, degraded CI). Only the exact value "1" counts — v1
-// tested `!= ""`, so AGENTWORK_SKIP_CDN_DRIFT=0 also muted the guard.
-const skipCDNDriftEnv = "AGENTWORK_SKIP_CDN_DRIFT"
+// tested `!= ""`, so OUROFLOW_SKIP_CDN_DRIFT=0 also muted the guard.
+const skipCDNDriftEnv = "OUROFLOW_SKIP_CDN_DRIFT"
 
 // cdnDriftForceSkip reports whether the operator override is on. The bind point
 // for the "== \"1\"" rule; TestCDNDriftEnvSwitch pins it.
@@ -102,7 +102,7 @@ var cdnDriftAllowlistExpiry = time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC)
 //   - a missing code PRESENT, now < its expiry     → SKIP (known backlog)
 //   - a missing code PRESENT, now >= its expiry    → FAIL (renew deliberately
 //     through the CDN approval flow; never extend blindly)
-//   - AGENTWORK_SKIP_CDN_DRIFT=1                   → SKIP regardless (operator
+//   - OUROFLOW_SKIP_CDN_DRIFT=1                   → SKIP regardless (operator
 //     override for an offline/degraded-CDN run)
 //
 // Extending this map is a deliberate act: add the code with an explicit date,
@@ -119,7 +119,7 @@ var cdnDriftAllowlist = map[string]time.Time{
 // cdnDriftDecision is the verdict of classifyCDNDrift. Skip=true means the
 // drift guard should t.Skip (every missing code is known and still inside its
 // grace window, or the operator forced a skip); Skip=false means the test must
-// FAIL and Reason says why (unknown/expired codes, then Agentwork has real
+// FAIL and Reason says why (unknown/expired codes, then Ouroflow has real
 // backend↔CDN drift).
 type cdnDriftDecision struct {
 	Skip   bool
@@ -137,7 +137,7 @@ func classifyCDNDrift(missing []string, now time.Time, allowlist map[string]time
 	// Explicit operator override wins over the allowlist (an offline run cannot
 	// introspect the CDN at all). It is NOT a silent default.
 	if forceSkip {
-		return cdnDriftDecision{Skip: true, Reason: "AGENTWORK_SKIP_CDN_DRIFT=1 — operator override"}
+		return cdnDriftDecision{Skip: true, Reason: "OUROFLOW_SKIP_CDN_DRIFT=1 — operator override"}
 	}
 	var unknown, expired []string
 	for _, code := range missing {
@@ -178,7 +178,7 @@ func termURLLocale(url string) string {
 //     transient CDN-side anomaly outside this repo's control.
 //   - missing codes → FAIL by default (t.Errorf, listing locale + codes), with
 //     the only exceptions being a code on cdnDriftAllowlist whose expiry has
-//     not passed, or the explicit AGENTWORK_SKIP_CDN_DRIFT=1 operator override.
+//     not passed, or the explicit OUROFLOW_SKIP_CDN_DRIFT=1 operator override.
 //     This is the difference between a drift DETECTOR and a drift silencer.
 //
 // Developers cannot edit term.json directly — a missing code is added via the

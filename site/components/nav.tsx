@@ -3,7 +3,7 @@ import { useTranslations } from "next-intl";
 import { LocaleSwitch } from "./locale-switch";
 import type { Locale } from "@/i18n/routing";
 
-const REPO = "https://github.com/yusheng-g/agentwork";
+const REPO = "https://github.com/Sinkear/ouroflow";
 
 // 顶栏：wordmark + 版本 badge + 导航 + GitHub + 语言切换。
 // 深色底（bg-bg/80 + backdrop-blur）；wordmark 用 monospace 突出 developer 味。
@@ -16,7 +16,7 @@ export function Nav({ locale }: { locale: Locale }) {
           href={`/${locale}`}
           className="flex items-center gap-2 font-mono font-semibold tracking-tight text-text"
         >
-          agentwork
+          ouroflow
           <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-normal text-muted">
             v0.0.1-beta.1
           </span>

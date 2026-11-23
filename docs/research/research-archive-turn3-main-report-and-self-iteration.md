@@ -1,11 +1,11 @@
 [assistant • read]
-{"file_path":"/home/sinkear/developer/agentwork-main/proposals.md"}
+{"file_path":"/home/sinkear/developer/ouroflow-main/proposals.md"}
 
 [assistant • read]
-{"file_path":"/home/sinkear/developer/agentwork-main/impl-notes.md"}
+{"file_path":"/home/sinkear/developer/ouroflow-main/impl-notes.md"}
 
 [tool • read]
-<path>/home/sinkear/developer/agentwork-main/proposals.md</path>
+<path>/home/sinkear/developer/ouroflow-main/proposals.md</path>
 <type>file</type>
 <content>
 1: # RSI R1 优化提案（optimizer · 只读 · 复跑版）
@@ -13,7 +13,7 @@
 3: - 状态：**【待评审】** — 等待人工 review，未获批准前不实施任何改动。
 4: - 约束遵守：本文件是本轮唯一产出物；未改动任何业务代码、未修复任何失败测试。
 5: - 数据源：
-6:   1. `benchmark-report.md`（bench 复跑产出，基线 agentwork-int HEAD 33f16dc，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
+6:   1. `benchmark-report.md`（bench 复跑产出，基线 ouroflow-int HEAD 33f16dc，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
 7:   2. optimizer 本轮实测复测（`go test -json` 逐用例计时、平台 runs API 全量 23 条 run 记录）；
 8:   3. 行级定位均已在基线 33f16dc 上逐行核实。
 9: - 与首轮提案的关系：基线 HEAD 未变（33f16dc），三条提案结论不变；本版以复跑基准与最新运行数据刷新依据，并再次核实了拟改动位置的行号。
@@ -30,7 +30,7 @@
 20: **② 拟改动位置（文件 + 行级，已在 33f16dc 核实）**
 21: - `internal/daemon/intake_test.go`、`verify_test.go`、`gate_test.go`、`schedule_test.go`、`runaway_test.go`、`prompt_context_test.go`、`handoff_cancel_test.go`（7 个文件均无 `t.Setenv`，已逐一核实）的顶层测试函数，逐一加 `t.Parallel()`（优先挑相互独立、不碰全局状态的）。
 22: - 对使用 `t.Setenv` 的 3 个文件（`internal/daemon/deliver_test.go`、`digest_test.go`、`worktree_test.go`）保持串行（`t.Setenv` 会自动禁止并行）或重构为显式参数注入后再并行。
-23: - 次级目标（同法）：`cmd/agentwork-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
+23: - 次级目标（同法）：`cmd/ouroflow-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
 24: 
 25: **③ 预期收益（可量化）**
 26: - `internal/daemon` wall 8.17s → 约 3–4s（7 核并行）。
@@ -52,7 +52,7 @@
 42: 
 43: **② 拟改动位置（文件 + 行级，已在 33f16dc 核实）**
 44: - `internal/service/codes_test.go:96-99`：decode 失败由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与 89-90/93-94 行既有 skip 语义对齐。
-45: - `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `AGENTWORK_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
+45: - `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `OUROFLOW_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
 46: - 本地不变量守卫 `TestErrorCodesExported`（`codes_test.go:52`）保持不动。
 47: 
 48: **③ 预期收益（可量化）**
@@ -103,13 +103,13 @@
 </content>
 
 [tool • read]
-<path>/home/sinkear/developer/agentwork-main/impl-notes.md</path>
+<path>/home/sinkear/developer/ouroflow-main/impl-notes.md</path>
 <type>file</type>
 <content>
 1: # RSI R2 实施说明（builder · impl-notes）
 2: 
 3: - 状态：**已完成** — 三条已批准提案（P1、P2、P3）全部实施，机器验证门自检通过。
-4: - 分支：`feat-25da0cc6-sg-23d061da`（基于 `agentwork-int` HEAD 339f10d）
+4: - 分支：`feat-25da0cc6-sg-23d061da`（基于 `ouroflow-int` HEAD 339f10d）
 5: - 提交（每条提案独立 commit，message 注明提案编号）：
 6:   | commit | 提案 | 内容 |
 7:   | --- | --- | --- |
@@ -125,7 +125,7 @@
 17: - 对提案指定的 7 个无 `t.Setenv` 的测试文件（`intake_test.go`、`verify_test.go`、`gate_test.go`、`schedule_test.go`、`runaway_test.go`、`prompt_context_test.go`、`handoff_cancel_test.go`）的全部 **70 个顶层测试函数**加 `t.Parallel()`。
 18: - 使用 `t.Setenv` 隔离 HOME 的 3 个文件（`deliver_test.go`、`digest_test.go`、`worktree_test.go`）按提案保持串行（`t.Setenv` 自动禁止并行）。
 19: - 实施前核实：7 个文件均无 `os.Setenv`/`Chdir`/固定端口/共享 HOME 依赖；`runaway_test.go` 中 `TestScratchDirNames` 只读 `runsRoot()` 路径计算，不创建/不写共享目录；各测试均用 `:memory:` SQLite 或 `t.TempDir()`，无包级可变状态。
-20: - 次级目标 `cmd/agentwork-cli` **未动**：核实发现其 4 个测试文件中 3 个使用 `t.Setenv`（gitwork/main/probe，占比过高），纯函数测试（chat/exec）合计耗时 <0.1s，并行化收益趋近于零且违反「改动最小化」约束，故按提案中「优先挑相互独立」的精神保守跳过。
+20: - 次级目标 `cmd/ouroflow-cli` **未动**：核实发现其 4 个测试文件中 3 个使用 `t.Setenv`（gitwork/main/probe，占比过高），纯函数测试（chat/exec）合计耗时 <0.1s，并行化收益趋近于零且违反「改动最小化」约束，故按提案中「优先挑相互独立」的精神保守跳过。
 21: 
 22: **验证**：
 23: - `-count=1` 连跑 3 次全绿；wall 5.30s / 5.73s / 4.99s（实施前基线 8.17s，**约 -35%**）。
@@ -138,13 +138,13 @@
 30: 
 31: **改动**（`internal/service/codes_test.go`，+26/-2 行）：
 32: - decode 失败（截断 JSON / 网关错误页 200+HTML）由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与既有不可达（`:89-90`）/非 200（`:93-94`）的 skip 语义对齐。
-33: - 可选增强（提案 ② 条款）：新增 `AGENTWORK_SKIP_CDN_DRIFT=1` 环境开关，设置时 skip 整个守卫。
+33: - 可选增强（提案 ② 条款）：新增 `OUROFLOW_SKIP_CDN_DRIFT=1` 环境开关，设置时 skip 整个守卫。
 34: - **缺码漂移同步改 skip**：实施时发现当前 CDN 实际返回的是合法 JSON 缺 6 码（AW.10000025~30，两 locale 各 6 条），走缺码 `Errorf` 分支——若缺码仍 `Errorf`，`go test ./...` 无法恢复全绿，与提案 ③ 预期收益「`go test ./...` 恢复全绿（1/24 包 FAIL → 0）」直接矛盾。提案 ④ 风险缓解条款亦明确「**CDN 缺码不再使测试变红**——跨层漂移可能被漏掉」为已接受的风险，故缺码分支按提案语义改为 `t.Skipf`，且 skip 时输出完整缺码清单（保留可诊断性），可用 `-run TestCodesMatchRemoteTermJSON` 手动复查。
 35: - 本地不变量守卫 `TestErrorCodesExported` 保持不动。
 36: 
 37: **验证**：
 38: - 缺码场景：skip 路径输出 `6 code(s) missing … AW.10000025, …, AW.10000030`（两 locale 均验证）。
-39: - 环境开关场景：`AGENTWORK_SKIP_CDN_DRIFT=1` 时整守卫 skip。
+39: - 环境开关场景：`OUROFLOW_SKIP_CDN_DRIFT=1` 时整守卫 skip。
 40: - `go test ./... -count=1` 全量无 FAIL（13 个含测试的包全 ok）。
 41: 
 42: ---
@@ -254,7 +254,7 @@ proposals.md/impl-notes.md 只是测试性能类 RSI 提案（并行化测试、
 3 个调研 subagent 两个多小时未返回，且 web_search（402 余额不足）和 web_fetch（fetch failed）当前都不可用——它们的核心任务是外网调研，大概率被网络问题卡死。证据链已经足够扎实（代码级事实 + 项目自带 docs/research 行业/学术调研 + 我对 LangGraph/Dify/Temporal/AFlow 等平台的既有知识），我不再等待，直接综合输出最终报告。
 
 [assistant • todo_write]
-{"todos":[{"content":"摸底 agentwork 项目：管家编排模式根因链","status":"completed"},{"content":"调研业界工作流定义方式（本地 docs/research + 既有知识）","status":"completed"},{"content":"综合输出最终报告：业界结论 + 管家去留 + 图驱动自迭代方案","status":"in_progress"}]}
+{"todos":[{"content":"摸底 ouroflow 项目：管家编排模式根因链","status":"completed"},{"content":"调研业界工作流定义方式（本地 docs/research + 既有知识）","status":"completed"},{"content":"综合输出最终报告：业界结论 + 管家去留 + 图驱动自迭代方案","status":"in_progress"}]}
 
 [tool • todo_write]
 Updated todo list: 0 pending, 1 in progress, 2 completed.
@@ -308,7 +308,7 @@ steward 是 intake 解析器，成本低、不碍事、还承担了"不确定时
 - **路由用受限选择，不用自由文本**——LangGraph `add_conditional_edges` 是"函数返回下一个节点名"，LLM 只能从预定义出边集合里选，structured output 约束；
 - **plan-then-execute**——planner 先产出结构化任务清单，确定性执行器照单执行，失败才 replan（LangChain plan-and-execute 模式）。
 
-对应到 agentwork：把"规划"从 leader 的运行时自由发挥，前移为**预先声明的结构化计划**；leader 从"自由编排者"降级为"计划执行器 + 参数填充者"。这不需要发明新引擎——**编译到现有的 `sub_goal + depends_on` 门控上即可**。
+对应到 ouroflow：把"规划"从 leader 的运行时自由发挥，前移为**预先声明的结构化计划**；leader 从"自由编排者"降级为"计划执行器 + 参数填充者"。这不需要发明新引擎——**编译到现有的 `sub_goal + depends_on` 门控上即可**。
 
 ---
 
@@ -320,7 +320,7 @@ steward 是 intake 解析器，成本低、不碍事、还承担了"不确定时
 |---|---|---|---|
 | **画布式低代码** | Dify、Coze、n8n | 结构化 DSL（Dify 的 YAML `workflow.graph.nodes/edges` 可导出版本化；n8n 是 `{nodes[], connections{}}` JSON） | 节点内部（LLM 节点、条件分支、迭代子图） |
 | **图即代码** | LangGraph、Airflow、Temporal | 图显式写在代码里（`StateGraph.add_node/add_edge/add_conditional_edges`、`compile()`、checkpointer 持久化、`interrupt` 做 HITL）；Temporal 是"确定性 workflow 函数 + 非确定性 activity"分离 + event-sourced replay | activity 内部 + signal/query 断点 |
-| **动态多 agent** | OpenAI Agents SDK handoff、CrewAI、**agentwork 现状** | 无预定义图，运行时涌现（handoff 链） | 整个图都是弹性的 |
+| **动态多 agent** | OpenAI Agents SDK handoff、CrewAI、**ouroflow 现状** | 无预定义图，运行时涌现（handoff 链） | 整个图都是弹性的 |
 
 Anthropic《Building Effective Agents》给出的判据是：**workflow（代码编排，LLM 只在节点里）适合可预测任务；agent（LLM 编排）适合开放任务**，并建议从最简单的模式起步，确有必要才加自主性。业界的真实共识比"选哪派"更进一步，是四条铁律：
 
@@ -516,7 +516,7 @@ Browser time zone for this request: unavailable. Ask the user to clarify otherwi
 Elapsed since the preceding model-visible message: 7m 22s.
 
 [assistant • compress]
-{"content":"m00128–m00129 自迭代工作流 subagent 调研返回（fae05842）\n三个外派调研 agent 之一（自迭代工作流，fae05842-ff92-4442-aefa-5591af6cc4ef）于 m00128 返回完整调研报告；另两个（758ec3e7 工作流 DSL、262b93ad 编排确定性）仍未返回。lead 已在 m00127 交付主报告（Blueprint 双层架构方案），本报告内容用于补充精化。m00129 仅为时间采样系统消息，无实质内容。\n学术 10 案要点：AFlow（ICLR 2025，arXiv:2410.10762：workflow=代码+类型化算子库，MCTS+验证集分数+执行 trace 反馈+经验树，6 基准均+5.7%，成本仅 GPT-4o 4.55%）；ADAS（2408.08435：meta agent 写代码，archive=优化器长期记忆）；DSPy（2310.03714：参数级 prompt/demos 优化，与 AFlow 结构级互补）；TextGrad（2406.07496：文本梯度沿计算图反向传播）；AgentSquare（2410.06153：4 模块设计空间+in-context 性能预测器预筛省算力，+17.2%）；GPTSwarm（ICML 2024，2402.16823：★与 agentwork 愿景最直接——agent=可优化计算图，双层优化=节点级 prompt 精调+边级增删连接改拓扑）；WorkflowLLM（2411.05451：106,763 样本微调 WorkflowLlama 学建流，数据驱动路线）；FlowReasoner（2504.15257：per-query 推理生成个性化工作流，非模板）；GEPA（ICLR 2026 Oral，2507.19457：反思+Pareto 前沿记忆，比 GRPO 平均+6% 且 rollout 少 35×）+GEPA-Curator（2610.37651 再+20.7%）；EvoAgent（NAACL 2025，2406.14228 进化算子）。2025-26 补充：综述 2611.14256（自进化闭环=经验生成→反馈→固化）；MetaAct（2611.20655：agent 行为约束编译为确定性 guard+离线轨迹重放验证）；BadEvolve（2611.10542：进化任务投毒可后门化自进化 agent→自迭代入口需信任边界）。\n工业界实践：n8n——AI Workflow Builder（LLM 只收节点 schema+当前图+mock 执行数据，绝不发凭据，按成功消息计费）；Workflow History（保存自动快照、命名版本、克隆对比）；Workflow Reviews（企业预览 2.37+：提审固定版本、Published vs In-review 可视化节点/连线 diff 与源码控制同引擎、批准即自动发布、评审期封锁一切发布通道）。Dify——app.yaml DSL 有版本门（≥1.19 导出不能导入更低版本）；Draft/Latest/Previous 三层；付费版可按指定已发布版本调 API 运行（=A/B 基础设施）；Build by Chatting：agent 自改配置、用户 Apply/Discard、build_note.md 自我记忆、运行期新增文件一律 temporary（运行时不得自我修改）。Zapier Copilot——Auto-build（全自动建到极限）vs Ask-as-you-build（每步确认）双档位；checkpoints+revert 弹新旧版本对比框；每步 thumbs up/down 回流为优化信号。LangGraph——时间旅行 replay/fork（checkpoint 体系）；Deep Agents 动态子代理（主 agent 运行时写代码 fan-out，task(subagentType, description, responseSchema)）；实证：把编辑历史（不只最后一版）回喂元优化器效果更好（版本树=优化器记忆）。Coze Studio 已开源（Go+React）但公开资料未见\"AI 直接改已保存工作流+版本 diff\"成熟能力。\n四个工程问题的答案：a) 表示法=受限类型化算子库+结构化编辑的折中（代码图灵完备难校验；DSL 可 schema 校验可渲染但表达力受限、引用易断）。b) 验证=schema 校验+版本门+LLM 受控解码+mock 干跑（n8n）+单节点 step-run（Dify）+沙箱+回归评测集；产业+学术共识：\"没有评测集就不叫自迭代，只能叫生成\"。c) diff/回滚=自动版本快照+可视化 diff+发布审批闸门+按版本运行；版本库同时是优化器记忆（AFlow 树/ADAS archive）。d) 优化信号=执行 trace+成本、评测集/LLM-as-judge、文本梯度、用户反馈（thumbs up/down、标注）、安全（BadEvolve 输入信任边界）。\n六件套共同骨架：①机器可读工作流单一事实源（图+类型化算子）；②受限类型化算子/节点库（生成护栏+前端组件清单）；③优化循环（提案→执行干跑→度量→选择记录）；④经验记忆（变体-分数-失败 trace 存档）；⑤人在环产品化（draft/published 分离、快照、可视化 diff、审批回滚、Auto/Ask 档位）；⑥安全边界（schema+版本门、凭据隔离、沙箱、发布闸门、信任边界、运行时不自我修改已发布版本）。\n最小落地闭环：图 JSON（schema 校验）→ 优化器只发结构化编辑操作（add/update/delete 节点、改边、改参数）而非整图重写 → mock 干跑+小评测集打分 → 不达标自动丢弃、达标生成新版本（附 LLM 修改理由+分数）→ 前端节点/边/参数三色 diff → 用户 Apply/发布 → 版本树持久化供回滚与优化器复用。\n\nOpen objectives:\n- 接收并消化剩余 2 个调研 agent（758ec3e7 工作流 DSL、262b93ad 编排确定性）结果，有实质增量则向用户补充；主目标（m00002 调研+方案）已在 m00127 交付，本报告增量已在 m00130+ 补充说明。"}
+{"content":"m00128–m00129 自迭代工作流 subagent 调研返回（fae05842）\n三个外派调研 agent 之一（自迭代工作流，fae05842-ff92-4442-aefa-5591af6cc4ef）于 m00128 返回完整调研报告；另两个（758ec3e7 工作流 DSL、262b93ad 编排确定性）仍未返回。lead 已在 m00127 交付主报告（Blueprint 双层架构方案），本报告内容用于补充精化。m00129 仅为时间采样系统消息，无实质内容。\n学术 10 案要点：AFlow（ICLR 2025，arXiv:2410.10762：workflow=代码+类型化算子库，MCTS+验证集分数+执行 trace 反馈+经验树，6 基准均+5.7%，成本仅 GPT-4o 4.55%）；ADAS（2408.08435：meta agent 写代码，archive=优化器长期记忆）；DSPy（2310.03714：参数级 prompt/demos 优化，与 AFlow 结构级互补）；TextGrad（2406.07496：文本梯度沿计算图反向传播）；AgentSquare（2410.06153：4 模块设计空间+in-context 性能预测器预筛省算力，+17.2%）；GPTSwarm（ICML 2024，2402.16823：★与 ouroflow 愿景最直接——agent=可优化计算图，双层优化=节点级 prompt 精调+边级增删连接改拓扑）；WorkflowLLM（2411.05451：106,763 样本微调 WorkflowLlama 学建流，数据驱动路线）；FlowReasoner（2504.15257：per-query 推理生成个性化工作流，非模板）；GEPA（ICLR 2026 Oral，2507.19457：反思+Pareto 前沿记忆，比 GRPO 平均+6% 且 rollout 少 35×）+GEPA-Curator（2610.37651 再+20.7%）；EvoAgent（NAACL 2025，2406.14228 进化算子）。2025-26 补充：综述 2611.14256（自进化闭环=经验生成→反馈→固化）；MetaAct（2611.20655：agent 行为约束编译为确定性 guard+离线轨迹重放验证）；BadEvolve（2611.10542：进化任务投毒可后门化自进化 agent→自迭代入口需信任边界）。\n工业界实践：n8n——AI Workflow Builder（LLM 只收节点 schema+当前图+mock 执行数据，绝不发凭据，按成功消息计费）；Workflow History（保存自动快照、命名版本、克隆对比）；Workflow Reviews（企业预览 2.37+：提审固定版本、Published vs In-review 可视化节点/连线 diff 与源码控制同引擎、批准即自动发布、评审期封锁一切发布通道）。Dify——app.yaml DSL 有版本门（≥1.19 导出不能导入更低版本）；Draft/Latest/Previous 三层；付费版可按指定已发布版本调 API 运行（=A/B 基础设施）；Build by Chatting：agent 自改配置、用户 Apply/Discard、build_note.md 自我记忆、运行期新增文件一律 temporary（运行时不得自我修改）。Zapier Copilot——Auto-build（全自动建到极限）vs Ask-as-you-build（每步确认）双档位；checkpoints+revert 弹新旧版本对比框；每步 thumbs up/down 回流为优化信号。LangGraph——时间旅行 replay/fork（checkpoint 体系）；Deep Agents 动态子代理（主 agent 运行时写代码 fan-out，task(subagentType, description, responseSchema)）；实证：把编辑历史（不只最后一版）回喂元优化器效果更好（版本树=优化器记忆）。Coze Studio 已开源（Go+React）但公开资料未见\"AI 直接改已保存工作流+版本 diff\"成熟能力。\n四个工程问题的答案：a) 表示法=受限类型化算子库+结构化编辑的折中（代码图灵完备难校验；DSL 可 schema 校验可渲染但表达力受限、引用易断）。b) 验证=schema 校验+版本门+LLM 受控解码+mock 干跑（n8n）+单节点 step-run（Dify）+沙箱+回归评测集；产业+学术共识：\"没有评测集就不叫自迭代，只能叫生成\"。c) diff/回滚=自动版本快照+可视化 diff+发布审批闸门+按版本运行；版本库同时是优化器记忆（AFlow 树/ADAS archive）。d) 优化信号=执行 trace+成本、评测集/LLM-as-judge、文本梯度、用户反馈（thumbs up/down、标注）、安全（BadEvolve 输入信任边界）。\n六件套共同骨架：①机器可读工作流单一事实源（图+类型化算子）；②受限类型化算子/节点库（生成护栏+前端组件清单）；③优化循环（提案→执行干跑→度量→选择记录）；④经验记忆（变体-分数-失败 trace 存档）；⑤人在环产品化（draft/published 分离、快照、可视化 diff、审批回滚、Auto/Ask 档位）；⑥安全边界（schema+版本门、凭据隔离、沙箱、发布闸门、信任边界、运行时不自我修改已发布版本）。\n最小落地闭环：图 JSON（schema 校验）→ 优化器只发结构化编辑操作（add/update/delete 节点、改边、改参数）而非整图重写 → mock 干跑+小评测集打分 → 不达标自动丢弃、达标生成新版本（附 LLM 修改理由+分数）→ 前端节点/边/参数三色 diff → 用户 Apply/发布 → 版本树持久化供回滚与优化器复用。\n\nOpen objectives:\n- 接收并消化剩余 2 个调研 agent（758ec3e7 工作流 DSL、262b93ad 编排确定性）结果，有实质增量则向用户补充；主目标（m00002 调研+方案）已在 m00127 交付，本报告增量已在 m00130+ 补充说明。"}
 
 [tool • compress]
 [Compression no-op: nothing was folded and nothing failed — Range m00128..m00129 folded nothing — it lies entirely inside the protected zone (the last 3 messages and/or the most recent user message), which always stays visible. Nothing failed; do not resend this range. Session highest allocated ref is m00129 — target older ranges only. Current compressible ranges (use these refs exactly as listed): Compressible ranges (2, oldest first): m00075–m00084  6 msgs  3.2K [tool 33% | text 67%] m00102–m00126  11 msgs  10.4K [tool 55% | text 45%] Do not repeat the rejected call unchanged; use only the eligible ranges listed here. Continue your current task.]

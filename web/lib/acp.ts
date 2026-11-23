@@ -371,8 +371,8 @@ export class AcpChatClient {
       {
         protocolVersion: 2,
         capabilities: { session: {} },
-        info: { name: "agentwork-web", title: "Agentwork Web", version: "1.0.0" },
-        clientInfo: { name: "agentwork-web", title: "Agentwork Web", version: "1.0.0" },
+        info: { name: "ouroflow-web", title: "Ouroflow Web", version: "1.0.0" },
+        clientInfo: { name: "ouroflow-web", title: "Ouroflow Web", version: "1.0.0" },
       },
       INITIALIZE_TIMEOUT_MS,
     ).then(() => undefined);

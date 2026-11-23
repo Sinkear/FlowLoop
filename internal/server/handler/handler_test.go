@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // newTestHandlers wires a GoalService against an in-memory store and mounts

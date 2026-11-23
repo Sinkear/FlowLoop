@@ -1,8 +1,8 @@
 # 时间线：四个蓝本训练任务、50 次运行与一次交付锁死
 
-> **数据来源**：RPA 沙箱 DB（`goal / run / comment / gate_decision / activity_log / training_session / rsi_* / blueprint_*`）、`daemon.log`（+08:00）、daemon HTTP API `127.0.0.1:17091`。原始取证见 [sources/agentwork自动升级流水线v2-四任务执行记录与问题诊断.md](sources/agentwork自动升级流水线v2-四任务执行记录与问题诊断.md) 与 [sources/蓝本自迭代断链-根因确认.md](sources/蓝本自迭代断链-根因确认.md)。
+> **数据来源**：RPA 沙箱 DB（`goal / run / comment / gate_decision / activity_log / training_session / rsi_* / blueprint_*`）、`daemon.log`（+08:00）、daemon HTTP API `127.0.0.1:17091`。原始取证见 [sources/ouroflow自动升级流水线v2-四任务执行记录与问题诊断.md](sources/ouroflow自动升级流水线v2-四任务执行记录与问题诊断.md) 与 [sources/蓝本自迭代断链-根因确认.md](sources/蓝本自迭代断链-根因确认.md)。
 > **时间口径**：DB 时间戳为 UTC，本文统一换算为 **UTC+8**。`wall` 指机器侧最早 run 开始 → 最晚 run 结束；`work` 指各 run 时长之和；`并行收益 = work / wall`；`关键路径（CP）` 取 workflow 图；`human_wait` = Σ`gate_decision.review_duration`；`占比 = wait / (wall + wait)`。
-> **代码基线**：本仓库 `HEAD a3d2744`。事故运行版本构建自 `/tmp/agentwork-featnew`（`0.1.0-featnew.20261119`），源码已删除，行为以原始日志/DB/反汇编为准。
+> **代码基线**：本仓库 `HEAD a3d2744`。事故运行版本构建自 `/tmp/ouroflow-featnew`（`0.1.0-featnew.20261119`），源码已删除，行为以原始日志/DB/反汇编为准。
 
 ## 0. 口径与四处修正
 

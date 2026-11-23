@@ -7,7 +7,7 @@ package daemon
 //
 // All chats are pure pass-through (the daemon never reads the frames) —
 // steward included (决策7-5). The steward's platform-intake capability is
-// exercised via the `agentwork` CLI, not daemon-side frame interception.
+// exercised via the `ouroflow` CLI, not daemon-side frame interception.
 
 import (
 	"bytes"
@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // chatRelay keeps one entry per open web chat socket.
@@ -84,7 +84,7 @@ func (d *Daemon) OpenChatForAgent(ctx context.Context, agentID string) (string, 
 	mcpServers := d.extraMcpServers(ctx, agentID)
 	// Chat brief: every agent gets the regular chat-history brief. The steward
 	// additionally gets the platform-fixed persona (StewardSystemPrompt) + a
-	// capabilities appendix pointing it at the `agentwork` CLI (决策7-5). The
+	// capabilities appendix pointing it at the `ouroflow` CLI (决策7-5). The
 	// steward's persona is platform-owned — it does NOT depend on what the DB's
 	// system_prompt field holds (a manually-created steward may have an empty
 	// persona). The DB system_prompt (if the user filled it) is still staged
@@ -107,7 +107,7 @@ func (d *Daemon) OpenChatForAgent(ctx context.Context, agentID string) (string, 
 		McpServers: mcpServers,
 		ChatBrief:  chatBrief,
 		// Cwd is omitted — the MACHINE resolves its own chat directory
-		// (~/.agentwork/chat/<agentID>/); the path is machine-local.
+		// (~/.ouroflow/chat/<agentID>/); the path is machine-local.
 	}, &res); err != nil {
 		return "", fmt.Errorf("chat.open: %w", err)
 	}

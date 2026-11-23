@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/link"
+	"github.com/Sinkear/ouroflow/internal/link"
 )
 
 // TestRuntimeModelsEndpoint covers RuntimeService.Models: identity fields
@@ -67,6 +67,46 @@ func TestRuntimeModelsEndpoint(t *testing.T) {
 	// Unknown runtime → ErrNotFound (the handler maps it to 404).
 	if _, err := svc.Models(ctx, "nope"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestRuntimeSetModels covers the authoritative write behind the models
+// refresh endpoint: the machine's fresh detection replaces the row's list,
+// an empty detection CLEARS stale ids (unlike probe reports), and an unknown
+// runtime is ErrNotFound.
+func TestRuntimeSetModels(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewRuntimeService(st)
+	ctx := context.Background()
+	rt, err := svc.Create(ctx, Runtime{Name: "hermes@m1", MachineID: "m1"})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	// Seed a stale, inflated list (the 52-model symptom).
+	stale, _ := json.Marshal([]link.ModelInfo{{ID: "a"}, {ID: "b"}, {ID: "c"}})
+	if _, err := st.DB().ExecContext(ctx, `UPDATE runtime SET models=?, models_at='2026-01-01T00:00:00Z' WHERE id=?`, string(stale), rt.ID); err != nil {
+		t.Fatalf("seed stale models: %v", err)
+	}
+	fresh, err := svc.SetModels(ctx, rt.ID, []link.ModelInfo{{ID: "only-usable", Name: "Usable"}}, "2026-11-23T10:00:00Z")
+	if err != nil {
+		t.Fatalf("set models: %v", err)
+	}
+	if len(fresh.Models) != 1 || fresh.Models[0].ID != "only-usable" || fresh.DetectedAt != "2026-11-23T10:00:00Z" {
+		t.Fatalf("fresh models mismatch: %+v", fresh)
+	}
+	// An empty re-detection is authoritative: stale ids must be cleared.
+	empty, err := svc.SetModels(ctx, rt.ID, nil, "2026-11-23T10:01:00Z")
+	if err != nil {
+		t.Fatalf("set empty models: %v", err)
+	}
+	if empty.Models == nil || len(empty.Models) != 0 {
+		t.Fatalf("empty refresh must clear models to [], got %+v", empty.Models)
+	}
+	if empty.DetectedAt != "2026-11-23T10:01:00Z" {
+		t.Fatalf("empty refresh must still stamp detected_at, got %q", empty.DetectedAt)
+	}
+	if _, err := svc.SetModels(ctx, "nope", nil, ""); err != ErrNotFound {
+		t.Fatalf("unknown runtime must be ErrNotFound, got %v", err)
 	}
 }
 

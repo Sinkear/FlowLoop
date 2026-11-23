@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds the agentwork CLI and daemon with one shared version stamp.
+# Builds the ouroflow CLI and daemon with one shared version stamp.
 #
-#   AGENTWORK_COMPILE_VERSION=0.0.1-beta.2 ./build.sh
+#   OUROFLOW_COMPILE_VERSION=0.0.1-beta.2 ./build.sh
 #
 # The env var overrides the default (0.0.1-beta.1). Both binaries MUST be
 # built with the same stamp: the register-time version check between the
@@ -10,11 +10,11 @@
 set -e
 cd "$(dirname "$0")"
 
-VERSION="${AGENTWORK_COMPILE_VERSION:-0.0.1-beta.1}"
+VERSION="${OUROFLOW_COMPILE_VERSION:-0.0.1-beta.1}"
 LDFLAGS="-X main.cliVersion=$VERSION \
--X github.com/eushing/agentwork/internal/daemon.DaemonVersion=$VERSION"
+-X github.com/Sinkear/ouroflow/internal/daemon.DaemonVersion=$VERSION"
 
 mkdir -p build
-go build -ldflags "$LDFLAGS" -o build/agentwork ./cmd/agentwork-cli
-go build -ldflags "$LDFLAGS" -o build/agentwork-daemon ./cmd/agentwork-daemon
-echo "built build/agentwork (CLI) + build/agentwork-daemon v$VERSION"
+go build -ldflags "$LDFLAGS" -o build/ouroflow ./cmd/ouroflow-cli
+go build -ldflags "$LDFLAGS" -o build/ouroflow-daemon ./cmd/ouroflow-daemon
+echo "built build/ouroflow (CLI) + build/ouroflow-daemon v$VERSION"

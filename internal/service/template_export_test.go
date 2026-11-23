@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 	"gopkg.in/yaml.v3"
 )
 
 func TestTemplateExportSquadRoundTrip(t *testing.T) {
-	t.Setenv("AGENTWORK_HOME", t.TempDir())
+	t.Setenv("OUROFLOW_HOME", t.TempDir())
 	ctx := context.Background()
 	st := newTestStore(t)
 	bus := events.NewBus()
@@ -90,7 +90,7 @@ func TestTemplateExportSquadRoundTrip(t *testing.T) {
 }
 
 func TestTemplateExportProjectSkipsTerminalAndHumanGoals(t *testing.T) {
-	t.Setenv("AGENTWORK_HOME", t.TempDir())
+	t.Setenv("OUROFLOW_HOME", t.TempDir())
 	ctx := context.Background()
 	st := newTestStore(t)
 	bus := events.NewBus()
@@ -176,7 +176,7 @@ func TestTemplateExportProjectSkipsTerminalAndHumanGoals(t *testing.T) {
 }
 
 func TestTemplateExportProjectKeepsGitURL(t *testing.T) {
-	t.Setenv("AGENTWORK_HOME", t.TempDir())
+	t.Setenv("OUROFLOW_HOME", t.TempDir())
 	ctx := context.Background()
 	st := newTestStore(t)
 	bus := events.NewBus()

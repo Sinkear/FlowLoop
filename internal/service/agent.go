@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/acp"
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // StewardSystemPrompt is the platform-fixed persona shipped to the steward

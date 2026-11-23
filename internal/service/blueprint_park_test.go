@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // parkGateJSON is the B-3 gate fixture without a timeout edge: the gate's

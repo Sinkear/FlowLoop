@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // Phase C (proposal §12) acceptance tests:

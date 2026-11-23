@@ -12,7 +12,7 @@ import (
 // alone — that path is a named sibling, not a run worktree.
 func TestSweepRunWorktreesKeepsSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", home)
+	t.Setenv("OUROFLOW_HOME", home)
 	runs := filepath.Join(home, "runs")
 	skillFile := filepath.Join(runs, "skills", "abcdef", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillFile), 0o755); err != nil {

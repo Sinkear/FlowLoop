@@ -1,4 +1,4 @@
-module github.com/eushing/agentwork
+module github.com/Sinkear/ouroflow
 
 go 1.26.4
 

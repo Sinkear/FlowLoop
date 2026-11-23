@@ -1,65 +1,42 @@
-# agentwork
+<div align="center">
 
-> [中文](README.zh.md) | [Design](docs/design/DESIGN.md) | [协作模型](docs/design/Collaboration.v2.md)
+# OuroFlow
 
-An **AI task pipeline OS** — a single-user control plane that runs CLI agents
-unattended through the full loop: goal → execution → machine verification →
-human gate → delivery. You define acceptance policies in natural language,
-agents do the work, the platform judges, and you only appear at checkpoints.
+**An AI task pipeline OS — you define "done" in natural language, CLI agents run the whole loop unattended.**
 
-**Single process, single machine, single user, no auth.** Local SQLite for
-state, in-process event bus, Go daemon + Next.js web UI.
+goal → execution → machine verification → human gate → automatic delivery
 
-## Highlights
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/ouroflow/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)](#-quick-start)
 
-- **Full unattended loop** — goals, runs, machine verification, structural
-  guards, human gates, automatic delivery (merge + re-verify + push)
-- **Acceptance policy per domain** — you state "what done means" in natural
-  language; a processor agent compiles it into executable checks (verify
-  commands, guards, gates) which you confirm once
-- **Sub-goals with changes** — the owner splits work into sub-goals (own
-  assignee, own worktree, machine or agent verification); verified sub-goals
-  produce **Changes** with revisions the owner integrates — conflicts wake
-  the assignee to rework automatically
-- **Four collaboration behaviors** — Comment / Consult / Handoff / Sub-goal,
-  exposed as the `agentwork` CLI with owner-only permissions enforced server-side
-- **Multi-protocol & transport** — ACP / JSONL / JSON-RPC over stdio / ws / tcp;
-  agents can carry their own extra MCP servers
-- **Triggers** — Web, cron schedules, GitHub/GitCode issues + pull requests
-  (poll; issues also webhook), Feishu IM inbound (@-bot task creation)
-- **Task acceptance modes (HITL / HOOTL)** — goals and schedules are created
-  as HITL (human recheck at gates — the default) or HOOTL (the goal finishes
-  directly when its run completes, skipping the human gate). The category is
-  written to the creation log, shown in the web UI, and inherited by
-  schedule-fired goals
-- **Remote skill sources** — attach a GitHub/GitCode repository (branch, path,
-  token) to a skill, compare local vs remote, pull remote updates, push local
-  edits, or submit a pull request; sync and PR require the token to actually
-  hold push permission, verified against the provider API. A pull immediately
-  refreshes the skill copies of that agent's LIVE sessions (the machine re-stages
-  every open chat cwd), so the next session uses the new skill without an agent
-  restart; if an archive is unavailable the push is refused instead of wiping
-  the machine's staging dir, and a skill whose local files are gone reports
-  `local_missing` so a pull can restore them
-- **Feishu notifications** — approval cards (approve/reject right in IM),
-  completion/failure pushes, a daily digest
-- **Real-time web UI** — live event stream, execution timeline, sub-goal /
-  change / verification panels
-- **Conversation-first creation** — a built-in skill rides every steward
-  conversation, so goals, squads, agents, schedules and blueprints are created
-  by describing them in chat (the platform asks once for anything missing; a
-  blueprint lands as a draft and publishes on confirmation)
-- **Agent chat (ACP bridge)** — the web is a real ACP client for each agent:
-  `GET /agents/{id}/acp` relays ACP frames unparsed to the machine-side CLI;
-  sessions are the CLI's own (list/load/new), permission requests surface as
-  an approval modal, and turns can be interrupted or retried on a fresh
-  session when poisoned history fails at the input layer
+[English](README.md) · [简体中文](README.zh.md)
 
-> **One-line mental model:** a **goal** is a work item and the sole holder of
-> state authority; a **run** is one agent's turn on it — runs report up, never
-> decide. The platform judges completion; you hold the gates.
+[Highlights](#-highlights) · [Quick Start](#-quick-start) · [Core Concepts](#-core-concepts) · [Collaboration](#-collaboration) · [Architecture](#-architecture) · [CLI](#-cli-tool) · [Docs](#-docs-upgrades--templates) · [Tech Stack](#-tech-stack) · [Acknowledgments](#-acknowledgments)
 
-## Quick start
+**Single process · single machine · single user · no auth.** Local SQLite state, in-process event bus, Go daemon + Next.js web UI.
+
+</div>
+
+## 🌟 Highlights
+
+- **Full unattended loop** — goals, runs, machine verification, structural guards, human gates, automatic delivery (merge + re-verify + push)
+- **Acceptance policy per domain** — you state "what done means" in natural language; a processor agent compiles it into executable checks (verify commands, guards, gates) which you confirm once
+- **Sub-goals with changes** — the owner splits work into sub-goals (own assignee, own worktree, machine or agent verification); verified sub-goals produce **Changes** with revisions the owner integrates — conflicts wake the assignee to rework automatically
+- **Four collaboration behaviors** — Comment / Consult / Handoff / Sub-goal, exposed as the `ouroflow` CLI with owner-only permissions enforced server-side
+- **Multi-protocol & transport** — ACP / JSONL / JSON-RPC over stdio / ws / tcp; agents can carry their own extra MCP servers
+- **Triggers** — Web, cron schedules, GitHub/GitCode issues + pull requests (poll; issues also webhook), Feishu IM inbound (@-bot task creation)
+- **Task acceptance modes (HITL / HOOTL)** — goals and schedules are created as HITL (human recheck at gates — the default) or HOOTL (the goal finishes directly when its run completes, skipping the human gate)
+- **Remote skill sources** — attach a GitHub/GitCode repository (branch, path, token) to a skill, compare local vs remote, pull remote updates, push local edits, or submit a pull request; sync and PR are verified against the provider API, and a pull immediately refreshes the skill copies of that agent's LIVE sessions
+- **Feishu notifications** — approval cards (approve/reject right in IM), completion/failure pushes, a daily digest
+- **Real-time web UI** — live event stream, execution timeline, sub-goal / change / verification panels
+- **Conversation-first creation** — a built-in skill rides every steward conversation, so goals, squads, agents, schedules and blueprints are created by describing them in chat
+- **Agent chat (ACP bridge)** — the web is a real ACP client for each agent: `GET /agents/{id}/acp` relays ACP frames unparsed to the machine-side CLI; permission requests surface as an approval modal, and turns can be interrupted or retried on a fresh session
+
+> **One-line mental model:** a **goal** is a work item and the sole holder of state authority; a **run** is one agent's turn on it — runs report up, never decide. The platform judges completion; you hold the gates.
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -70,17 +47,18 @@ state, in-process event bus, Go daemon + Next.js web UI.
 ### Backend
 
 ```bash
-./build.sh   # builds build/agentwork (CLI) + build/agentwork-daemon
-             # with one shared version stamp (AGENTWORK_COMPILE_VERSION)
+./build.sh   # builds build/ouroflow (CLI) + build/ouroflow-daemon
+             # with one shared version stamp (OUROFLOW_COMPILE_VERSION)
 
 # Start the daemon (default :47813)
-./build/agentwork-daemon
+./build/ouroflow-daemon
 
 # And on the machine that runs the agents:
-./build/agentwork connect
+./build/ouroflow connect
 ```
 
-### Frontend
+<details open>
+<summary><b>Frontend</b></summary>
 
 ```bash
 cd web
@@ -88,20 +66,23 @@ npm install
 npm run build && npm start
 ```
 
-### First goal
+</details>
 
-1. Create a **domain** (项目): repo URL + acceptance policy in natural language
-   (or leave it unfrozen to force a human checkpoint)
-2. Create a **runtime** (e.g. `opencode acp --pure`, stdio + acp) and an
-   **agent**
-3. Run `agentwork connect` on your machine — the daemon dispatches runs to
-   it via `run.poll` (pull model)
-4. Create a **goal**, assign the agent, and watch the loop run: execution →
-   verification → review → your approval → automatic delivery
-5. Or chat with any agent directly from the Agents page — a per-agent ACP
-   session with the persona/skills staged fresh at every open
+<details open>
+<summary><b>First goal</b></summary>
 
-## Core concepts
+1. Create a **domain** (project): repo URL + acceptance policy in natural language (or leave it unfrozen to force a human checkpoint)
+2. Create a **runtime** (e.g. `opencode acp --pure`, stdio + acp) and an **agent**
+3. Run `ouroflow connect` on your machine — the daemon dispatches runs to it via `run.poll` (pull model)
+4. Create a **goal**, assign the agent, and watch the loop run: execution → verification → review → your approval → automatic delivery
+5. Or chat with any agent directly from the Agents page — a per-agent ACP session with the persona/skills staged fresh at every open
+
+</details>
+
+## 🧩 Core Concepts
+
+<details>
+<summary><b>The object model — 13 concepts, one table</b></summary>
 
 | Concept | What it is |
 |---|---|
@@ -120,84 +101,92 @@ npm run build && npm start
 | **Schedule** | A cron template that clones a goal per firing (idempotent, timezone-aware). |
 | **Trigger** | Web, cron, GitHub/GitCode issues + PRs (poll, deduped by source ref; issues also webhook), Feishu IM inbound. |
 
-## Collaboration (four behaviors)
+</details>
+
+## 🤝 Collaboration
+
+<details>
+<summary><b>Four behaviors, one CLI, owner permissions enforced server-side</b></summary>
 
 | Behavior | CLI command | Who may |
 |---|---|---|
-| **Comment** (say) | `agentwork goal comment --text T` | anyone |
+| **Comment** (say) | `ouroflow goal comment --text T` | anyone |
 | **Consult** (ask) | a mention in `goal comment`: `[@Name](mention://agent/<id>)` | the goal's owner |
-| **Handoff** (transfer) | `agentwork goal assign <to-agent-id> [--note N]` | the goal's owner |
-| **Sub-goal** (split) | `agentwork subgoal create --title T --assignee A` / `subgoal cancel <id>` | the goal's owner |
+| **Handoff** (transfer) | `ouroflow goal assign <to-agent-id> [--note N]` | the goal's owner |
+| **Sub-goal** (split) | `ouroflow subgoal create --title T --assignee A` / `subgoal cancel <id>` | the goal's owner |
 
-Agents coordinate exclusively through the `agentwork` CLI (a shim of the
-daemon binary, on the agent's PATH at spawn). Every command carries the
-per-run token (`AGENTWORK_TOKEN`), which the daemon's `/rpc` endpoint
-resolves to the run's `(goal, agent, role)` — the token is the ONLY
-identity, self-reported ids are ignored, and the handoff owner check is
-enforced server-side. Plus `subgoal verify`, `change integrate`, and the
-`*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
+Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (`OUROFLOW_TOKEN`), which the daemon's `/rpc` endpoint resolves to the run's `(goal, agent, role)` — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side. Plus `subgoal verify`, `change integrate`, and the `*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
 
-## Architecture
+</details>
+
+## 🧱 Architecture
+
+<details>
+<summary><b>The whole system on one diagram</b></summary>
 
 ```
-                 ┌────────────── HTTP API + WS hub ──────────────┐
-                 │   goals/runs/sub-goals/changes/…               │
-                 │   + /agents/{id}/acp (ACP chat relay)          │
-                 ▼                                               ▼
-           service layer (state authority)                web UI (Next.js)
-                 │  bus.Publish (after commit)              │ ACP client (chat)
-                 ▼                                           │
-            SQLite (truth) ── daemon scheduler ──────────────┤
-                                 │ run.poll / chat.*        │
-                                 ▼                           ▼
-                          agentwork connect   ◄──  /connect (JSON-RPC)
-                                 │  runTask, chat bridge (spawn + relay)
-                                 ▼
-                          runtime.Open(spec)
-                                 │  acp | jsonl | jsonrpc
-                                 ▼
-                          agent CLI subprocess ◄── ACP frames relayed unparsed
-                           (stdio/ws/tcp)
-                           └─ fs/terminal RPC + agentwork CLI (/rpc)
-                              (worktree, collaboration commands)
-                 ┌───────────────┬─────────────────────────────┘
-                 ▼               ▼
-          machine verify /   review gate → deliver
-          guards (domain)    (human approve → merge+re-verify+push)
+             ┌────────────── HTTP API + WS hub ──────────────┐
+             │   goals/runs/sub-goals/changes/…               │
+             │   + /agents/{id}/acp (ACP chat relay)          │
+             ▼                                               ▼
+       service layer (state authority)                web UI (Next.js)
+             │  bus.Publish (after commit)              │ ACP client (chat)
+             ▼                                           │
+        SQLite (truth) ── daemon scheduler ──────────────┤
+                             │ run.poll / chat.*        │
+                             ▼                           ▼
+                      ouroflow connect   ◄──  /connect (JSON-RPC)
+                             │  runTask, chat bridge (spawn + relay)
+                             ▼
+                      runtime.Open(spec)
+                             │  acp | jsonl | jsonrpc
+                             ▼
+                      agent CLI subprocess ◄── ACP frames relayed unparsed
+                       (stdio/ws/tcp)
+                       └─ fs/terminal RPC + ouroflow CLI (/rpc)
+                          (worktree, collaboration commands)
+             ┌───────────────┬─────────────────────────────┘
+             ▼               ▼
+      machine verify /   review gate → deliver
+      guards (domain)    (human approve → merge+re-verify+push)
 ```
 
-- **Event ≠ truth** — the bus is a wakeup hint; every transition is a
-  conditional DB transaction, idempotent under replay
-- **Machine executor** — `agentwork connect` holds a persistent JSON-RPC
-  link and pulls work (`run.poll`); it executes runs, hosts the per-agent chat
-  bridge (spawns the CLI, relays ACP frames unparsed, tears down gracefully
-  with stdin EOF before the kill)
-- **Per-run worktrees** — `$AGENTWORK_HOME/runs/<runID>` (default `~/.agentwork`) ephemeral git worktrees
-  against per-domain bare repos; crash recovery replays terminal runs and
-  re-derives attention at startup
-- **Coordinator** — derived OwnerAttention (integration / recovery /
-  user_action) wakes the owner exactly when there is work for it
+- **Event ≠ truth** — the bus is a wakeup hint; every transition is a conditional DB transaction, idempotent under replay
+- **Machine executor** — `ouroflow connect` holds a persistent JSON-RPC link and pulls work (`run.poll`); it executes runs, hosts the per-agent chat bridge (spawns the CLI, relays ACP frames unparsed, tears down gracefully with stdin EOF before the kill)
+- **Per-run worktrees** — `$OUROFLOW_HOME/runs/<runID>` (default `~/.ouroflow`) ephemeral git worktrees against per-domain bare repos; crash recovery replays terminal runs and re-derives attention at startup
+- **Coordinator** — derived OwnerAttention (integration / recovery / user_action) wakes the owner exactly when there is work for it
 
-## CLI tool
+</details>
 
-`agentwork` is the **machine executor** and a human debugging tool (agents
-use the `agentwork` CLI shim for collaboration):
+## 🔧 CLI Tool
+
+<details>
+<summary><b>Machine executor + human debugging tool</b></summary>
+
+`ouroflow` is the **machine executor** and a human debugging tool (agents use the `ouroflow` CLI shim for collaboration):
 
 ```bash
-agentwork connect               # the machine side: pulls dispatches, runs them, hosts chats
-agentwork goal list --limit 5   # debugging commands (default http://localhost:47813,
-agentwork stats                 #   or set AGENTWORK_SERVER_URL)
+ouroflow connect               # the machine side: pulls dispatches, runs them, hosts chats
+ouroflow goal list --limit 5   # debugging commands (default http://localhost:47813,
+ouroflow stats                 #   or set OUROFLOW_SERVER_URL)
 ```
 
-## Data, upgrades, and templates
+</details>
+
+## 📚 Docs, Upgrades & Templates
 
 - [Paths and data layout](docs/PATHS.md) — every directory/env var, and what must survive an upgrade
 - [Upgrade without losing data](docs/UPGRADE.md) — stop → backup → replace only bin/web → start, including JEM
 - [Run identity & instruction ownership](docs/IDENTITY.md) — a run's identity comes from THIS run alone: the shared-workdir hijack postmortem and the three-layer fix
-- [Turn your workflow into a template](docs/TEMPLATES.md) — export with `agentwork-daemon export-template`
-- [Artifact-swap skill](skills/agentwork-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
+- [Turn your workflow into a template](docs/TEMPLATES.md) — export with `ouroflow-daemon export-template`
+- [Artifact-swap skill](skills/ouroflow-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
+- [Design baseline](docs/design/DESIGN.md) — the frozen product & architecture document
+- [Collaboration model](docs/design/Collaboration.v2.md) — the full owner/role/permission model
 
-## Tech stack
+## 🧪 Tech Stack
+
+<details>
+<summary><b>What it's built on</b></summary>
 
 | Layer | Stack |
 |---|---|
@@ -207,3 +196,27 @@ agentwork stats                 #   or set AGENTWORK_SERVER_URL)
 | **Transports** | stdio, WebSocket, TCP |
 | **Notifications** | Feishu (approval cards, digest, IM inbound) |
 | **Issue triggers** | GitHub, GitCode |
+
+</details>
+
+## 🙏 Acknowledgments
+
+OuroFlow is an independent derivative distribution of [agentwork](https://github.com/yusheng-g/agentwork), maintained by [Sinkear](https://github.com/Sinkear).
+
+| | |
+|---|---|
+| Upstream project | [yusheng-g/agentwork](https://github.com/yusheng-g/agentwork) |
+| Maintainer | [Sinkear](https://github.com/Sinkear) |
+| License | MIT — modifications © 2026 Sinkear, original © its authors |
+
+---
+
+<div align="center">
+
+**OuroFlow** — you hold the gates, the platform runs the loop.
+
+[⬆ Back to top](#ouroflow)
+
+MIT © 2026 Sinkear
+
+</div>

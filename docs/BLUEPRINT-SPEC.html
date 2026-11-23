@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>图说了算 —— agentwork 新一代工作流规范（Phase A–D 全量落地版）</title>
+<title>图说了算 —— ouroflow 新一代工作流规范（Phase A–D 全量落地版）</title>
 <style>
   :root{
     --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#ffffff; --bgsoft:#f8fafc;
@@ -112,7 +112,7 @@
 <div class="wrap">
 
 <header class="hero">
-  <div class="kicker">AGENTWORK · 新一代项目规范 · 2026-11</div>
+  <div class="kicker">OUROFLOW · 新一代项目规范 · 2026-11</div>
   <h1>图说了算：<br>从「管家编排」到「图驱动自迭代」</h1>
   <p class="subtitle">Phase A（规范化）→ B（资源池）→ C（优化闭环）→ D（度量与翻译）→ §14（收敛补强）全量落地的技术详解</p>
   <div class="meta">
@@ -129,7 +129,7 @@
 
 <div class="overview-scroll">
   <a href="blueprint-overview.html" target="_blank" rel="noopener" title="点开交互版">
-    <img class="overview-img" src="blueprint-overview.png" alt="agentwork 图驱动自迭代总览：入口 → 引擎 → 拍板权 → 蓝本版本链 → RSI 优化闭环">
+    <img class="overview-img" src="blueprint-overview.png" alt="ouroflow 图驱动自迭代总览：入口 → 引擎 → 拍板权 → 蓝本版本链 → RSI 优化闭环">
   </a>
 </div>
 
@@ -160,6 +160,7 @@
     <li><a href="#s8">收敛条件怎么定义</a></li>
     <li><a href="#s9">命名建议</a></li>
     <li><a href="#s10">终章：一个完整迭代的实践案例</a></li>
+    <li><a href="#s11">名词与指标字典（持续补充）</a></li>
     <li><a href="#notes">注解与出处：每个结论从哪来</a></li>
   </ol>
 </div>
@@ -219,6 +220,7 @@
     <tr><td>rsi.max_auto_rounds</td><td>自动迭代轮次上限（默认 10，0=关，只封机器不封人）</td></tr>
   </tbody>
 </table>
+<p style="color:var(--muted);font-size:13px;margin:8px 0 0">这只是速查版；<b>完整的名词与指标字典</b>（含口径、代码锚点、阈值表、读数演算）见 <a href="#s11">§11 名词与指标字典</a>，会随对话持续增补。</p>
 </details>
 
 <!-- ============ 1 总纲 ============ -->
@@ -528,7 +530,7 @@
 </table>
 <div class="callout">
   <span class="t">落地边界（按你的要求）</span>
-  代码/包名/仓库名/表名<b>全部不动</b>，本轮只做品牌层建议。若采纳「GraphForge / 图锻」：对外的 README、HTML 文档标题、发布包名用新名；对内的 module path、CLI 名（agentwork）、数据库 schema 维持现状，避免一次全局 rename 的迁移风险。
+  代码/包名/仓库名/表名<b>全部不动</b>，本轮只做品牌层建议。若采纳「GraphForge / 图锻」：对外的 README、HTML 文档标题、发布包名用新名；对内的 module path、CLI 名（ouroflow）、数据库 schema 维持现状，避免一次全局 rename 的迁移风险。
 </div>
 
 <!-- ============ 10 实践案例 ============ -->
@@ -610,6 +612,211 @@ patches：
   </div>
 </div>
 
+
+<!-- ============ 11 名词与指标字典（对话增补） ============ -->
+<h2 id="s11"><span class="no">11</span>名词与指标字典（对话增补 · 持续更新）</h2>
+
+<div class="callout">
+  <span class="t">本节怎么用</span>
+  这里是正文各章用到的<b>名词、字段、指标</b>的集中定义，口径一律以代码为准（每条标注可核对的文件与行号）。<b>增补约定</b>：对话里每出现一个需要对齐的名词或指标，就补进对应分组，并在文末「增补记录」里记一行（日期 + 新增词条）；只追加、不删改——口径若变，标注「旧口径 → 新口径」。示例数字凡未注明「实测」，一律视为<b>示意量级</b>，不对应某一次真实运行。
+</div>
+
+<h3>11.1 实体与文书</h3>
+
+<table>
+  <thead><tr><th style="width:15%">词</th><th style="width:40%">是什么</th><th>关键约束 / 字段</th></tr></thead>
+  <tbody>
+    <tr><td><b>项目 domain</b></td><td>验收与归属的容器：一个 repo（或 scratch 工作区）＋ 一个验收级别</td><td><code>acceptance_level</code> ∈ 空 | <code>hitl</code> | <code>hootl</code>；<code>git_url</code>/<code>default_branch</code> 仅 repo 型；<b>没有</b>「自然语言验收策略→verify 命令」的编译器（该子系统已退役）</td></tr>
+    <tr><td><b>小队 squad</b></td><td>执行者的路由组：1 个 leader ＋ N 个成员（agent 或 human）＋ 一张角色词汇表</td><td>schema 里<b>没有 domain_id</b>：小队不绑定项目；<code>squad_role.name</code> 是 capability slug（<code>^[a-z][a-z0-9_-]*$</code>），保留字 <code>reviewer</code>/<code>member</code></td></tr>
+    <tr><td><b>蓝本 blueprint</b></td><td>可复用的工作流规格（JSON 图），全局唯一名，可被任意多项目/小队经各自的 goal 复用</td><td>schema 里<b>没有</b> domain/squad 列；对执行者的耦合只体现在 spec 节点的 <code>assignee</code> 上</td></tr>
+    <tr><td><b>蓝本版本 blueprint_version</b></td><td>不可变的规格快照；<code>draft</code> 可编辑，<code>published</code> 是权威、不可改</td><td><code>UNIQUE(blueprint_id, version)</code>；<code>content_hash = sha256(content)</code> 用于编译期防漂移；只有 published 能被 goal 钉</td></tr>
+    <tr><td><b>规格节点 spec node</b></td><td>蓝本 JSON <code>nodes[]</code> 里的一项：<code>{id,type,title,...}</code></td><td>type ∈ <code>task</code> | <code>condition</code> | <code>router</code> | <code>gate</code> | <code>spawn</code> | <code>end</code>；id 匹配 <code>^[a-z][a-z0-9_]{0,63}$</code>；最多 64 节点</td></tr>
+    <tr><td><b>执行节点</b></td><td>一次 train 跑完冻结的 <code>workflow_json</code> 里的一项（施工记录，只读）</td><td>key 形态：<code>goal</code> / <code>sg:&lt;sub_goal_id&gt;</code> / <code>v:&lt;sub_goal_id&gt;</code> / <code>review:&lt;run_id&gt;</code> / <code>consult:&lt;run_id&gt;</code> / <code>chg:&lt;change_id&gt;</code></td></tr>
+    <tr><td><b>blueprint_node</b></td><td>编译期台账：把 spec 节点 id 与 <code>sub_goal_id</code> 一一对上</td><td>翻译器靠它把 <code>sg:xxx</code> 反查回 spec id；<b>行数=0 说明版本没经过 Activate/publish</b>，自动提案会跳过</td></tr>
+    <tr><td><b>goal</b></td><td>一次任务的唯一状态权威；钉住一个已发布蓝本版本，激活时一次编译成子目标</td><td><code>execution_mode</code> ∈ <code>infer</code>（默认，零采集）| <code>train</code>（终态冻结执行图并异步分析）</td></tr>
+    <tr><td><b>钉版 pin</b></td><td>goal 指向某个 published 版本的 <code>blueprint_version_id</code></td><td>钉 draft 会被拒（“only a published version can be pinned”）；编译时校验 <code>content_hash</code>，不一致报 <code>refusing to compile a drifted spec</code></td></tr>
+    <tr><td><b>子目标 sub_goal</b></td><td>编译产物：每个 task/spawn/gate/… 节点落一条，带 <code>assignee</code>、<code>depends_on</code>、<code>verifier_id</code></td><td><code>depends_on</code> 是可执行 DAG 的边；<code>verifier_id=''</code> 表示机器校验</td></tr>
+    <tr><td><b>brief</b></td><td><b>spec 的 task 节点里必填的自然语言指令</b>，编译时经 <code>{{goal.*}}</code> 插值后成为 <code>sub_goal.description</code>，就是执行 agent 拿到的任务说明</td><td>不是标题、不是产出物名；可含 <code>{{node.X.output}}</code>（仅 task 节点）——<b>一旦跨成员引用，chain→fork 自动提案整链放弃</b></td></tr>
+    <tr><td><b>verify</b></td><td>每个 task 可声明 <code>verify.mode</code> 的校验方式</td><td><code>domain_default</code>（跟项目验收级别）| <code>machine</code>（跑命令）| <code>agent</code>（结构化裁决，需 <code>verifier</code>，且 verifier ≠ assignee）</td></tr>
+    <tr><td><b>gate</b></td><td>人工检查点节点：持有一个决策卡，永不入队执行</td><td>必填 <code>prompt</code>、<code>actions[]</code>、<code>timeout{after,action}</code>；<code>after</code> 用 Go <code>ParseDuration</code>（<code>24h</code> 合法、<code>1d</code> 非法）</td></tr>
+    <tr><td><b>spawn</b></td><td>队内扇出节点：由执行者按契约产出子计划，物化成子目标</td><td>必填 <code>assignee</code>、<code>brief</code>、<code>child_type=task</code>、<code>max_children</code> 1–8；子节点 key 形如 <code>&lt;spawn_key&gt;#1</code></td></tr>
+    <tr><td><b>finding</b></td><td>RSI 规则产出的诊断行（只读，不碰版本）</td><td><code>rsi_finding</code>：category / severity / confidence(L1–L3) / title / explanation / suggestion / evidence / score / status</td></tr>
+    <tr><td><b>proposal（提案）</b></td><td>把某类 finding 翻译成结构化补丁的行，状态 <code>pending</code></td><td><code>blueprint_proposal</code>：base_version_id / patches[] / expected_metric / expected_direction / applied_version_id / decided_by</td></tr>
+    <tr><td><b>patch op</b></td><td>提案里的原子改动：<code>add_node</code> / <code>update_node</code> / <code>delete_node</code> / <code>add_edge</code> / <code>delete_edge</code></td><td>结构：<code>{op, id?, node?, edge?}</code>；套用后仍须整图过 V1–V6</td></tr>
+    <tr><td><b>rsi_round</b></td><td>优化轮次账本：每分析一次追加一行，冻结当轮指标、baseline、findings、delta</td><td><code>round_no</code> <b>按 domain 递增</b>；<code>trigger</code> ∈ <code>terminal</code>（该 session 首轮）| <code>manual_retry</code>；A/B 只看这里的冻结值</td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 两种「节点」别混：图纸 vs 施工记录</h3>
+
+<table>
+  <thead><tr><th style="width:18%"></th><th style="width:41%">spec 节点（图纸）</th><th>执行节点（施工记录）</th></tr></thead>
+  <tbody>
+    <tr><td><b>在哪</b></td><td><code>blueprint_version.content.nodes[]</code></td><td>train 跑完冻结的 <code>workflow_json.nodes[]</code></td></tr>
+    <tr><td><b>类型</b></td><td><code>task</code>/<code>condition</code>/<code>router</code>/<code>gate</code>/<code>spawn</code>/<code>end</code></td><td><code>agent</code>/<code>verify</code>/<code>review</code>/<code>consult</code>/<code>integrate</code>（＋虚拟根 <code>goal</code>）</td></tr>
+    <tr><td><b>谁产生</b></td><td>人（或自动提案）写 JSON</td><td>编译、派发、校验、咨询、集成自然产生</td></tr>
+    <tr><td><b>可改性</b></td><td>✅ 提案补丁改的就是它；published 版本不可改，只能开新 draft</td><td>❌ 冻结后只读（「记录不可被优化器改写」的双簿记原则）</td></tr>
+    <tr><td><b>对应关系</b></td><td colspan="2">编译期 <code>blueprint_node</code> 落一行 <code>node_key='t1_deps' → sub_goal_id</code>；翻译器反向查表把 <code>sg:xxx</code> 映射回 <code>t1_deps</code>。映射不到的节点（如 spawn 展开的 <code>#1</code> 子任务）→ 翻译器放弃，不凭空造补丁。</td></tr>
+  </tbody>
+</table>
+
+<div class="callout amber">
+  <span class="t">一个必须记住的口径：depth 数的是「节点」，不是「task」</span>
+  关键路径 DP 会把 <b>0 时长的机器校验节点</b>（<code>v:&lt;sg&gt;</code>，机器校验也写 <code>verification_result</code> 行、<code>verifier_run_id=''</code>）串进路径。所以场景 A 的 4 个 task 串行链，<code>depth</code> 显示为 <b>8</b>（4 task ＋ 4 verify），而不是 4。规则阈值（<code>depth ≥ 4</code>）看的是这个节点数；Phase D 翻译器随后用 <code>criticalTaskChain</code> 滤出<b>连续 agent 段</b>（4 个 task）才动手。<b>旧说法「depth=4」已作废</b>。
+</div>
+
+<h3>11.3 版本与提案链路（谁改什么）</h3>
+
+<table>
+  <thead><tr><th style="width:16%">阶段</th><th style="width:22%">执行者</th><th style="width:32%">写入什么</th><th>是否动版本</th></tr></thead>
+  <tbody>
+    <tr><td>指标计算 / 规则判定</td><td><code>rsi_analyze.go</code> 规则引擎（确定性）</td><td><code>rsi_report</code>、<code>rsi_finding</code>、<code>rsi_round</code></td><td>❌</td></tr>
+    <tr><td>finding → 补丁翻译</td><td><code>proposeForkForChain</code>（确定性，<b>仅 serial_chain</b>）</td><td><code>blueprint_proposal</code>（<code>pending</code>，<code>created_by_id='rsi-translator'</code>）</td><td>❌ 只写提案行</td></tr>
+    <tr><td>批准 / 拒绝</td><td><b>人</b>（<code>POST /blueprint-proposals/{id}/approve</code>；<code>decided_by</code> 必填）</td><td>提案状态 ＋ <b>v<sub>N+1</sub> draft</b>（<code>changelog = hypothesis</code>）＋ 回填 <code>applied_version_id</code></td><td>✅ 但只产生 draft</td></tr>
+    <tr><td>补丁套用与校验</td><td><code>BlueprintService</code>（V1–V6 ＋ 形状校验）</td><td><code>blueprint_version</code>（draft 内容）</td><td>✅</td></tr>
+    <tr><td>发布</td><td>人（<code>POST /blueprint-versions/{id}/publish</code>）或 next-round 代劳</td><td>status → <code>published</code>，写 <code>content_hash</code></td><td>✅ 不可逆</td></tr>
+    <tr><td>开下一轮</td><td>人点「开始下一轮」→ <code>POST /blueprint-proposals/{id}/next-round</code></td><td>新 goal（<code>execution_mode=train</code>、钉新版本、<code>source_ref=rsi-proposal:&lt;id&gt;</code>）</td><td>❌ 只引用</td></tr>
+  </tbody>
+</table>
+
+<ul>
+  <li>提案 <code>pending → approved</code> 必须由人写 <code>decided_by</code>；<code>next-round</code> 硬性要求 <code>approved &amp;&amp; applied_version_id != ""</code>；机器从不自批、从不自发布。</li>
+  <li>只有 <code>serial_chain</code> 有确定性补丁；其余九类 finding 只产出文字建议，版本怎么改靠人（开 draft 手改，或 <code>POST /blueprints/{id}/proposals</code> 自提补丁，此时 <code>created_by_type</code> 记为 <code>human</code>）。</li>
+  <li>自动产物有上限 <code>rsi.max_auto_rounds</code>（默认 10，0 关闭）：translator 提案按<b>蓝图</b>计（pending/approved），涌现草稿按<b>domain</b>计；分析与人工作业永不受限。</li>
+  <li>无自动回滚：<code>status</code> 里虽有 <code>retired</code>，但全仓库没有代码写它——跑差了就开新 draft（版本号继续涨，历史不覆盖）。</li>
+</ul>
+
+<h3>11.4 时间四件套（含「墙钟」）</h3>
+
+<table>
+  <thead><tr><th style="width:17%">指标</th><th style="width:21%">公式</th><th>定义与读法</th></tr></thead>
+  <tbody>
+    <tr><td><b>墙钟</b><br><code>wall_ms</code></td><td><code>wallEnd − wallStart</code></td><td>用户实际等了多久：从<b>最早开始的非 review 节点</b>到<b>最晚结束的节点</b>。里面含三类空洞：派发等待、依赖等待、人工等待。<b>不是</b> lead time（goal 创建→终态），也不是关键路径。<code>workflow.go:536-563</code></td></tr>
+    <tr><td><b>工作量</b><br><code>work_sum_ms</code></td><td>Σ 节点耗时</td><td>「无限并发下要几秒机时」。<b>排除 review</b>（评审无法归因，单独记 <code>review_busy_ms</code>），含 verify。<code>workflow.go:526-545</code></td></tr>
+    <tr><td><b>关键路径</b><br><code>critical_path_ms</code></td><td>沿<b>显式依赖边</b>的最长耗时链</td><td>依赖约束下的理论最短墙钟。只认 explicit 边：<code>source="inferred"</code> 的 seq 边被跳过（时间先后 ≠ 依赖），且要求前驱真的在上游结束前完成；review 节点不参与。<code>workflow.go:456-500</code></td></tr>
+    <tr><td><b>串行损失</b><br><code>serialization_loss_ms</code></td><td><code>max(0, wall − cp)</code></td><td>「如果依赖已最优、并发无限，本可省掉的时间」。<b>混合量</b>，须再拆等待（见 11.6）；不可与三项等待硬凑等式（cp 只累加关键链 busy）。<code>workflow.go:616-621</code></td></tr>
+    <tr><td><b>理论增益</b><br><code>gain</code></td><td><code>work_sum / critical_path</code></td><td>加速<b>上限</b>：同样工作量除以依赖约束下的最短时间。规则里 <code>lost_parallelism</code> 用它当分子（<code>gain ≥ 2.0</code>）。</td></tr>
+  </tbody>
+</table>
+
+<h3>11.5 并行与派发指标</h3>
+
+<table>
+  <thead><tr><th style="width:20%">指标</th><th style="width:26%">公式 / 数据源</th><th>定义与读法</th></tr></thead>
+  <tbody>
+    <tr><td><b>并行加速</b><br><code>parallel_speedup</code></td><td><code>work_sum / wall</code></td><td>实际吞吐相当于几倍单车道：1.0＝全串行，2.0＝等效两车道。是<b>实际达成</b>，不是理论增益（<code>gain</code>）。<code>workflow.go:622-632</code></td></tr>
+    <tr><td><b>并发峰值</b><br><code>parallel_width_peak</code></td><td>扫描线（非 review 区间）</td><td>同一时刻最多几个节点在跑。峰值=1 而 task 有 4 个 → 明确「从未并行」。<code>workflow.go:552-585</code></td></tr>
+    <tr><td><b>深度</b><br><code>depth</code></td><td><code>len(critical_path)</code></td><td>关键路径<b>节点数</b>（含 0 时长 verify 节点，见 11.2 的 amber 框）。<code>serial_chain</code> 阈值 ≥4。</td></tr>
+    <tr><td><b>lane</b></td><td>按 <code>assignee_id</code> 累加忙碌时长</td><td>「人」维度的负载桶。review 与无 assignee 的节点（机器校验、集成）不计入。<code>workflow.go:545-550</code></td></tr>
+    <tr><td><b>lane_count</b></td><td>有忙碌时长的 assignee 数</td><td>1 时失衡比恒为 1、规则不触发；≤2 个 lane 时比值也不稳，故 <code>wrong_assignee</code> 要求 ≥2（实际建议 ≥3 才当强信号）。</td></tr>
+    <tr><td><b>分派失衡</b><br><code>lane_imbalance</code></td><td><code>lane_max / mean(lane)</code></td><td>最忙的人承担了几倍平均工作量。回答的是「并行开了，活有没有摊开」。≥2.0 且 lane≥2 → <code>wrong_assignee</code>（severity=info）。<code>workflow.go:648-661</code></td></tr>
+    <tr><td><b>轻载/重载的注意</b><br>联合读法</td><td><code>speedup</code> ＋ <code>width_peak</code> ＋ <code>lane_imbalance</code></td><td><b>lane 比值只在「多车道且真有人闲着」时有效</b>。只有一个 assignee 时失衡比恒为 1，此时派发堆积表现为 <b>width_peak 上不去、speedup 不涨</b>——必须三指标一起看。</td></tr>
+  </tbody>
+</table>
+
+<h3>11.6 等待拆分与质量指标</h3>
+
+<table>
+  <thead><tr><th style="width:22%">指标</th><th style="width:30%">算法</th><th>读到它大意味着什么</th></tr></thead>
+  <tbody>
+    <tr><td><code>dependency_wait_ms</code></td><td><code>Σ(ready_at − created_at)</code>，<code>ready_at = max(创建时间, 最晚上游结束)</code></td><td>等上游完成：依赖声明过强，或上游太慢。<code>workflow.go:197-222</code></td></tr>
+    <tr><td><code>dispatch_wait_ms</code></td><td><code>Σ(run_start − ready_at)</code></td><td>任务已就绪却没开跑：并发容量不足、派发晚、agent 的 <code>max_concurrent</code> 卡住。</td></tr>
+    <tr><td><code>queue_wait_ms</code></td><td><code>dependency + dispatch</code></td><td>兼容别名；新读法应拆开看。</td></tr>
+    <tr><td><code>human_wait_ms</code><br><code>human_wait_share</code></td><td>gate 决策耗时（实体级，非 run 窗口）；share 分母 <code>wall + wait</code></td><td>卡在人工检查点。<code>human_wait_share ≥ 0.30</code> → 命中 <code>human_wait</code>。<code>workflow.go:408-420</code></td></tr>
+    <tr><td><code>verify_overhead_ratio</code></td><td><code>verify_busy / work_sum</code></td><td>校验开销占比；过高校验在拖慢主流程（拆验证或降轮次）。</td></tr>
+    <tr><td><code>review_overhead_ratio</code></td><td><code>review_busy / work_sum</code></td><td>评审开销占比（评审不占 wall，但占人的时间）。</td></tr>
+    <tr><td><code>rework_ratio</code></td><td><code>被拒轮数 / 验证轮数</code></td><td>≥0.5 → <code>brief_quality</code> 或 review 过严。</td></tr>
+    <tr><td><code>verify_pass_rate</code></td><td>verified 节点中 <code>Reworks==0</code> 占比</td><td>一次通过率；与效率指标并列进 A/B 七项，防「更快但更烂」。</td></tr>
+    <tr><td><code>retry_amplification</code></td><td>单节点最多尝试次数</td><td>超 baseline 升 L2（<code>retry_amplification</code>）；反复重跑说明任务描述或工具不稳。</td></tr>
+    <tr><td><code>consult_count</code> / <code>ping_pong</code></td><td>咨询节点数；同 requester→target 对的咨询次数</td><td>≥3 对同一对 → <code>ping_pong</code>：brief 不清导致反复问，或职责边界糊。</td></tr>
+  </tbody>
+</table>
+
+<h3>11.7 规则阈值（硬编码常量）</h3>
+
+<table>
+  <thead><tr><th style="width:26%">常量</th><th style="width:12%">值</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>ruleSerialChainThreshold</code></td><td>4</td><td>关键路径节点数 ≥4 → <code>serial_chain</code>（数的是节点，含 verify）</td></tr>
+    <tr><td><code>ruleLostParallelGain</code></td><td>2.0</td><td><code>gain ≥2.0</code> 且 <code>speedup &lt; 0.7×gain</code> → <code>lost_parallelism</code></td></tr>
+    <tr><td><code>ruleSplitCount</code> / <code>ruleSplitShare</code></td><td>2 / 0.45</td><td>关键路径上 ≥2 个节点各占 ≥45% → <code>split_candidate</code></td></tr>
+    <tr><td><code>ruleMergeWall</code> / <code>ruleMergeSpread</code></td><td>3 / 0.60</td><td>≥3 个叶子在窗口内聚尾 → <code>merge_candidate</code>（反方向：并行过度）</td></tr>
+    <tr><td><code>ruleLaneImbalance</code></td><td>2.0</td><td>最忙 lane ≥2× 平均，且 lane_count ≥2 → <code>wrong_assignee</code></td></tr>
+    <tr><td><code>rulePingPongPairs</code></td><td>3</td><td>同一对 requester→target ≥3 次咨询 → <code>ping_pong</code></td></tr>
+    <tr><td><code>ruleReworkRatio</code></td><td>0.5</td><td>≥50% 验证轮被拒 → <code>brief_quality</code></td></tr>
+    <tr><td><code>ruleHumanWaitShare</code></td><td>0.30</td><td>人工等待占比 ≥30% → <code>human_wait</code></td></tr>
+  </tbody>
+</table>
+<p style="color:var(--muted);font-size:13px;margin-top:6px">全部定义在 <code>internal/service/rsi_analyze.go:33-44</code>；改阈值是改代码常量，不是配 <code>app_settings</code>。</p>
+
+<h3>11.8 拿到指标怎么分析（五步法）</h3>
+
+<ol>
+  <li><b>先看三个数</b>：<code>work_sum</code>、<code>wall</code>、<code>critical_path</code> → 手算 <code>gain = work/cp</code>（上限）、<code>speedup = work/wall</code>（实际）、<code>loss = wall−cp</code>（浪费）。</li>
+  <li><b>四象限定位</b>（下表），先判断「有没有并行空间」再判断「为什么没用上」。</li>
+  <li><b>拆 loss</b>：<code>dependency_wait</code> 大 → 先减依赖；<code>dispatch_wait</code> 大 → 加并发/改派发；<code>human_wait_share ≥0.30</code> → 查 gate。</li>
+  <li><b>看形状</b>：<code>width_peak=1</code> → 从未并行；<code>width_peak</code> 高但 <code>speedup</code> 低 → 有段是瓶颈，回 cp 找那段；<code>lane_imbalance</code> 高且 <code>width_peak</code> 高 → 并发开了但活给同一个人排队。</li>
+  <li><b>用账本验证</b>：单次运行只提假设；判定必须看 <code>rsi_round</code> 同 domain 相邻两轮的冻结 delta（方向是否符合提案的 <code>expected_direction</code>）。</li>
+</ol>
+
+<table>
+  <thead><tr><th style="width:13%">gain（上限）</th><th style="width:13%">speedup（实际）</th><th style="width:22%">loss 主成分</th><th>结论与动作</th></tr></thead>
+  <tbody>
+    <tr><td>≈1</td><td>≈1</td><td>小</td><td>依赖链本身就是唯一路径：无并行空间。若链深 ≥4 → <code>serial_chain</code>，先审「依赖是否人为」</td></tr>
+    <tr><td>≥2</td><td>&lt; 0.7×gain</td><td>依赖等待大</td><td>能并行却没并行 → <code>serial_chain</code> / <code>lost_parallelism</code> → chain→fork 提案</td></tr>
+    <tr><td>≥2</td><td>&lt; 0.7×gain</td><td>派发等待大、lane 失衡</td><td>派了但全压一人 → <code>wrong_assignee</code> → 改 capability 或加并发</td></tr>
+    <tr><td>≥2</td><td>≈gain</td><td>小</td><td>健康，无需动作</td></tr>
+  </tbody>
+</table>
+
+<p><b>分档参考</b>：<code>loss/wall &lt;5%</code> 几乎无等待（要提速只能减 cp）；<code>5%–30%</code> 有真实空档（查拆项）；<code>&gt;30%</code> 调度/依赖问题压过执行问题（先修结构再加人）。<b>speedup 分档</b>：&lt;1 墙钟里全是空档；1–1.5 全串行；1.5–2.5 双车道；&gt;3 良好并行。</p>
+
+<h3>11.9 场景 A 读数演算（示意数字）</h3>
+
+<p><b>v1（四个审计串行、机器校验）：</b></p>
+<pre><code>work_sum = 180s   wall = 182s   critical_path = 180s
+gain      = 1.00  speedup = 0.99  serialization_loss = 2s
+width_peak = 1    lane_count = 4  lane_imbalance = 1.00
+dependency_wait ≈ 0   dispatch_wait = 2s   human_wait = 0
+depth = 8（4 task ＋ 4 个 0 时长 verify 节点）</code></pre>
+<p><b>这里的关键判断</b>：<code>gain=1.0</code>，所以 <code>lost_parallelism</code>（要求 gain≥2.0）<b>不会</b>命中。系统判断「该并行」靠的不是统计学，而是<b>结构学</b>：<code>serial_chain</code> 命中（depth≥4），且翻译器证明「四个 brief 之间零数据引用」——这是确定性证据，说明这条链的依赖是人为的、拆掉不破坏语义。所以 Phase D 只翻译 <code>serial_chain</code>，不翻译 <code>lost_parallelism</code>。</p>
+
+<p><b>v2（fork 后，仍是 4 个不同 agent）：</b></p>
+<pre><code>work_sum = 180s   wall = 47s   critical_path = 46s
+gain      = 3.91  speedup = 3.83  serialization_loss = 1s
+width_peak = 4    lane_count = 4  lane_imbalance = 1.00
+rsi_round: round_no=2  delta: wall_ms −74.2%  parallel_speedup +286.9%</code></pre>
+
+<p><b>反例（fork 了但四个任务派给同一个 agent）：</b></p>
+<pre><code>work_sum = 180s   wall = 184s   speedup = 0.98  width_peak = 1
+lane_count = 1 → lane_imbalance = 1.00（永远不触发）</code></pre>
+<p>此时派发堆积<b>不会</b>显示为 lane 失衡，而是表现为 <code>width_peak</code> 不上去、<code>speedup</code> 不涨——这就是 11.5 末尾「三指标一起看」的原因。</p>
+
+<h3>11.10 口径与坑（速查）</h3>
+
+<ul>
+  <li><b>review 不参与</b> <code>work_sum</code>、<code>critical_path</code>、<code>lane</code>、<code>wall</code> 的端点——否则一次长评审会污染全部指标；它只进 <code>review_busy_ms</code> / <code>review_overhead_ratio</code>。</li>
+  <li><b>机器校验留 0 时长节点</b>：会进 depth 与路径，但不进 work_sum/lane；这解释了「depth 比 task 数大」。</li>
+  <li><b>cp 只认显式边</b>：seq（时间先后推断）只做展示/排队分析，永不进关键路径；否则每次串行执行都会被误判成 1.0× 串行链。</li>
+  <li><b>speedup ≠ gain</b>：前者是实际、后者是上限；判断「依赖过强」看 gain 与 speedup 的差，判断「派发不足」看 dispatch_wait 与 lane。</li>
+  <li><b>loss 不可硬拆</b>：三项等待之和不一定等于 <code>wall−cp</code>（口径不同）；它们用于定位方向。</li>
+  <li><b>数据只在 train 模式采集</b>：infer 零采集、没有执行图可分析；且 goal 必须已终态（done/failed）才会冻结并分析。</li>
+  <li><b>单节点内部并行看不见</b>：一个 agent 顺序干四件事，图上仍是一个节点——这类只能靠 <code>split_candidate</code>（若该节点占 cp ≥45% 且不止一个）或人自己拆 brief/skill。</li>
+  <li><b>baseline 与 delta 不是一回事</b>：baseline = 同 domain 最近 20 个 ready 会话中位数（样本&lt;5 为空）；delta = 与同 domain <b>上一条 rsi_round</b> 比。A/B 结论只认 delta。</li>
+</ul>
+
+<h3>11.11 增补记录</h3>
+
+<table>
+  <thead><tr><th style="width:12%">日期</th><th style="width:30%">新增分组 / 词条</th><th>来源</th></tr></thead>
+  <tbody>
+    <tr><td>2026-11-23</td><td>11.1 实体与文书（domain/squad/blueprint/version/两种节点/blueprint_node/brief/verify/gate/spawn/finding/proposal/rsi_round）</td><td>§1–§6 精读 ＋ 场景 A 配置对齐；代码：<code>schema.sql</code>、<code>blueprint.go</code>、<code>rsi_analyze.go</code></td></tr>
+    <tr><td>2026-11-23</td><td>11.2 图表节点对照 ＋ depth 口径修正（4 → 8）</td><td>代码复核：<code>workflow.go:283-310</code>、<code>subgoal.go:456-462</code>、<code>rsi_analyze.go:296-330</code></td></tr>
+    <tr><td>2026-11-23</td><td>11.3 提案链路与「谁改什么」分工表</td><td>代码：<code>blueprint.go:3301-3496</code>、<code>rsi_next_round.go:31-137</code>、<code>handler/blueprint.go</code></td></tr>
+    <tr><td>2026-11-23</td><td>11.4–11.6 时间四件套、并行/派发、等待与质量指标（墙钟、并行加速、串行损失、分派失衡等）</td><td>代码：<code>workflow.go:197-671</code>、<code>rsi_analyze.go:33-44</code></td></tr>
+    <tr><td>2026-11-23</td><td>11.7–11.10 阈值表、五步分析法、场景 A 读数演算、口径与坑</td><td>同上 ＋ 场景 A 设计推演（示意数字）</td></tr>
+  </tbody>
+</table>
 
 <hr class="hr-dot">
 
@@ -756,7 +963,7 @@ patches：
 <p style="color:var(--muted);font-size:13px;margin-top:18px">注：外部链接为写作时可达的一手页面（论文走 arXiv、产品走官方文档）；若某条链接日后失效，用标题 + 年份在 arXiv / 官方 docs 里检索即可定位。<b>本文只引用来源，不替来源背书</b>——取舍理由是第 1–8 章讲的工程约束。</p>
 
 <footer>
-  agentwork 新一代工作流规范 · Phase A–D + §14 全量落地版 · 2026-11-19<br>
+  ouroflow 新一代工作流规范 · Phase A–D + §14 全量落地版 · 2026-11-19<br>
   配套文档：docs/BLUEPRINT-PROPOSAL.md（设计提案 §1–§14，含全部 schema 与决策记录）· 本文档所有代码语义以提案与实现为准；案例数字为演示数据。
 </footer>
 

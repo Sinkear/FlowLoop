@@ -51,7 +51,7 @@ function MachineRow({ m, runtimeCount }: { m: Machine; runtimeCount: number }) {
           <span className="truncate text-sm font-medium text-ink">{m.name}</span>
           <span className="truncate font-mono text-[11px] text-ink-3">{m.hostname}</span>
           {m.version && (
-            <span className="shrink-0 text-[11px] text-ink-3">agentwork {m.version}</span>
+            <span className="shrink-0 text-[11px] text-ink-3">ouroflow {m.version}</span>
           )}
         </div>
 
@@ -138,7 +138,7 @@ export default function MachinesPage() {
     <PageBody>
       <PageHeader
         title="机器"
-        desc="远端主机执行 agentwork connect 后注册到这里——在线状态、探测到的 agent CLI 与它承载的运行时。"
+        desc="远端主机执行 ouroflow connect 后注册到这里——在线状态、探测到的 agent CLI 与它承载的运行时。"
       />
 
       <StatStrip
@@ -199,8 +199,8 @@ export default function MachinesPage() {
           </div>
         ) : !machines?.length ? (
           <Empty icon={<Monitor className="h-5 w-5" />}>
-            还没有注册的机器——在远端主机安装 agentwork 并运行{" "}
-            <code className="font-mono">agentwork connect</code>。
+            还没有注册的机器——在远端主机安装 ouroflow 并运行{" "}
+            <code className="font-mono">ouroflow connect</code>。
           </Empty>
         ) : !visible.length ? (
           <Empty>当前筛选下没有机器。</Empty>
@@ -227,11 +227,11 @@ export default function MachinesPage() {
 
       <SectionCard
         title="如何接入"
-        desc="在远端主机安装 agentwork 后在 shell 里执行"
+        desc="在远端主机安装 ouroflow 后在 shell 里执行"
         bodyClassName="p-4 space-y-2.5"
       >
         <div className="rounded-md border border-line bg-surface-0 px-3 py-2 font-mono text-xs text-ink">
-          <span className="mr-2 text-accent">$</span>agentwork connect
+          <span className="mr-2 text-accent">$</span>ouroflow connect
         </div>
         <ul className="space-y-1 text-xs leading-relaxed text-ink-3">
           <li>首次运行会向平台注册本机，之后按心跳保活；心跳丢失会被标记为离线。</li>

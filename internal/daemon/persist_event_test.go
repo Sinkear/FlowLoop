@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/proto"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // insertTestRun inserts a minimal run row so chat_message's run_id FK holds.

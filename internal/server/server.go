@@ -19,17 +19,17 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/eushing/agentwork/internal/daemon"
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/issue"
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/notify"
-	"github.com/eushing/agentwork/internal/paths"
-	"github.com/eushing/agentwork/internal/server/handler"
-	"github.com/eushing/agentwork/internal/server/ws"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/daemon"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/issue"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/notify"
+	"github.com/Sinkear/ouroflow/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/server/handler"
+	"github.com/Sinkear/ouroflow/internal/server/ws"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 
 	"github.com/gorilla/websocket"
 )
@@ -258,7 +258,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeWS(s.hub, w, r)
 	})
-	// The agentwork CLI's link (CLI 分支 Phase 1): a JSON-RPC 2.0 over
+	// The ouroflow CLI's link (CLI 分支 Phase 1): a JSON-RPC 2.0 over
 	// WebSocket connection carrying machine registration, heartbeats, and
 	// probe reports (run dispatch/config push land in later phases).
 	// /connect auth is handled by authMiddleware on non-loopback (the machine
@@ -1022,7 +1022,11 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	// token — non-loopback direct browser access requires a proxy that
 	// injects the token, or a future frontend change to pass it.
 	handler := corsMiddleware(mux)
-	if !isLoopbackAddr(addr) {
+	if isLoopbackAddr(addr) {
+		// No auth on loopback by design; this adds the missing CSRF guard for
+		// state-changing browser requests.
+		handler = csrfMiddleware(handler)
+	} else {
 		want, err := settingsSvc.Get(ctx, "platform.worker_token")
 		if err != nil || strings.TrimSpace(want) == "" {
 			return fmt.Errorf("refusing to listen on %s without platform.worker_token: a non-loopback address requires authentication (set the token in app_settings or bind to 127.0.0.1)", addr)
@@ -1115,6 +1119,47 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// csrfMiddleware rejects state-changing requests whose browser Origin is a
+// different site. The loopback-only default has no auth token, so without this
+// a hostile page could submit a simple cross-origin POST to 127.0.0.1 (the
+// response is unreadable to the attacker, but the side effect still happens —
+// e.g. spawning a model probe via /runtimes/{id}/models/refresh). Non-loopback
+// listens are token-gated and do not install this middleware, and a
+// reverse-proxied same-origin web UI still matches Origin == Host. Requests
+// without an Origin header (curl, the connect CLI) are allowed.
+func csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" || localDevOrigin(origin) || sameOriginRequest(origin, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+	})
+}
+
+// sameOriginRequest reports whether origin (scheme://host[:port]) targets the
+// same host and scheme the request arrived on.
+func sameOriginRequest(origin string, r *http.Request) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(u.Host, r.Host) {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.EqualFold(u.Scheme, scheme)
+}
+
 // isLoopbackAddr reports whether the listen address binds to a loopback
 // interface only (127.0.0.1, localhost, ::1). A bare ":port" (all
 // interfaces), "0.0.0.0:port", or a LAN IP all return false — those expose
@@ -1147,7 +1192,7 @@ func isLoopbackAddr(addr string) bool {
 //
 // /rpc is EXEMPT: it is the agent/link channel with its own application-layer
 // auth (per-run token in JSON-RPC params via ResolveRunToken). The executor
-// env injects AGENTWORK_SERVER_URL but not worker_token — agent CLI's rpcCall
+// env injects OUROFLOW_SERVER_URL but not worker_token — agent CLI's rpcCall
 // dials /rpc with no HTTP-layer token. /connect is NOT exempt: the machine
 // connect CLI passes ?token=worker_token explicitly (connect.go:431).
 func authMiddleware(settingsSvc *service.SettingsService, next http.Handler) http.Handler {

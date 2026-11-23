@@ -7,12 +7,12 @@
   "quality": "showcase",
   "startedAt": "2026-11-20T03:13:22.402Z",
   "specification": {
-    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
     "sha256": "95654105603a8be592d105004737d7b742eb3fb2026974918fbdab1e21b5b1da",
     "bytes": 8184
   },
   "artifact": {
-    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
     "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
     "bytes": 835735
   },
@@ -27,8 +27,8 @@
         "/home/sinkear/.dsh/profiles/web/node_modules/@tt-a1i/archify-dsh/skills/archify/bin/archify.mjs",
         "deliver",
         "workflow",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "--quality",
         "showcase",
         "--json"
@@ -60,8 +60,8 @@
         "/home/sinkear/.dsh/profiles/web/node_modules/@tt-a1i/archify-dsh/skills/archify/bin/archify.mjs",
         "deliver",
         "workflow",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "--quality",
         "showcase",
         "--json"
@@ -72,8 +72,8 @@
         "ok": true,
         "command": "deliver",
         "type": "workflow",
-        "input": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
-        "output": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "input": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+        "output": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "specification": {
           "sha256": "95654105603a8be592d105004737d7b742eb3fb2026974918fbdab1e21b5b1da",
           "bytes": 8184
@@ -111,12 +111,12 @@
         "/home/sinkear/.nvm/versions/node/v24.19.0/bin/node",
         "/home/sinkear/.dsh/profiles/web/node_modules/@tt-a1i/archify-dsh/skills/archify/bin/archify.mjs",
         "check",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "--require-provenance"
       ],
       "receipt": {
         "ok": true,
-        "file": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "file": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "artifact": {
           "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
           "bytes": 835735
@@ -247,7 +247,7 @@
         "/home/sinkear/.nvm/versions/node/v24.19.0/bin/node",
         "/home/sinkear/.dsh/profiles/web/node_modules/@tt-a1i/archify-dsh/skills/archify/bin/archify.mjs",
         "browser-check",
-        "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+        "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
         "--json",
         "--require-provenance"
       ],
@@ -262,7 +262,7 @@
         "provenance": "current",
         "deliveryReceiptId": "20f308ea-dcbb-4372-8471-3bdaa0ccf61d",
         "artifact": {
-          "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+          "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
           "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
           "bytes": 835735
         },
@@ -1737,9 +1737,9 @@
   },
   "diagnostics": [],
   "evidence": {
-    "receipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
-    "summaryReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
-    "browserCheckReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
+    "receipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
+    "summaryReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
+    "browserCheckReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
   },
   "visualReview": "not-requested",
   "finishedAt": "2026-11-20T03:13:25.836Z",

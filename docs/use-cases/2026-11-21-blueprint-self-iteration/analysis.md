@@ -1,8 +1,8 @@
 # 分析：创建即 active 绕过编译，翻译器十处静默退出（2026-11-21）
 
 > **分析对象**：蓝本「自动升级流水线 v2」的四个 train 目标（deepseek / minimax / openclaw / opencode）为什么跑完、分析完，却 **0 条 `blueprint_proposal`**；以及同期 opencode 的「批准了但不 done」为什么卡死 49m48s。
-> **代码基线**：本仓库 `git HEAD a3d2744`（2026-11-21 15:05:23 +0800）。事故运行版本构建自已删除的 `/tmp/agentwork-featnew`（`0.1.0-featnew.20261119`，无 vcs stamp），源码不在仓库内；凡引用事故版本行为，均标【反汇编】或【DB】。
-> **配套材料**：[timeline.md](timeline.md)（时间账与口径）、[sources/蓝本自迭代断链-根因确认.md](sources/蓝本自迭代断链-根因确认.md)（原始反汇编/在线实验）、[sources/agentwork自动升级流水线v2-四任务执行记录与问题诊断.md](sources/agentwork自动升级流水线v2-四任务执行记录与问题诊断.md)（原始 DB/日志）。
+> **代码基线**：本仓库 `git HEAD a3d2744`（2026-11-21 15:05:23 +0800）。事故运行版本构建自已删除的 `/tmp/ouroflow-featnew`（`0.1.0-featnew.20261119`，无 vcs stamp），源码不在仓库内；凡引用事故版本行为，均标【反汇编】或【DB】。
+> **配套材料**：[timeline.md](timeline.md)（时间账与口径）、[sources/蓝本自迭代断链-根因确认.md](sources/蓝本自迭代断链-根因确认.md)（原始反汇编/在线实验）、[sources/ouroflow自动升级流水线v2-四任务执行记录与问题诊断.md](sources/ouroflow自动升级流水线v2-四任务执行记录与问题诊断.md)（原始 DB/日志）。
 > **口径修正声明**：原始文档的四个结论（未编译、静默退出、BUSY 无重试、防重复无失败态）全部成立；本文件补的是 **HEAD 行号**、**额外静默点**、**两处数字/事实修正**（§6.2、§4.4），并把「原诊断的推测」与「已确认事实」分开。
 >
 > **判定标签**
@@ -34,17 +34,17 @@
 
 | 项 | 事故运行版本 | 当前仓库 HEAD |
 | --- | --- | --- |
-| 构建来源 | `/tmp/agentwork-featnew`（已删除） | `a3d2744`（2026-11-21 15:05） |
+| 构建来源 | `/tmp/ouroflow-featnew`（已删除） | `a3d2744`（2026-11-21 15:05） |
 | 版本串 | `0.1.0-featnew.20261119`，无 vcs stamp | git describe 可用 |
-| module | `github.com/eushing/agentwork` | `github.com/eushing/agentwork` |
+| module | `github.com/Sinkear/ouroflow` | `github.com/Sinkear/ouroflow` |
 | blueprint 模块 | 有（反汇编可见 `compileBlueprintTx` / `draftAutoProposals`） | 有（`internal/service/blueprint.go`） |
-| `SetBlueprint` 接线 | 未知（原始诊断候选 A 的疑点） | **已接线**：`cmd/agentwork-daemon/main.go:154` |
+| `SetBlueprint` 接线 | 未知（原始诊断候选 A 的疑点） | **已接线**：`cmd/ouroflow-daemon/main.go:154` |
 | 与本目录的关系 | 事故的「事实源」 | 引用行号的「代码源」 |
 
 两个结论：
 
 1. **当前源码比事故版本新，但缺陷仍在**：`Create` 不编译、`MarkDelivered` 无 busy 重试、duplicate guard 无失败态、`draftAutoProposals` 静默 return——逐项在 HEAD 复核通过（见 §7 对照表）。所以本目录不是「考古已修问题」，而是「同一个缺陷在当前树上仍可复现」。
-2. **原始文档里的「工作区源码」已过时**：它写于 featnew 已删除、`/root/workspace/agentwork-src` 还没有 blueprint 模块的时刻；当时的候选 A/B/C 因此无法静态排除。本文件用 HEAD 代码把「未接线」排除（`main.go:154` 已接线），把根因收敛到「未编译 + 静默」。
+2. **原始文档里的「工作区源码」已过时**：它写于 featnew 已删除、`/root/workspace/ouroflow-src` 还没有 blueprint 模块的时刻；当时的候选 A/B/C 因此无法静态排除。本文件用 HEAD 代码把「未接线」排除（`main.go:154` 已接线），把根因收敛到「未编译 + 静默」。
 
 > 事故二进制无法在本仓库复现（源码缺失）。本文件对它的引用只到符号/地址/字符串级别；行为结论一律有 DB 或日志支撑。
 
@@ -595,7 +595,7 @@ if decision == "approve" || decision == "reject" || decision == "redirect" {
 | 交付订阅 / scratch 直通 / 吞错 / 启动恢复 | `internal/daemon/deliver.go:28-37` / `:110-113` / `:330-332` / `:51-82` |
 | 启动恢复调用 / 主循环 ticker | `internal/daemon/daemon.go:475` / `:480-486` |
 | 翻译器调用 / 函数 / 静默点 / 仅 serial_chain / 链 / 节点映射 / CreateProposal / 成功日志 | `internal/service/rsi_analyze.go:186` / `:215` / `:217-381`（10 处） / `:246-248` / `:259` / `:270-290` / `:386` / `:397` |
-| RSI 接线 / overview human_wait / per-goal human_wait | `cmd/agentwork-daemon/main.go:154` / `internal/service/rsi.go:512` / `internal/service/workflow.go:409-413` |
+| RSI 接线 / overview human_wait / per-goal human_wait | `cmd/ouroflow-daemon/main.go:154` / `internal/service/rsi.go:512` / `internal/service/workflow.go:409-413` |
 | SQLite DSN（WAL + busy_timeout=5000） | `internal/store/store.go:51` |
 | guard 日志模板 / 空集条件 | `internal/service/goal.go:1667` / `:1643-1647` |
 | 提案空状态文案 | `web/app/blueprints/[id]/page.tsx:541` |

@@ -14,7 +14,7 @@ import { CodeBlock } from "@/components/code-block";
 import { TerminalWindow } from "@/components/terminal-window";
 import { Callout } from "@/components/callout";
 
-const REPO = "https://github.com/yusheng-g/agentwork";
+const REPO = "https://github.com/Sinkear/ouroflow";
 
 const FEATURE_ICONS = {
   loop: RefreshCw,
@@ -48,7 +48,7 @@ export default async function LandingPage({
           {/* 左：定位 + CTA + 技术栈 chip */}
           <div>
             <h1 className="font-mono text-5xl font-bold tracking-tight text-text">
-              agentwork
+              ouroflow
             </h1>
             <p className="mt-3 font-mono text-lg font-medium text-accent">
               {t("tagline")}
@@ -145,13 +145,13 @@ export default async function LandingPage({
         <p className="mb-8 text-sm text-muted">{t("prereq")}</p>
 
         <h3 className="mb-2 font-semibold text-text">{t("backendTitle")}</h3>
-        <CodeBlock label="bash">{`./build.sh   # builds build/agentwork (CLI) + build/agentwork-daemon
+        <CodeBlock label="bash">{`./build.sh   # builds build/ouroflow (CLI) + build/ouroflow-daemon
 
 # Start the daemon (default :47813)
-./build/agentwork-daemon
+./build/ouroflow-daemon
 
 # On the machine that runs the agents:
-./build/agentwork connect`}</CodeBlock>
+./build/ouroflow connect`}</CodeBlock>
 
         <h3 className="mb-2 mt-6 font-semibold text-text">{t("frontendTitle")}</h3>
         <CodeBlock label="bash">{`cd web

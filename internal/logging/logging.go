@@ -2,7 +2,7 @@
 // logger (stdlib idioms — levels, attrs, dynamic level) writing through a
 // compact line handler whose format the tailer and the /logs API parse.
 // Rotation is lumberjack's (size-based, backed-up, compressed) — the file
-// lives at $AGENTWORK_HOME/daemon.log (~/.agentwork/daemon.log by default).
+// lives at $OUROFLOW_HOME/daemon.log (~/.ouroflow/daemon.log by default).
 //
 // Line format (parse contract — the tailer and ReadLogs depend on it):
 //
@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/eushing/agentwork/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/paths"
 )
 
 const (
@@ -114,7 +114,7 @@ func Fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-// DefaultPath returns the log file path ($AGENTWORK_HOME/daemon.log).
+// DefaultPath returns the log file path ($OUROFLOW_HOME/daemon.log).
 func DefaultPath() string {
 	return paths.DaemonLog()
 }

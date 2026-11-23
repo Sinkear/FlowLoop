@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestReviewingEventText: a goal:reviewing event produces the approval

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // connectionFixture seeds a repo domain + a squad leader and returns a

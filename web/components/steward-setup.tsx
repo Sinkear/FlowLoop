@@ -67,7 +67,7 @@ export function StewardSetup({
   let reason: string;
   if (online.length === 0) {
     reason =
-      "还没有在线机器。先在目标机器上运行 agentwork connect；连接后如果那台机器装有 hwcloud CLI，管家会自动创建。";
+      "还没有在线机器。先在目标机器上运行 ouroflow connect；连接后如果那台机器装有 hwcloud CLI，管家会自动创建。";
   } else if (hasHwcloud) {
     reason = "已探测到 hwcloud，但管家还没有创建。重启 daemon 后会自动创建，也可以现在立即创建。";
   } else {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // Blueprint endpoints (Phase A, docs/BLUEPRINT-PROPOSAL.md §5/§4.12): the

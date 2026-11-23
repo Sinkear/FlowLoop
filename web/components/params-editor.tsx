@@ -3,7 +3,7 @@
 // 扁平参数编辑器：hook 默认参数、绑定级参数共用。
 // 参数是 {string: string} 的扁平 map（业界惯例：Argo arguments / K8s
 // env 的简化版），注入脚本时三通道齐发——stdin payload 的 params 键、
-// AGENTWORK_HOOK_PARAMS（完整 JSON）、AGENTWORK_PARAM_<KEY>（扁平 env）。
+// OUROFLOW_HOOK_PARAMS（完整 JSON）、OUROFLOW_PARAM_<KEY>（扁平 env）。
 // 键规则与后端一致：^[A-Za-z_][A-Za-z0-9_-]{0,63}$（保证扁平 env 名安全）。
 
 import { useState } from "react";

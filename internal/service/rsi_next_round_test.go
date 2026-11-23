@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // seedNextRoundFixture builds the incident's RSI shape:

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // Runtime is the launch spec of one probed agent CLI on one registered
@@ -24,7 +24,7 @@ type Runtime struct {
 	Args []string          `json:"args"`
 	Env  map[string]string `json:"env"`
 	// MachineID is the registered machine that executes this runtime's
-	// runs (transport='agentwork'; '' = local/legacy transports).
+	// runs (transport='ouroflow'; '' = local/legacy transports).
 	MachineID string `json:"machine_id,omitempty"`
 	// Status: active | absent | inactive — absent = the machine's latest
 	// probe no longer sees this CLI (uninstalled); the claim gate rejects
@@ -164,6 +164,30 @@ func (s *RuntimeService) Models(ctx context.Context, id string) (*RuntimeModels,
 		out.Models = []link.ModelInfo{}
 	}
 	return &out, nil
+}
+
+// SetModels overwrites a runtime's persisted model list — the authoritative
+// write behind POST /runtimes/{id}/models/refresh (the machine re-detected
+// the list, so an empty result must clear stale ids rather than be ignored
+// like the probe-report path's empty-means-unavailable semantics). Returns
+// the fresh RuntimeModels in the same shape as Models.
+func (s *RuntimeService) SetModels(ctx context.Context, id string, models []link.ModelInfo, detectedAt string) (*RuntimeModels, error) {
+	if models == nil {
+		models = []link.ModelInfo{}
+	}
+	modelsJSON, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("marshal models: %w", err)
+	}
+	res, err := s.st.DB().ExecContext(ctx,
+		`UPDATE runtime SET models=?, models_at=? WHERE id=?`, string(modelsJSON), detectedAt, id)
+	if err != nil {
+		return nil, fmt.Errorf("update runtime models: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Models(ctx, id)
 }
 
 func (s *RuntimeService) Delete(ctx context.Context, id string) error {

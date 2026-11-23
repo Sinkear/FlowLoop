@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "workflow",
-  "input": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
-  "output": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+  "input": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+  "output": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
   "specification": {
     "sha256": "95654105603a8be592d105004737d7b742eb3fb2026974918fbdab1e21b5b1da",
     "bytes": 8184

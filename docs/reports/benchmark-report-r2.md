@@ -1,4 +1,4 @@
-# agentwork R2 实施后基准复测报告（bench）
+# ouroflow R2 实施后基准复测报告（bench）
 
 - 日期：2026-11-10（R2 复测 · 实施后新基线）
 - 测量基线：**commit `365e108`**（分支 feat-25da0cc6-sg-23d061da HEAD，builder 实施成果：`3cf2116` P1 并行化 + `18a8c3c` P3 不可重试快速失败 + `8ca9957` P2 CDN 守卫 fail→skip + `365e108` impl-notes docs）。相对 R1 基线 `0bf354e` 仅含这三条已批准提案的实施与文档，无其他代码变更。
@@ -30,16 +30,16 @@
 
 | 排名 | 包 | 耗时 | 结果 |
 | --- | --- | --- | --- |
-| 1 | github.com/eushing/agentwork/internal/daemon | 5.911 s | pass |
-| 2 | github.com/eushing/agentwork/cmd/agentwork-cli | 4.530 s | pass |
-| 3 | github.com/eushing/agentwork/internal/service | 4.456 s | pass（R1 唯一失败包，现已 PASS） |
-| 4 | github.com/eushing/agentwork/internal/notify | 0.925 s | pass |
-| 5 | github.com/eushing/agentwork/internal/issue | 0.419 s | pass |
-| 6 | github.com/eushing/agentwork/internal/backup | 0.297 s | pass |
-| 7 | github.com/eushing/agentwork/internal/link | 0.075 s | pass |
-| 8 | github.com/eushing/agentwork/internal/server | 0.061 s | pass |
-| 9 | github.com/eushing/agentwork/internal/acp | 0.056 s | pass |
-| 10 | github.com/eushing/agentwork/internal/server/handler | 0.049 s | pass |
+| 1 | github.com/Sinkear/ouroflow/internal/daemon | 5.911 s | pass |
+| 2 | github.com/Sinkear/ouroflow/cmd/ouroflow-cli | 4.530 s | pass |
+| 3 | github.com/Sinkear/ouroflow/internal/service | 4.456 s | pass（R1 唯一失败包，现已 PASS） |
+| 4 | github.com/Sinkear/ouroflow/internal/notify | 0.925 s | pass |
+| 5 | github.com/Sinkear/ouroflow/internal/issue | 0.419 s | pass |
+| 6 | github.com/Sinkear/ouroflow/internal/backup | 0.297 s | pass |
+| 7 | github.com/Sinkear/ouroflow/internal/link | 0.075 s | pass |
+| 8 | github.com/Sinkear/ouroflow/internal/server | 0.061 s | pass |
+| 9 | github.com/Sinkear/ouroflow/internal/acp | 0.056 s | pass |
+| 10 | github.com/Sinkear/ouroflow/internal/server/handler | 0.049 s | pass |
 
 - 共 27 个包：14 个含测试（全部 ok）+ 13 个无测试文件（"[no test files]"，未计入排名）。
 - 三连跑 Top3 稳定性：daemon 6.218 / 5.719 / 5.911 s；service 4.619 / 4.399 / 4.456 s；cli 4.295* / 3.876 / 4.530 s（*run1 取自同命令补跑）。
@@ -107,7 +107,7 @@ go test ./internal/service -count=1 -v | grep -E "SKIP:|missing from"
 
 # 4) 包级耗时提取
 grep -E "^ok" /tmp/opencode/test-r2-run3.txt | sort -k2
-# → daemon 5.911s / agentwork-cli 4.530s / service 4.456s / notify 0.925s / issue 0.419s / backup 0.297s / link 0.075s / server 0.061s / acp 0.056s / handler 0.049s ...
+# → daemon 5.911s / ouroflow-cli 4.530s / service 4.456s / notify 0.925s / issue 0.419s / backup 0.297s / link 0.075s / server 0.061s / acp 0.056s / handler 0.049s ...
 
 # 5) P1 核对
 grep -c "t.Parallel()" internal/daemon/*_test.go   # → 2+8+30+11+3+4+12 = 70

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // mockGitHub serves canned API responses and records what was called.
@@ -29,7 +29,7 @@ func mockGitHub(t *testing.T) (*httptest.Server, *[]string) {
 			})
 		case strings.HasSuffix(r.URL.Path, "/comments") && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode([]map[string]any{
-				{"id": 1, "body": "注意保留旧接口兼容", "user": map[string]any{"login": "eushing"}, "created_at": time.Now()},
+				{"id": 1, "body": "注意保留旧接口兼容", "user": map[string]any{"login": "ouroflow"}, "created_at": time.Now()},
 			})
 		case strings.HasSuffix(r.URL.Path, "/comments") && r.Method == http.MethodPost:
 			var cm struct {
@@ -61,12 +61,12 @@ func TestListOpenIssuesExcludesPRs(t *testing.T) {
 // TestParseSourceRef covers the ref encoding round-trip: issue refs ("#")
 // and pull refs ("!") both decode with their kind.
 func TestParseSourceRef(t *testing.T) {
-	provider, repo, num, kind, ok := ParseSourceRef("github:yusheng-g/agentwork#42")
-	if !ok || provider != "github" || repo != "yusheng-g/agentwork" || num != 42 || kind != RefIssue {
+	provider, repo, num, kind, ok := ParseSourceRef("github:yusheng-g/ouroflow#42")
+	if !ok || provider != "github" || repo != "yusheng-g/ouroflow" || num != 42 || kind != RefIssue {
 		t.Fatalf("parse issue ref: %q %d %s %v", repo, num, kind, ok)
 	}
-	provider, repo, num, kind, ok = ParseSourceRef("gitcode:yusheng-g/agentwork!7")
-	if !ok || provider != "gitcode" || repo != "yusheng-g/agentwork" || num != 7 || kind != RefPull {
+	provider, repo, num, kind, ok = ParseSourceRef("gitcode:yusheng-g/ouroflow!7")
+	if !ok || provider != "gitcode" || repo != "yusheng-g/ouroflow" || num != 7 || kind != RefPull {
 		t.Fatalf("parse pull ref: %q %d %s %v", repo, num, kind, ok)
 	}
 	if PullSourceRef("github", "x/y", 7) != "github:x/y!7" {

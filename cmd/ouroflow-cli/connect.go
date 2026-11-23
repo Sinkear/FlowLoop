@@ -1,0 +1,546 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/url"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/paths"
+	"github.com/Sinkear/ouroflow/internal/zipx"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+)
+
+// cliVersion is the ouroflow CLI build version, reported in register.
+// var (not const): the release build stamps the real version via
+// -ldflags "-X main.cliVersion=$OUROFLOW_COMPILE_VERSION" (build.sh) so
+// the CLI and the daemon ship one shared version — the register-time
+// version check depends on both being built from the same stamp.
+var cliVersion = "0.0.1-beta.1"
+
+// stateFile is where connect persists the machine identity + last
+// connection state (status reads it — no IPC needed in Phase 1).
+func stateFile() string {
+	return paths.CLIState()
+}
+
+// defaultAgentsConfigPath is the auto-discovered agents.yaml location
+// (~/.ouroflow/agents.yaml) — mirrors stateFile's convention. The file is
+// optional; its absence means the builtin probe table is used as-is.
+func defaultAgentsConfigPath() string {
+	return paths.AgentsConfig()
+}
+
+type cliState struct {
+	MachineID   string          `json:"machine_id"`
+	Name        string          `json:"name"`
+	Server      string          `json:"server"`
+	ConnectedAt time.Time       `json:"connected_at,omitempty"`
+	ProbedCLIs  []link.ProbeCLI `json:"probed_clis,omitempty"`
+}
+
+// loadState reads the persisted state (missing file = fresh machine).
+func loadState() (cliState, error) {
+	var s cliState
+	b, err := os.ReadFile(stateFile())
+	if err != nil {
+		return s, err
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return cliState{}, err
+	}
+	return s, nil
+}
+
+// saveState persists the state file (best-effort; status tolerates a
+// missing file).
+func saveState(s cliState) {
+	b, _ := json.MarshalIndent(s, "", "  ")
+	_ = os.MkdirAll(filepath.Dir(stateFile()), 0o755)
+	_ = os.WriteFile(stateFile(), b, 0o644)
+}
+
+// scanDirsFlag collects repeatable --scan flags.
+type scanDirsFlag []string
+
+func (s *scanDirsFlag) String() string { return strings.Join(*s, ",") }
+func (s *scanDirsFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// connectCmd runs `ouroflow connect`: dial the daemon's /connect link,
+// register this machine (probing its agent CLIs), then heartbeat until
+// interrupted. Reconnects with exponential backoff.
+func connectCmd(args []string) {
+	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+	server := fs.String("server", defaultServerURL, "ouroflow-daemon address")
+	token := fs.String("token", "", "register token (daemon-side platform.worker_token; empty = none)")
+	name := fs.String("name", "", "machine display name (default: hostname)")
+	agentsCfg := fs.String("agents", "", "path to agents YAML config (default: ~/.ouroflow/agents.yaml — adds/overrides probed agent CLIs)")
+	var scanDirs scanDirsFlag
+	fs.Var(&scanDirs, "scan", "extra directory (or glob, e.g. /opt/*/ or /opt/**/) to scan for agent CLIs not on PATH (repeatable; ~ expanded)")
+	fs.Parse(args)
+
+	// Load the agents config (adds new CLIs or overrides builtins by name)
+	// BEFORE the first probe. A missing file is normal (builtins only); a
+	// parse error warns and falls back to builtins — connect never fails on
+	// a bad config.
+	cfgPath := *agentsCfg
+	if cfgPath == "" {
+		cfgPath = defaultAgentsConfigPath()
+	}
+	if err := setMergedProbeTable(cfgPath); err != nil {
+		cliLogf("agents config: %v — using builtin probe table only", err)
+	}
+
+	hostname, _ := os.Hostname()
+	if *name == "" {
+		*name = hostname
+	}
+
+	st, err := loadState()
+	if err != nil || st.MachineID == "" {
+		st = cliState{MachineID: uuid.NewString(), Name: *name}
+	}
+	st.Server = *server
+	st.Name = *name
+	saveState(st)
+
+	// Persistent goal worktrees accumulate on the machine — prune those no
+	// run touched for 30 days before connecting.
+	pruneStaleGoalWorkdirs()
+
+	wsURL := connectWSURL(*server, *token)
+	cliLogf("ouroflow connect: server=%s machine=%q (%s)", *server, st.Name, st.MachineID)
+
+	// One cancellable ctx for the whole session: Ctrl+C / SIGTERM aborts
+	// dialing, in-flight calls, heartbeats AND the reconnect backoff —
+	// the process must exit promptly, never strand on a stuck link.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// SIGUSR1 dumps every goroutine's stack into the CLI log — the
+	// sidecar's "hang detector" for the next link-stall (a blocked
+	// readLoop left no trace before).
+	go func() {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGUSR1)
+		for range ch {
+			buf := make([]byte, 1<<20)
+			n := runtime.Stack(buf, true)
+			cliLogf("=== goroutine dump (SIGUSR1) ===\n%s", buf[:n])
+		}
+	}()
+
+	backoff := time.Second
+	for {
+		if err := runLink(ctx, wsURL, st, *name, hostname, []string(scanDirs), cfgPath); err != nil {
+			cliLogf("connect: %v — reconnecting in %s", err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Println("disconnected")
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// runLink holds one connection: register → heartbeat loop → drain until
+// the link dies or ctx is cancelled. Returns the exit error for the
+// reconnect loop (nil on ctx cancellation — that is a clean shutdown).
+func runLink(ctx context.Context, wsURL string, st cliState, name, hostname string, scanDirs []string, agentsCfgPath string) error {
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	if err != nil {
+		cliLogf("link: dial %s: %v", wsURL, err)
+		return fmt.Errorf("dial: %w", err)
+	}
+	// Handlers-first init: construct the peer UNSERVED, register the link's
+	// handlers (chat relay, config.push), then StartReadLoop — the daemon can
+	// push a frame the instant the socket opens, and a live reader would
+	// dispatch it against a nil handler ("method not found").
+	peer := link.NewPeerUnserved(conn)
+	defer peer.Close()
+	// Phase 2, PULL model: the machine POLLS for work over THIS link
+	// (run.poll — the daemon never writes dispatches; the push direction
+	// kept dying in one-way link stalls). Cancel everything in flight when
+	// the link dies (the platform reclaims them via RecoverStuckRunning).
+	exec := newExecutor(peer, st.Server)
+	defer exec.shutdown()
+	// Chat relay (Phase 6): transport-only ACP bridge for the web chat —
+	// frames flow unparsed in both directions.
+	chat := newChatBridge()
+	defer chat.shutdown() // kill all chat CLI processes when the link drops
+	peer.Handle(link.MethodChatOpen, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		return chat.handleChatOpen(ctx, raw, peer)
+	})
+	peer.Handle(link.MethodChatFrame, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		return chat.handleChatFrame(ctx, raw)
+	})
+	peer.Handle(link.MethodChatClose, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		return chat.handleChatClose(ctx, raw)
+	})
+	// config.push (Phase 4): land the agent's skill packages in the
+	// platform-managed staging dir (~/.ouroflow/skills/<agentID>/...) —
+	// the executor copies them into each run's workdir at spawn as
+	// PROJECT-level skills (original names, the user's own global skills
+	// untouched). The agent's whole staging dir is rebuilt from scratch, so
+	// removals propagate.
+	//
+	// The rebuild (RemoveAll → extract → refresh live chats) is serialized
+	// PER AGENT: daemon-side push callers are fire-and-forget, so two
+	// pushes for the same agent can overlap; interleaved RemoveAll/extract
+	// phases would leave a half-built staging dir, and interleaved
+	// copyAgentSkills(wipe=true) on the same chat cwd could tear the copy
+	// with neither push re-fixing it.
+	skillPushMu := &sync.Mutex{}
+	skillPushLocks := map[string]*sync.Mutex{}
+	skillPushLock := func(agentID string) *sync.Mutex {
+		skillPushMu.Lock()
+		defer skillPushMu.Unlock()
+		m := skillPushLocks[agentID]
+		if m == nil {
+			m = &sync.Mutex{}
+			skillPushLocks[agentID] = m
+		}
+		return m
+	}
+	peer.Handle(link.MethodConfigPush, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		var p link.ConfigPushParams
+		if err := json.Unmarshal(raw, &p); err != nil || p.AgentID == "" {
+			return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "agent_id is required"}
+		}
+		lock := skillPushLock(p.AgentID)
+		lock.Lock()
+		defer lock.Unlock()
+		res := link.ConfigPushResult{}
+		// The agent-level persona (system prompt) rides AGENTS.md in the
+		// per-agent config dir — the runtime's profile resolver loads it
+		// natively from the workdir; the per-run role contract stays in the
+		// prompt.
+		profilePath := filepath.Join(agentProfileDir(p.AgentID), "AGENTS.md")
+		if err := writeAgentProfile(p.AgentID, p.SystemPrompt); err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("AGENTS.md: %v", err))
+			cliLogf("config.push: agent %s AGENTS.md write FAILED: %v", p.AgentID, err)
+		} else if len(p.SystemPrompt) > 0 {
+			cliLogf("config.push: agent %s AGENTS.md written (%d bytes) → %s", p.AgentID, len(p.SystemPrompt), profilePath)
+		} else {
+			cliLogf("config.push: agent %s AGENTS.md removed (empty prompt)", p.AgentID)
+		}
+		root := machineSkillRoot(p.AgentID)
+		_ = os.RemoveAll(root)
+		for _, sk := range p.Skills {
+			if sk.Name == "" || sk.Name == "." || sk.Name == ".." || strings.ContainsAny(sk.Name, "/\\") {
+				res.Errors = append(res.Errors, fmt.Sprintf("%q: invalid skill name", sk.Name))
+				continue
+			}
+			target := filepath.Join(root, sk.Name)
+			_ = os.RemoveAll(target)
+			// The skill rides as its ORIGINAL zip — scripts and binary
+			// assets included. Extract with the same safe extractor the
+			// platform used (zipx, both ends).
+			if err := zipx.Extract(sk.Archive, target); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", sk.Name, err))
+				continue
+			}
+			res.Written = append(res.Written, sk.Name)
+		}
+		cliLogf("config.push: agent %s skills → %d installed, %d error(s) into %s", p.AgentID, len(res.Written), len(res.Errors), root)
+		// Push the refreshed staging into the agent's LIVE chat cwds: their
+		// copies were made at chat.open, so without this a chat opened before
+		// the sync keeps loading the old skill until it is restarted. Only
+		// when every selected archive installed cleanly — a partial push must
+		// not delete skills from a live cwd.
+		if len(res.Errors) == 0 {
+			chat.refreshAgentSkillCopies(p.AgentID)
+		} else {
+			cliLogf("config.push: agent %s: %d error(s) — live chat skill copies left as-is", p.AgentID, len(res.Errors))
+		}
+		return res, nil
+	})
+	// models refresh (runtime detail 「刷新检测」): force a fresh model probe
+	// for one CLI, bypassing the 30-minute models cache. The probe may spawn
+	// the agent over ACP, so it is slow by nature — the daemon call that
+	// drives it carries its own 30s timeout. A successful handshake that
+	// advertises zero usable models is a VALID empty answer (the daemon
+	// persists it and clears stale ids); a probe infrastructure failure is
+	// returned as an RPC error so the daemon keeps the previous catalog.
+	peer.Handle(link.MethodModelsRefresh, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		var p link.ModelsRefreshParams
+		if err := json.Unmarshal(raw, &p); err != nil || strings.TrimSpace(p.CLI) == "" {
+			return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "cli is required"}
+		}
+		// Re-read the agents config first: a newly added custom CLI must be
+		// refreshable without waiting for the next probe tick.
+		if err := setMergedProbeTable(agentsCfgPath); err != nil {
+			cliLogf("models refresh: agents config reload failed (using last table): %v", err)
+		}
+		var entry probeEntry
+		found := false
+		for _, e := range activeProbeTable() {
+			if e.Name == p.CLI {
+				entry, found = e, true
+				break
+			}
+		}
+		if !found {
+			return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: fmt.Sprintf("unknown CLI %q on this machine", p.CLI)}
+		}
+		spawn, extraPath, ok := probeCLISpawn(ctx, entry, scanDirs)
+		if !ok {
+			return nil, &link.RPCError{Code: link.CodeInternal, Message: fmt.Sprintf("CLI %q is not installed on this machine", p.CLI)}
+		}
+		models, err := refreshCLIModels(ctx, entry, spawn, extraPath)
+		if err != nil {
+			cliLogf("models refresh: %s failed: %v", p.CLI, err)
+			return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
+		}
+		cliLogf("models refresh: %s → %d model(s)", p.CLI, len(models))
+		return link.ModelsRefreshResult{
+			Models:     models,
+			DetectedAt: time.Now().UTC().Format(time.RFC3339),
+		}, nil
+	})
+	// Every handler is registered — StartReadLoop must run BEFORE the first
+	// call (register) so the response can be routed back.
+	peer.StartReadLoop()
+
+	clis := probeCLIs(ctx, scanDirs)
+	cliLogf("link: probed %d agent CLI(s)", len(clis))
+
+	var res link.RegisterResult
+	if err := peer.Call(ctx, link.MethodMachineRegister, link.RegisterParams{
+		MachineID: st.MachineID,
+		Name:      name,
+		Hostname:  hostname,
+		Version:   cliVersion,
+		CLIs:      clis,
+	}, &res); err != nil {
+		cliLogf("link: register: %v", err)
+		return fmt.Errorf("register: %w", err)
+	}
+	if res.ServerVersion != "" && res.ServerVersion != cliVersion {
+		cliLogf("link: warning: daemon v%s vs CLI v%s — protocol drift possible", res.ServerVersion, cliVersion)
+	}
+	cliLogf("link: registered")
+	flushPendingReports(peer)
+	st.ConnectedAt = time.Now()
+	st.ProbedCLIs = clis
+	saveState(st)
+
+	// Heartbeat every 5s until the link dies or we're interrupted.
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	// Work poll (PULL model) runs on its OWN goroutine: the machine asks the
+	// daemon for the next dispatch and any queued cancels — the daemon never
+	// pushes. LONG POLL: the daemon holds an empty request up to 30s, returning
+	// the instant a dispatch or cancel is queued — so the loop sends the next
+	// poll immediately after the previous returns (no ticker). Idle RPC volume
+	// drops ~30× vs the old 1s tick, with sub-second dispatch latency.
+	// A lost response is retried by the next loop iteration (at-least-once;
+	// the daemon re-serves, the executor dedupes). A stalled poll response
+	// must NEVER block the heartbeat/reconnect loop — it did once (live: the
+	// Call hung on a lost response, the main loop froze, heartbeats stopped,
+	// the machine went offline; the SIGUSR1 dump caught the main goroutine in
+	// the Call), so the poll has both its own goroutine AND a per-call timeout
+	// (35s = 30s hold + 5s margin). On poll error a 1s backoff prevents a
+	// tight retry loop against a failing daemon.
+	go func() {
+		pollErrLogged := false
+		for {
+			select {
+			case <-peer.Done():
+				return
+			case <-ctx.Done():
+				return
+			default:
+			}
+			pollCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+			var res link.RunPollResult
+			if err := peer.Call(pollCtx, link.MethodRunPoll, link.RunPollParams{}, &res); err != nil {
+				if !pollErrLogged {
+					cliLogf("link: poll: %v (further failures suppressed)", err)
+					pollErrLogged = true
+				}
+				cancel()
+				// Back off before retrying so a dead daemon doesn't get hammered.
+				select {
+				case <-time.After(time.Second):
+				case <-peer.Done():
+					return
+				case <-ctx.Done():
+					return
+				}
+				continue
+			}
+			cancel()
+			pollErrLogged = false
+			for _, c := range res.Cancels {
+				exec.cancelRun(c)
+			}
+			if res.Run != nil {
+				exec.startIfNew(*res.Run)
+			}
+		}
+	}()
+	// Periodic re-probe: an installed/uninstalled agent CLI changes the
+	// machine's capability set. When the signature drifts, push a fresh
+	// probe report — the platform marks vanished CLIs' runtimes absent.
+	// 1-minute cadence: probeCLIs runs only --version checks (milliseconds),
+	// and probeSig suppresses the push when nothing changed — so a quiet
+	// machine stays quiet. A spawn failure re-probes immediately
+	// (reprobeAfterSpawnFailure); this tick only covers the silent-install
+	// case (a CLI added while connect is running).
+	probeTick := time.NewTicker(time.Minute)
+	defer probeTick.Stop()
+	// gracefulOffline is set when the loop exits via ctx cancellation
+	// (SIGTERM/SIGINT) — a deliberate shutdown that should tell the daemon
+	// to mark this machine offline NOW. A link death (peer.Done) does NOT
+	// set it: the connection may have dropped due to a transient network
+	// blip, and the reconnect loop will dial back in seconds — flagging
+	// the machine offline would make the runtime flash inactive→active in
+	// the dropdown (the 90s stale sweep exists precisely to tolerate this).
+	// The tricky case is SIGTERM racing a link death: both peer.Done and
+	// ctx.Done fire near-simultaneously, and select picks one at random.
+	// If peer.Done wins, we'd miss the notification. So peer.Done ALSO
+	// checks ctx: if ctx is already done, this is a graceful shutdown
+	// whose link happened to die first — notify anyway.
+	gracefulOffline := false
+	defer func() {
+		if !gracefulOffline {
+			return
+		}
+		notifyCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		_ = peer.Notify(notifyCtx, link.MethodMachineOffline, link.HeartbeatParams{MachineID: st.MachineID})
+		cancel()
+	}()
+	for {
+		select {
+		case <-tick.C:
+			if err := peer.Notify(ctx, link.MethodMachineHeartbeat, link.HeartbeatParams{MachineID: st.MachineID}); err != nil {
+				cliLogf("link: heartbeat: %v", err)
+				return fmt.Errorf("heartbeat: %w", err)
+			}
+			st.ConnectedAt = time.Now()
+			saveState(st)
+		case <-probeTick.C:
+			// Re-read the agents config so edits to ~/.ouroflow/agents.yaml
+			// take effect without restarting connect. A missing or empty file
+			// clears the cached table (falls back to builtins); a parse error
+			// keeps the previously loaded table so a half-edited file doesn't
+			// drop a working config. Never fatal.
+			if err := setMergedProbeTable(agentsCfgPath); err != nil {
+				cliLogf("agents config: %v — using previous probe table", err)
+			}
+			fresh := probeCLIs(ctx, scanDirs)
+			if probeSig(fresh) != probeSig(clis) {
+				clis = fresh
+				st.ProbedCLIs = fresh
+				saveState(st)
+				if err := peer.Notify(ctx, link.MethodMachineProbeUpdate, link.ProbeUpdateParams{MachineID: st.MachineID, CLIs: fresh}); err != nil {
+					cliLogf("link: probe update: %v", err)
+				} else {
+					cliLogf("link: probe updated (%d agent CLI(s))", len(fresh))
+				}
+			}
+		case <-peer.Done():
+			// The link died. If ctx is also done, this is a graceful
+			// shutdown (SIGTERM) whose link happened to tear down first —
+			// still notify. Otherwise it's a transient drop: the reconnect
+			// loop will retry, so leave the machine connected and let the
+			// stale sweep handle a true disappearance.
+			select {
+			case <-ctx.Done():
+				gracefulOffline = true
+			default:
+			}
+			cliLogf("link: closed")
+			return fmt.Errorf("link closed")
+		case <-ctx.Done():
+			gracefulOffline = true
+			return nil
+		}
+	}
+}
+
+// probeSig is the probe report's change-detection fingerprint. It includes
+// the detected model ids: a model-list change (or the first successful
+// detection after a cache miss) must push a machine.probe_update, not wait
+// for a CLI version bump.
+func probeSig(clis []link.ProbeCLI) string {
+	parts := make([]string, 0, len(clis))
+	for _, c := range clis {
+		ids := make([]string, 0, len(c.Models))
+		for _, m := range c.Models {
+			ids = append(ids, m.ID)
+		}
+		parts = append(parts, c.Name+"@"+c.Version+"@"+strings.Join(ids, "|"))
+	}
+	return strings.Join(parts, ",")
+}
+
+// connectWSURL derives the /connect WebSocket URL from the server flag
+// (http(s) → ws(s); bare host:port → ws).
+func connectWSURL(server, token string) string {
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" {
+		u = &url.URL{Scheme: "ws", Host: server, Path: "/connect"}
+	} else {
+		switch u.Scheme {
+		case "https":
+			u.Scheme = "wss"
+		default:
+			u.Scheme = "ws"
+		}
+		u.Path = "/connect"
+	}
+	q := u.Query()
+	if token != "" {
+		q.Set("token", token)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// statusCmd runs `ouroflow status`: the persisted connection state.
+func statusCmd(args []string) {
+	st, err := loadState()
+	if err != nil {
+		fmt.Println("status: not connected (no state file — run `ouroflow connect` first)")
+		return
+	}
+	status := "offline"
+	if !st.ConnectedAt.IsZero() && time.Since(st.ConnectedAt) < 15*time.Second {
+		status = "connected"
+	}
+	fmt.Printf("machine:   %s (%s)\n", st.Name, st.MachineID)
+	fmt.Printf("server:    %s\n", st.Server)
+	if st.ConnectedAt.IsZero() {
+		fmt.Printf("status:    %s (never connected)\n", status)
+	} else {
+		fmt.Printf("status:    %s (last heartbeat %s)\n", status, st.ConnectedAt.Format(time.RFC3339))
+	}
+	if len(st.ProbedCLIs) > 0 {
+		fmt.Println("agent CLIs:")
+		for _, c := range st.ProbedCLIs {
+			fmt.Printf("  %s %s\n", c.Name, c.Version)
+		}
+	} else {
+		fmt.Println("agent CLIs: none probed")
+	}
+}

@@ -13,12 +13,12 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/link"
-	"github.com/eushing/agentwork/internal/proto"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
-	"github.com/eushing/agentwork/internal/zipx"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/ouroflow/internal/zipx"
 )
 
 // fakeMachinePeer runs a /connect-style WebSocket server that registers itself
@@ -78,7 +78,7 @@ func fakeMachinePeer(t *testing.T, d *Daemon, machineID string) <-chan link.Conf
 // newSkillPushDaemon builds a daemon wired to real services over a temp home.
 func newSkillPushDaemon(t *testing.T) (*Daemon, *service.SkillService, *service.AgentService) {
 	t.Helper()
-	t.Setenv("AGENTWORK_HOME", t.TempDir())
+	t.Setenv("OUROFLOW_HOME", t.TempDir())
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -178,7 +178,7 @@ func TestPushAgentSkillsRefusesEmptyPush(t *testing.T) {
 	// Reproduce the live failure: the DB row exists but the skill dir is gone
 	// (old sweep bug / copied DB) — PackageZip can read neither the archive
 	// nor the files.
-	if err := os.RemoveAll(filepath.Join(os.Getenv("AGENTWORK_HOME"), "runs", "skills", sk.ID)); err != nil {
+	if err := os.RemoveAll(filepath.Join(os.Getenv("OUROFLOW_HOME"), "runs", "skills", sk.ID)); err != nil {
 		t.Fatalf("remove skill dir: %v", err)
 	}
 
@@ -230,7 +230,7 @@ func TestPushAgentSkillsRefusesPartialPush(t *testing.T) {
 
 	// One skill dir disappears (old sweep bug / copied DB): the partial push
 	// must be refused — a subset would wipe the machine's copy of BOTH.
-	if err := os.RemoveAll(filepath.Join(os.Getenv("AGENTWORK_HOME"), "runs", "skills", broken.ID)); err != nil {
+	if err := os.RemoveAll(filepath.Join(os.Getenv("OUROFLOW_HOME"), "runs", "skills", broken.ID)); err != nil {
 		t.Fatalf("remove skill dir: %v", err)
 	}
 	d.PushAgentSkills(ctx, ag.ID)

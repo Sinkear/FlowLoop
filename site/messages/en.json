@@ -19,13 +19,13 @@
     "mentalModel": "A goal is a work item and the sole holder of state authority; a run is one agent's turn on it — runs report up, never decide. The platform judges completion; you hold the gates.",
     "heroStack": ["Go 1.26", "Next.js 16", "ACP", "SQLite"],
     "terminal": {
-      "title": "agentwork — zsh",
+      "title": "ouroflow — zsh",
       "lines": [
-        { "type": "cmd", "text": "agentwork connect" },
+        { "type": "cmd", "text": "ouroflow connect" },
         { "type": "ok", "text": "linked to daemon (machine=m4.local, 3 agent CLI(s) probed)" },
-        { "type": "cmd", "text": "agentwork goal create \"refactor intake parser\" --assignee claude" },
+        { "type": "cmd", "text": "ouroflow goal create \"refactor intake parser\" --assignee claude" },
         { "type": "out", "text": "goal g7a3 created → run r9k1 queued" },
-        { "type": "cmd", "text": "agentwork goal list" },
+        { "type": "cmd", "text": "ouroflow goal list" },
         { "type": "out", "text": "  g7a3  active    refactor intake parser     [claude]" },
         { "type": "out", "text": "  g6f2  review    fix feishu streaming       [opencode]" },
         { "type": "ok", "text": "2 goals" },
@@ -48,7 +48,7 @@
       },
       "collab": {
         "title": "Four collaboration behaviors",
-        "desc": "Comment / Consult / Handoff / Sub-goal, exposed as the agentwork CLI with owner-only permissions enforced server-side."
+        "desc": "Comment / Consult / Handoff / Sub-goal, exposed as the ouroflow CLI with owner-only permissions enforced server-side."
       },
       "protocol": {
         "title": "Multi-protocol & transport",
@@ -71,7 +71,7 @@
       "scheduler": "per-agent workers · PULL dispatch",
       "link": "/connect · JSON-RPC over WS",
       "pull": "run.poll · chat.*",
-      "machine": { "title": "agentwork connect", "sub": "machine sidecar", "note": "pulls work · spawns CLI" },
+      "machine": { "title": "ouroflow connect", "sub": "machine sidecar", "note": "pulls work · spawns CLI" },
       "runtime": "runtime.Open · acp / jsonl / jsonrpc · stdio / ws / tcp",
       "cli": { "title": "Agent CLI", "sub": "subprocess", "note": "ACP frames relayed unparsed" },
       "deliver": "verify · human gate → merge + re-verify + push"
@@ -84,13 +84,13 @@
     "firstGoal": [
       "Create a domain (project): repo URL + acceptance policy in natural language.",
       "Create a runtime (e.g. opencode acp --pure) and an agent.",
-      "Run agentwork connect on your machine — the daemon dispatches runs via run.poll (pull model).",
+      "Run ouroflow connect on your machine — the daemon dispatches runs via run.poll (pull model).",
       "Create a goal, assign the agent, and watch the loop: execution → verification → review → your approval → delivery.",
       "Or chat with any agent from the Agents page — a per-agent ACP session staged fresh every open."
     ]
   },
   "docs": {
-    "sidebarTitle": "agentwork",
+    "sidebarTitle": "ouroflow",
     "sidebarVersion": "docs",
     "groupOverview": "Overview",
     "groupModel": "Model",
@@ -111,15 +111,15 @@
         },
         {
           "title": "Machine executor (PULL)",
-          "desc": "agentwork connect holds a persistent JSON-RPC link and pulls work (run.poll). It executes runs and hosts the per-agent chat bridge — spawns the CLI, relays ACP frames unparsed.",
+          "desc": "ouroflow connect holds a persistent JSON-RPC link and pulls work (run.poll). It executes runs and hosts the per-agent chat bridge — spawns the CLI, relays ACP frames unparsed.",
           "chips": ["run.poll", "pull-model", "JSON-RPC"],
           "example": "machine → daemon:  run.poll\ndaemon → machine:  { run: r9k1, cancels: [] }\nmachine:          runtime.Open(spec) → spawn CLI"
         },
         {
           "title": "Per-run worktrees",
-          "desc": "~/.agentwork/runs/<runID> ephemeral git worktrees against per-domain bare repos. Crash recovery replays terminal runs and re-derives attention at startup.",
+          "desc": "~/.ouroflow/runs/<runID> ephemeral git worktrees against per-domain bare repos. Crash recovery replays terminal runs and re-derives attention at startup.",
           "chips": ["ephemeral", "bare-repo", "recovery"],
-          "example": "~/.agentwork/runs/r9k1/      # git worktree\n~/.agentwork/repos/<domain>/  # bare repo (truth)"
+          "example": "~/.ouroflow/runs/r9k1/      # git worktree\n~/.ouroflow/repos/<domain>/  # bare repo (truth)"
         },
         {
           "title": "Coordinator",
@@ -140,7 +140,7 @@
     },
     "concept": {
       "title": "Core concepts",
-      "intro": "The vocabulary of agentwork — a goal is the sole holder of state authority; everything else reports up.",
+      "intro": "The vocabulary of ouroflow — a goal is the sole holder of state authority; everything else reports up.",
       "groups": [
         {
           "group": "State authority",
@@ -149,19 +149,19 @@
               "name": "Goal",
               "desc": "A work item. The sole holder of state authority — runs report up, never decide.",
               "chips": ["backlog", "active", "review", "done"],
-              "example": "$ agentwork goal create \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
+              "example": "$ ouroflow goal create \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
             },
             {
               "name": "Run",
               "desc": "One agent's turn on a goal. No authority — it reports to the goal layer.",
               "chips": ["queued", "running", "completed", "failed"],
-              "example": "$ agentwork goal list\n  g7a3  active   refactor intake   [claude]\n  g6f2  review   fix feishu stream  [opencode]"
+              "example": "$ ouroflow goal list\n  g7a3  active   refactor intake   [claude]\n  g6f2  review   fix feishu stream  [opencode]"
             },
             {
               "name": "Domain",
               "desc": "An asset/evolution domain: shared repo + acceptance policy + default gates.",
               "chips": ["repo", "policy", "gates"],
-              "example": "$ agentwork domain create --repo git@github.com:org/repo \\\n    --policy \"tests pass + coverage ≥ 80%\""
+              "example": "$ ouroflow domain create --repo git@github.com:org/repo \\\n    --policy \"tests pass + coverage ≥ 80%\""
             }
           ]
         },
@@ -178,7 +178,7 @@
               "name": "Agent",
               "desc": "A runtime + persona (system prompt / model / env / MCP servers / concurrency).",
               "chips": ["persona", "model", "mcp"],
-              "example": "$ agentwork agent create --runtime opencode \\\n    --system-prompt \"You are a careful reviewer\""
+              "example": "$ ouroflow agent create --runtime opencode \\\n    --system-prompt \"You are a careful reviewer\""
             },
             {
               "name": "Chat",
@@ -195,19 +195,19 @@
               "name": "Squad",
               "desc": "A routing group that does no work itself — goals route to its leader, who delegates via sub-goals.",
               "chips": ["leader", "delegate", "reviewers"],
-              "example": "$ agentwork squad create --name review-team \\\n    --leader claude --reviewer opencode"
+              "example": "$ ouroflow squad create --name review-team \\\n    --leader claude --reviewer opencode"
             },
             {
               "name": "Sub-goal",
               "desc": "A work item split off a goal (no recursion). Own assignee + optional agent verifier.",
               "chips": ["split", "verifier", "≤3 retries"],
-              "example": "$ agentwork subgoal create --parent g7a3 \\\n    --title \"add tests\" --assignee opencode"
+              "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"add tests\" --assignee opencode"
             },
             {
               "name": "Change",
               "desc": "A sub-goal's logical deliverable. Owner integrates via the integrate_change tool.",
               "chips": ["ready", "integrating", "conflict"],
-              "example": "$ agentwork change integrate ch9f2\n# conflict → assignee rework → revision N+1"
+              "example": "$ ouroflow change integrate ch9f2\n# conflict → assignee rework → revision N+1"
             }
           ]
         },
@@ -230,13 +230,13 @@
               "name": "Mention",
               "desc": "The Consult primitive — a structured URI in a comment pulls an agent into a read-only guest run.",
               "chips": ["consult", "guest", "auto-resume"],
-              "example": "$ agentwork goal comment --text \\\n    \"[@opencode](mention://agent/a4) is this safe?\""
+              "example": "$ ouroflow goal comment --text \\\n    \"[@opencode](mention://agent/a4) is this safe?\""
             },
             {
               "name": "Schedule",
               "desc": "A cron template that clones a goal per firing. Idempotent, timezone-aware.",
               "chips": ["cron", "idempotent", "tz-aware"],
-              "example": "$ agentwork schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
+              "example": "$ ouroflow schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
             }
           ]
         }
@@ -244,38 +244,38 @@
     },
     "collab": {
       "title": "Collaboration",
-      "intro": "Agents coordinate exclusively through the agentwork CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (AGENTWORK_TOKEN), which the daemon resolves to the run's (goal, agent, role) — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side.",
+      "intro": "Agents coordinate exclusively through the ouroflow CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (OUROFLOW_TOKEN), which the daemon resolves to the run's (goal, agent, role) — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side.",
       "behaviors": [
         {
           "name": "Comment",
           "desc": "Say something on a goal — visible to all participants. The baseline interaction; no permission needed.",
           "who": "anyone",
           "chips": ["say", "no-auth"],
-          "example": "$ agentwork goal comment g7a3 --text \"blocker: tests flaky on CI\""
+          "example": "$ ouroflow goal comment g7a3 --text \"blocker: tests flaky on CI\""
         },
         {
           "name": "Consult",
           "desc": "Pull another agent into a read-only guest run via a mention URI. The requester resumes automatically after the answer lands.",
           "who": "owner",
           "chips": ["mention", "guest-run", "auto-resume"],
-          "example": "$ agentwork goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) is this refactor safe?\""
+          "example": "$ ouroflow goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) is this refactor safe?\""
         },
         {
           "name": "Handoff",
           "desc": "Transfer goal ownership to another agent. The owner check is enforced server-side — only the current owner can hand off.",
           "who": "owner",
           "chips": ["transfer", "server-check"],
-          "example": "$ agentwork goal assign g7a3 opencode --note \"you own the parser now\""
+          "example": "$ ouroflow goal assign g7a3 opencode --note \"you own the parser now\""
         },
         {
           "name": "Sub-goal",
           "desc": "Split work off a goal — own assignee, own worktree, optional verifier. Not a child goal (no recursion). Machine retries ≤3.",
           "who": "owner",
           "chips": ["split", "worktree", "verifier"],
-          "example": "$ agentwork subgoal create --parent g7a3 \\\n    --title \"add integration tests\" --assignee opencode"
+          "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"add integration tests\" --assignee opencode"
         }
       ],
-      "tokenNote": "The per-run token (AGENTWORK_TOKEN) is the ONLY identity — self-reported ids are ignored, and the owner check is enforced server-side.",
+      "tokenNote": "The per-run token (OUROFLOW_TOKEN) is the ONLY identity — self-reported ids are ignored, and the owner check is enforced server-side.",
       "fullModel": "Full model in docs/design/Collaboration.v2.md →"
     }
   },

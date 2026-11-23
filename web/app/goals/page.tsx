@@ -69,12 +69,12 @@ function GoalsPageInner() {
   // 刷新后保持；默认看板——任务面板的主入口。
   const [view, setView] = useState<"board" | "list">("board");
   useEffect(() => {
-    const saved = window.localStorage.getItem("agentwork-goals-view");
+    const saved = window.localStorage.getItem("ouroflow-goals-view");
     if (saved === "list" || saved === "board") setView(saved);
   }, []);
   const pickView = (v: "board" | "list") => {
     setView(v);
-    window.localStorage.setItem("agentwork-goals-view", v);
+    window.localStorage.setItem("ouroflow-goals-view", v);
   };
 
   // 已删除 agent 的 goal 仍保留记录：id 非空但查不到时显示「已删除 agent」，

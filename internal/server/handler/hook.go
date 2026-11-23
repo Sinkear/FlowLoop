@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // hookBindingInput is the binding request shape for both scopes.

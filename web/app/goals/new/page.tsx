@@ -44,7 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 
 // 「新建」页：选类型（任务/项目/团队/智能体/蓝本）+ 一句话描述 → 管家用
-// agentwork CLI 建出来 → 落库后自动切回对应视图（任务进详情，其余回列表）。
+// ouroflow CLI 建出来 → 落库后自动切回对应视图（任务进详情，其余回列表）。
 // 为什么是独立页面而不是弹窗/参数：
 //   1) /goals?new=1 要先把整个任务列表拉起来才弹窗，点侧栏会卡一下，而且 URL 没变化时
 //      二次点击没有任何反馈（用户反馈的“点两次不生效”）。
@@ -58,7 +58,7 @@ import { cn } from "@/lib/utils";
 // store 的流程快照 + CLI 侧的会话持久化接回原对话（见 store 头注释）。
 
 // 五类可创建对象。这一页从“只建任务”扩成通用创建入口：管家用
-// `agentwork create <kind>` 落地，建好后按类型回到对应列表/详情。
+// `ouroflow create <kind>` 落地，建好后按类型回到对应列表/详情。
 const KIND_META: Record<
   CreateKind,
   {
@@ -76,7 +76,7 @@ const KIND_META: Record<
     icon: <Target className="h-3.5 w-3.5" />,
     hint: "一句话说清要做什么，管家补负责人和项目",
     placeholder:
-      "例如：创建一个任务「对齐 webhook 重试文档」，负责人 AI SHELL，挂在 agentwork 项目下（Tab 补模板）",
+      "例如：创建一个任务「对齐 webhook 重试文档」，负责人 AI SHELL，挂在 ouroflow 项目下（Tab 补模板）",
     examples: [
       "把 webhook 投递失败的重试逻辑写成一份文档，放到 webhook 面板旁边",
       "给任务看板加一个按负责人筛选的入口",

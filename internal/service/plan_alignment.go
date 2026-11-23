@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // PlanAlignment is the read-only join between the compiled spec (blueprint_node)

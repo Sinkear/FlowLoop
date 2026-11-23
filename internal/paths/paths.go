@@ -1,19 +1,18 @@
-// Package paths is the single source of truth for agentwork's filesystem
+// Package paths is the single source of truth for ouroflow's filesystem
 // layout.
 //
 // All durable state lives under one data root. By default that root is
-// ~/.agentwork (kept for backwards compatibility with existing installs), but
-// it can — and for production deployments SHOULD — be moved outside the
-// release artifact with AGENTWORK_HOME:
+// ~/.ouroflow, but it can — and for production deployments SHOULD — be
+// moved outside the release artifact with OUROFLOW_HOME:
 //
-//	AGENTWORK_HOME=/var/lib/agentwork ./bin/agentwork-daemon
+//	OUROFLOW_HOME=/var/lib/ouroflow ./bin/ouroflow-daemon
 //
 // The release directory (bin/, web/) is stateless and can be replaced on every
 // upgrade; only this root must survive. Keeping the root stable is what makes
 // "replace the artifact, keep the agents/teams/config" safe.
 //
-// AGENTWORK_HOME is read on every call (never cached) so tests that set HOME
-// or AGENTWORK_HOME with t.Setenv keep working.
+// OUROFLOW_HOME is read on every call (never cached) so tests that set HOME
+// or OUROFLOW_HOME with t.Setenv keep working.
 package paths
 
 import (
@@ -24,25 +23,25 @@ import (
 )
 
 // EnvHome is the environment variable that overrides the data root.
-const EnvHome = "AGENTWORK_HOME"
+const EnvHome = "OUROFLOW_HOME"
 
 // EnvDB optionally overrides just the SQLite file (useful for tests and for
 // splitting the DB onto a different volume). Relative paths stay relative to
 // the process working directory, matching the daemon's -db flag.
-const EnvDB = "AGENTWORK_DB"
+const EnvDB = "OUROFLOW_DB"
 
-// Home returns the state root: $AGENTWORK_HOME when set, otherwise
-// ~/.agentwork. A leading "~" in AGENTWORK_HOME is expanded.
+// Home returns the state root: $OUROFLOW_HOME when set, otherwise
+// ~/.ouroflow. A leading "~" in OUROFLOW_HOME is expanded.
 func Home() string {
 	if v := strings.TrimSpace(os.Getenv(EnvHome)); v != "" {
 		return expandUser(v)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".agentwork")
+		return filepath.Join(home, ".ouroflow")
 	}
 	// Last-resort fallback: keep the process alive when HOME is unavailable
-	// (containers). Operators should always set AGENTWORK_HOME explicitly.
-	return filepath.Join(os.TempDir(), "agentwork-home")
+	// (containers). Operators should always set OUROFLOW_HOME explicitly.
+	return filepath.Join(os.TempDir(), "ouroflow-home")
 }
 
 // EnsureHome creates the data root if needed.
@@ -74,7 +73,7 @@ func DB() string {
 	if v := strings.TrimSpace(os.Getenv(EnvDB)); v != "" {
 		return expandUser(v)
 	}
-	return filepath.Join(Home(), "agentwork.db")
+	return filepath.Join(Home(), "ouroflow.db")
 }
 
 // Runs is the root of run/domain filesystem state.
@@ -119,7 +118,7 @@ func DaemonLog() string { return filepath.Join(Home(), "daemon.log") }
 func CLILog() string { return filepath.Join(Home(), "cli.log") }
 
 // CLIState is the machine identity / last connection state.
-func CLIState() string { return filepath.Join(Home(), "agentwork-cli-state.json") }
+func CLIState() string { return filepath.Join(Home(), "ouroflow-cli-state.json") }
 
 // AgentsConfig is the optional agents.yaml probe override.
 func AgentsConfig() string { return filepath.Join(Home(), "agents.yaml") }
@@ -136,7 +135,7 @@ func MachineSkillRoot(agentID string) string { return filepath.Join(Home(), "ski
 // ChatDir is the stable, cwd-keyed chat session directory per agent.
 func ChatDir(agentID string) string { return filepath.Join(Home(), "chat", agentID) }
 
-// BinDir holds the `agentwork` shim injected into agent PATH.
+// BinDir holds the `ouroflow` shim injected into agent PATH.
 func BinDir() string { return filepath.Join(Home(), "bin") }
 
 // RepoDir is the machine-side bare repo mirror for a domain. The daemon keeps

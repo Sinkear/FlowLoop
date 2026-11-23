@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 func TestCreateSnapshotAndFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", home)
-	dbPath := filepath.Join(home, "agentwork.db")
+	t.Setenv("OUROFLOW_HOME", home)
+	dbPath := filepath.Join(home, "ouroflow.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)

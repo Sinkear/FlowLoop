@@ -6,12 +6,12 @@
   "type": "workflow",
   "quality": "showcase",
   "specification": {
-    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
     "sha256": "95654105603a8be592d105004737d7b742eb3fb2026974918fbdab1e21b5b1da",
     "bytes": 8184
   },
   "artifact": {
-    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
     "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
     "bytes": 835735
   },
@@ -28,9 +28,9 @@
     "truncated": false
   },
   "evidence": {
-    "receipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
-    "summaryReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
-    "browserCheckReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
+    "receipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
+    "summaryReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
+    "browserCheckReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
   },
   "update": {
     "status": "current",

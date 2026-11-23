@@ -3,7 +3,7 @@ package service
 // The built-in "每日AI知识精选" digest schedule: seeded at daemon startup,
 // fires daily at 09:00 (Asia/Shanghai), and collects fresh AI-community news
 // into md articles plus an articles.json index (the machine uploads them via
-// run.finished artifacts; the daemon writes ~/.agentwork/digest/). Seeding is
+// run.finished artifacts; the daemon writes ~/.ouroflow/digest/). Seeding is
 // idempotent and self-healing: the marker lives in app_settings so the
 // schedule can be recognized (built_in flag / edit-delete guards) across
 // restarts, and dangling markers rebuild the row.
@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 const (
@@ -51,7 +51,7 @@ var DigestArtifactFiles = []string{"manifest.json", "1.md", "2.md", "3.md", "4.m
 const DigestMaxArticles = 50
 
 // DigestArticle is one entry of the collected-articles index
-// (~/.agentwork/digest/articles.json) — the schema the reading frontend
+// (~/.ouroflow/digest/articles.json) — the schema the reading frontend
 // consumes. createTime is stamped by the daemon at collection time, never
 // by the executor.
 type DigestArticle struct {

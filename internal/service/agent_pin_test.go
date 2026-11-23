@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // newPinSvc builds an AgentPinService on a fresh in-memory store. Each test

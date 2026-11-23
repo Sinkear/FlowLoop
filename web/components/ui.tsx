@@ -59,6 +59,10 @@ const STATUS_COLORS: Record<string, string> = {
   // published 不可变（goal 只能钉 published）。
   draft: "bg-amber-500/10 text-amber-300 dot-amber",
   published: "bg-emerald-500/10 text-emerald-300 dot-emerald",
+  // 蓝本节点生命周期（plan-alignment「计划 vs 实际」）：pending 尚未执行，
+  // settled 已结算；这两个词只出现在 blueprint_node.state 里。
+  pending: "bg-zinc-500/10 text-ink-3 dot-zinc",
+  settled: "bg-emerald-500/10 text-emerald-300 dot-emerald",
 };
 
 // 状态的中文显示名：UI 里不再直接暴露 backlog/active 这类枚举值。
@@ -82,6 +86,9 @@ export const STATUS_LABEL: Record<string, string> = {
   // 蓝本版本（Phase A）
   draft: "草稿",
   published: "已发布",
+  // 蓝本节点生命周期（见 STATUS_COLORS）
+  pending: "待执行",
+  settled: "已结算",
 };
 
 const STATUS_DOTS: Record<string, string> = {

@@ -14,7 +14,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/eushing/agentwork/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/acp"
 )
 
 // ErrUnsupportedProvider is returned when no backend is registered for a

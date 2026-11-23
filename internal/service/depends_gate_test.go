@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 func subGoalRunCount(t *testing.T, st *store.Store, sgID string) int {

@@ -165,7 +165,7 @@ export default function LogsPage() {
     <PageBody className="space-y-5">
       <PageHeader
         title="日志"
-        desc="~/.agentwork/daemon.log（10MB 滚动）· 实时 tail 与按时间查询"
+        desc="~/.ouroflow/daemon.log（10MB 滚动）· 实时 tail 与按时间查询"
         action={
           <Segmented
             value={level}

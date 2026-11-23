@@ -3,7 +3,7 @@
 - 状态：**【待评审】** — 等待人工 review，未获批准前不实施任何改动。
 - 约束遵守：本文件是本轮唯一产出物；未改动任何业务代码、未修复任何失败测试。
 - 数据源：
-  1. `benchmark-report.md`（bench 复跑产出，基线 agentwork-int HEAD 33f16dc，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
+  1. `benchmark-report.md`（bench 复跑产出，基线 ouroflow-int HEAD 33f16dc，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
   2. optimizer 本轮实测复测（`go test -json` 逐用例计时、平台 runs API 全量 23 条 run 记录）；
   3. 行级定位均已在基线 33f16dc 上逐行核实。
 - 与首轮提案的关系：基线 HEAD 未变（33f16dc），三条提案结论不变；本版以复跑基准与最新运行数据刷新依据，并再次核实了拟改动位置的行号。
@@ -20,7 +20,7 @@
 **② 拟改动位置（文件 + 行级，已在 33f16dc 核实）**
 - `internal/daemon/intake_test.go`、`verify_test.go`、`gate_test.go`、`schedule_test.go`、`runaway_test.go`、`prompt_context_test.go`、`handoff_cancel_test.go`（7 个文件均无 `t.Setenv`，已逐一核实）的顶层测试函数，逐一加 `t.Parallel()`（优先挑相互独立、不碰全局状态的）。
 - 对使用 `t.Setenv` 的 3 个文件（`internal/daemon/deliver_test.go`、`digest_test.go`、`worktree_test.go`）保持串行（`t.Setenv` 会自动禁止并行）或重构为显式参数注入后再并行。
-- 次级目标（同法）：`cmd/agentwork-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
+- 次级目标（同法）：`cmd/ouroflow-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
 
 **③ 预期收益（可量化）**
 - `internal/daemon` wall 8.17s → 约 3–4s（7 核并行）。
@@ -42,7 +42,7 @@
 
 **② 拟改动位置（文件 + 行级，已在 33f16dc 核实）**
 - `internal/service/codes_test.go:96-99`：decode 失败由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与 89-90/93-94 行既有 skip 语义对齐。
-- `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `AGENTWORK_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
+- `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `OUROFLOW_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
 - 本地不变量守卫 `TestErrorCodesExported`（`codes_test.go:52`）保持不动。
 
 **③ 预期收益（可量化）**

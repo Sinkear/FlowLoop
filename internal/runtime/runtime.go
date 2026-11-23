@@ -23,7 +23,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/eushing/agentwork/internal/proto"
+	"github.com/Sinkear/ouroflow/internal/proto"
 	"github.com/gorilla/websocket"
 )
 

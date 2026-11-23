@@ -1,9 +1,9 @@
-# agentwork-int-v2 修复落地记录
+# ouroflow-int-v2 修复落地记录
 
 - 日期：2026-11-14
-- 基线：`origin/agentwork-int-v2` @ `ae12054`
-- 分支：`agentwork-int-v2-fix`
-- 审查记录：`docs/rsi/review-v2.md`（在 `agentwork-bench` / `agentwork-v2-review` 工作树，记录 17 个问题场景与采纳结论）
+- 基线：`origin/ouroflow-int-v2` @ `ae12054`
+- 分支：`ouroflow-int-v2-fix`
+- 审查记录：`docs/rsi/review-v2.md`（在 `ouroflow-bench` / `ouroflow-v2-review` 工作树，记录 17 个问题场景与采纳结论）
 
 本文只记录“修后可拿”范围的**实际落地**：每个改动对应哪个真实场景、改了什么、用什么证据判定生效，以及仍未解决的问题。不复述审查过程。
 
@@ -12,7 +12,7 @@
 | # | commit | 内容 |
 |---|---|---|
 | 1 | `2a4babe` | RSI 图/指标/规则：CP 扇入、seq 排除、review 隔离、speedup/串行损失/等待/human_wait/retry/轮次口径 + 回归测试 |
-| 2 | `2aaa78b` | P2 CDN：缺码默认 FAIL、到期 allowlist、`AGENTWORK_SKIP_CDN_DRIFT=1` 才 skip |
+| 2 | `2aaa78b` | P2 CDN：缺码默认 FAIL、到期 allowlist、`OUROFLOW_SKIP_CDN_DRIFT=1` 才 skip |
 | 3 | `5dfad20` | gitignore：project-skills 等所有 exclude 先 `check-ignore` |
 | 4 | `90efd88` | link：生产调用点 handler-first + `StartReadLoop` 幂等；16 个 daemon 测试恢复 644 |
 | 5 | `9ab2b65` | 轮次报告脚本重写为数据驱动、fail-loud |
@@ -71,7 +71,7 @@
 
 ## 4. 未修/残留风险（不要误以为已解决）
 
-1. **P-A（AGENTWORK_HOME 泄漏）未实现**：`internal/daemon/verify.go` 的 `sh -c` 仍继承 daemon 环境；审查确认场景真实但 R2 fetch-128 根因未复现。若要修，需同时覆盖 `runVerifiedCmd`/`runVerifyOutput`，把 `AGENTWORK_HOME`+`HOME` 指向 per-run 临时目录，并保留 PATH/GOCACHE/代理。
+1. **P-A（OUROFLOW_HOME 泄漏）未实现**：`internal/daemon/verify.go` 的 `sh -c` 仍继承 daemon 环境；审查确认场景真实但 R2 fetch-128 根因未复现。若要修，需同时覆盖 `runVerifiedCmd`/`runVerifyOutput`，把 `OUROFLOW_HOME`+`HOME` 指向 per-run 临时目录，并保留 PATH/GOCACHE/代理。
 2. **link 生产顺序仅单测/-race 验证**，未跑真实 daemon↔server 集成；`-race` 对 ordering 竞态天然不敏感，剩余窗口靠代码审查。
 3. **循环 depends_on 未拒绝**：正常 CreateSubGoal 只能依赖已存在节点，构造不出环；历史坏数据仍可能互相等待。
 4. **retry/rework 的 run 仍不带 dispatch 锚点**（既有约定“仅首轮锚定”）；RetrySubGoal 恢复后的首个 run 也没有锚点。若要求全链审计，需要把 dispatch id 继续传给 retry enqueue。
@@ -83,7 +83,7 @@
 
 ## 5. 合并与使用
 
-- 分支基于 `ae12054`，可直接以 `agentwork-int-v2-fix` 合入 `agentwork-int-v2` 或提 PR 到 `main`（共 13 个提交，含 3 个文档提交，无外部依赖变更）。
+- 分支基于 `ae12054`，可直接以 `ouroflow-int-v2-fix` 合入 `ouroflow-int-v2` 或提 PR 到 `main`（共 13 个提交，含 3 个文档提交，无外部依赖变更）。
 - 若只取部分：指标/规则必须与 `docs/RSI.md` 同批合入，否则文档口径超前；gating 与 workflow 指标互不依赖，可分开。
 - 首次启动会跑 store 迁移：`sub_goal.dispatch_comment_id`、`rsi_round` 等；迁移是增量/幂等的，`workflow_edge` 保留。
 - 复盘入口：本文件 + `docs/rsi/review-v2.md`（问题场景与审查证据）+ `docs/RSI.md`（最终指标口径）。

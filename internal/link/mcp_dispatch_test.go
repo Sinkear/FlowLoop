@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/acp"
 )
 
 // Verifies the agent's configured extra MCP servers survive the dispatch

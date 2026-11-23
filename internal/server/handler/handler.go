@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/daemon"
-	"github.com/eushing/agentwork/internal/issue"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/notify"
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/daemon"
+	"github.com/Sinkear/ouroflow/internal/issue"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/notify"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 type Handlers struct {
@@ -40,7 +40,7 @@ type Handlers struct {
 	// git exec). nil = the check is skipped (tests construct handlers
 	// without it).
 	Daemon *daemon.Daemon
-	// Machines is the remote-machine registry (the agentwork CLI's link,
+	// Machines is the remote-machine registry (the ouroflow CLI's link,
 	// CLI 分支 Phase 1).
 	Machines *service.MachineService
 	// Skills is the skills library (CLI 分支 Phase 4).
@@ -79,6 +79,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /runtimes", h.createRuntime)
 	mux.HandleFunc("GET /runtimes/{id}", h.getRuntime)
 	mux.HandleFunc("GET /runtimes/{id}/models", h.getRuntimeModels)
+	mux.HandleFunc("POST /runtimes/{id}/models/refresh", h.refreshRuntimeModels)
 	mux.HandleFunc("DELETE /runtimes/{id}", h.deleteRuntime)
 
 	mux.HandleFunc("GET /agents", h.listAgents)
@@ -291,6 +292,39 @@ func (h *Handlers) deleteRuntime(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) getRuntimeModels(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Runtime.Models(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+// refreshRuntimeModels forces a fresh model detection on the runtime's
+// machine (POST /runtimes/{id}/models/refresh), bypassing the machine's
+// 30-minute cache, and persists the authoritative result. Status mapping:
+// 404 unknown runtime, 409 offline / local runtime, 502 probe failure.
+func (h *Handlers) refreshRuntimeModels(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	cur, err := h.Runtime.Models(ctx, id)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if h.Daemon == nil || cur.MachineID == "" {
+		writeErr(w, http.StatusConflict, fmt.Errorf("runtime %q has no machine to probe — models can only be refreshed for a machine-backed runtime", cur.Name))
+		return
+	}
+	res, err := h.Daemon.RefreshRuntimeModels(ctx, cur.MachineID, cur.CLI)
+	if err != nil {
+		if errors.Is(err, daemon.ErrMachineOffline) {
+			writeErr(w, http.StatusConflict, err)
+		} else {
+			writeErr(w, http.StatusBadGateway, err)
+		}
+		return
+	}
+	// The machine clock may differ from the daemon's; the persisted
+	// detected_at is the daemon's write time (the same clock GET already
+	// exposes), so the UI never sees a future/past skew.
+	detectedAt := time.Now().UTC().Format(time.RFC3339)
+	out, err := h.Runtime.SetModels(ctx, id, res.Models, detectedAt)
 	writeJSON(w, out, err)
 }
 
@@ -1055,7 +1089,7 @@ func (h *Handlers) sendIntake(w http.ResponseWriter, r *http.Request) {
 }
 
 // intakeCreate is the chat-as-tool entry point (决策7-5): the steward agent
-// calls `agentwork create goal` etc., which hits this endpoint. It delegates
+// calls `ouroflow create goal` etc., which hits this endpoint. It delegates
 // to Daemon.DispatchIntake — a thin pass-through to intakeReg.dispatch. The
 // body is a full intakeAction JSON (intent + sub-struct), constructed by the
 // CLI from the agent's flags.

@@ -12,20 +12,20 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eushing/agentwork/internal/store"
-	"github.com/eushing/agentwork/internal/zipx"
+	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/ouroflow/internal/zipx"
 )
 
 // Skill is a platform-managed skill package (SKILL.md + resources) — the
 // skills library agents get their skills from (CLI 分支 Phase 4). Files
 // live on disk under <RunsRoot>/skills/<id>/; the machine receives them
-// via config.push and installs them under agentwork-<name>/.
+// via config.push and installs them under ouroflow-<name>/.
 type Skill struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Title is the human-facing display name (SKILL.md frontmatter `title`).
 	// Name stays the machine identity (dir / archive / agent.skills), so one
-	// skill can be "agentwork-chat-create" on disk and 「对话式创建」 in the UI.
+	// skill can be "ouroflow-chat-create" on disk and 「对话式创建」 in the UI.
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at"`
@@ -220,7 +220,7 @@ const (
 	// BuiltinChatCreateID is the stable skill id of the conversation-first
 	// creation skill (创建任务 / 团队 / 智能体 / 蓝本 by talking to the steward).
 	BuiltinChatCreateID    = "7c1f3d5a9b2e4c8d8a6f0b3e5c7d9a21"
-	BuiltinChatCreateName  = "agentwork-chat-create"
+	BuiltinChatCreateName  = "ouroflow-chat-create"
 	BuiltinChatCreateTitle = "对话式创建"
 )
 
@@ -232,7 +232,7 @@ const (
 // the same skill.
 //
 // It refuses to proceed when another (user-created) skill already owns the
-// name: a name collision would make the skill ambiguous in `agentwork skill
+// name: a name collision would make the skill ambiguous in `ouroflow skill
 // list` and in agent pickers, so the caller should log and continue rather
 // than hijack the user's row.
 func (s *SkillService) EnsureBuiltin(ctx context.Context, id, name, title, description string, files map[string]string) (*Skill, error) {

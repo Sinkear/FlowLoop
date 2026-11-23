@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // IntakeService is the inbound NL pipeline: the owner's natural-language
@@ -83,7 +83,7 @@ func intakeSchemaBody() string {
 意图说明：
 - create_goal：用户想创建/安排一个任务。title 必填（简洁的任务标题）；description 放细节；assignee_id 从下面的 agent 或 squad 名单里选最合适的 id（必须真实存在）；assignee_type 填 "agent" 或 "squad"（与 assignee_id 对应，默认 agent）；用户说"找个团队做"时选 squad 并填 assignee_type="squad"；用户没指定时选最合理的。
   title/description 用【直接指令口吻】写任务本身（如"优化 README 文档"），不要用"用户希望/用户想要"等转述口吻——执行 agent 看到的就是任务描述，不需要知道它是谁说的。
-  domain_id 是【必要参数】：只有当用户的消息明确提到某个仓库/域（"在 test-repo 上做 xxx"、"给 agentwork 加个功能"）时才填；用户没明确指定时 domain_id 留空字符串（不要猜、不要选第一个）——平台会反问用户指定仓库。有多个可用域时尤其不能猜。
+  domain_id 是【必要参数】：只有当用户的消息明确提到某个仓库/域（"在 test-repo 上做 xxx"、"给 ouroflow 加个功能"）时才填；用户没明确指定时 domain_id 留空字符串（不要猜、不要选第一个）——平台会反问用户指定仓库。有多个可用域时尤其不能猜。
   category 是验收类别："hitl"（默认，任务完成后需要人工审批/复检）或 "hootl"（任务完成即直接结束，跳过人工复检）。只有用户明确表达"不需要人工复检/免审批/自动验收/完成后直接结束"时才填 "hootl"；用户没提时留空字符串（平台默认 hitl），不要猜。
 - review_list：用户想查看待审批/卡点清单。不需要其他字段。
 - goal_status：用户问某个任务/目标的状态。goal_id 填用户提到的 id（可能是短 id，照抄）。
@@ -179,7 +179,7 @@ func (s *IntakeService) BuildPrompt(ctx context.Context, text string) (string, e
 		return "", errors.New("空消息")
 	}
 	var b strings.Builder
-	b.WriteString("你是 agentwork 的入站解析器。用户发了一条消息，请解析其意图并写入当前工作目录的 intake.json 文件（文件即结果，不要输出到 stdout）。\n\n")
+	b.WriteString("你是 ouroflow 的入站解析器。用户发了一条消息，请解析其意图并写入当前工作目录的 intake.json 文件（文件即结果，不要输出到 stdout）。\n\n")
 	// A pending clarification draft: the previous message created a create_X
 	// intent whose required fields the parser could not fully resolve. This
 	// message is parsed IN THAT CONTEXT so a bare completion reply finishes

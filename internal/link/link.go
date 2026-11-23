@@ -1,5 +1,5 @@
-// Package link is the JSON-RPC 2.0 link between agentwork (the remote
-// CLI/sidecar) and agentwork-daemon (the control plane). One WebSocket
+// Package link is the JSON-RPC 2.0 link between ouroflow (the remote
+// CLI/sidecar) and ouroflow-daemon (the control plane). One WebSocket
 // text frame per message; EITHER side may send requests and
 // notifications — the CLI registers and uploads, the daemon dispatches
 // runs and pushes config (Phase 2+).
@@ -11,7 +11,7 @@ package link
 import (
 	"encoding/json"
 
-	"github.com/eushing/agentwork/internal/acp"
+	"github.com/Sinkear/ouroflow/internal/acp"
 )
 
 // Methods. Two surfaces share the JSON-RPC wire:
@@ -74,6 +74,14 @@ const (
 
 	// daemon → machine (Phase 4)
 	MethodConfigPush = "config.push" // request, ack
+
+	// daemon → machine: force a fresh model detection for one CLI,
+	// bypassing the machine's in-memory models cache (the runtimes page's
+	// manual refresh). The machine re-runs the same probe used at
+	// registration and returns the authoritative list; an empty list means
+	// the CLI genuinely advertised none, and the daemon overwrites the
+	// persisted list rather than keeping stale ids.
+	MethodModelsRefresh = "machine.models_refresh" // request, ack
 )
 
 // Error codes — the standard JSON-RPC set plus link-specific codes.
@@ -324,7 +332,7 @@ type RunDispatchParams struct {
 	Role      string `json:"role"` // owner|subgoal|consult|review|verify
 	SubGoalID string `json:"sub_goal_id,omitempty"`
 	Attempt   int    `json:"attempt"`
-	Token     string `json:"token"`  // per-run credential → AGENTWORK_TOKEN env
+	Token     string `json:"token"`  // per-run credential → OUROFLOW_TOKEN env
 	Prompt    string `json:"prompt"` // fixed block + wake line, fully assembled
 
 	// Processor runs (goal-less, platform-internal): the machine works in
@@ -335,7 +343,7 @@ type RunDispatchParams struct {
 	// Worktree spec: scratch domains derive the local directory layout;
 	// git (repo) domains carry the clone config — the machine clones the
 	// bare repo, checks out the goal branch, commits, and pushes the
-	// branch to the remote as agentwork/<branch> (中转, Phase 3).
+	// branch to the remote as ouroflow/<branch> (中转, Phase 3).
 	Scratch        bool   `json:"scratch"`
 	DomainName     string `json:"domain_name,omitempty"`
 	DomainID       string `json:"domain_id,omitempty"`
@@ -396,7 +404,7 @@ type RunCancelParams struct {
 // is empty by design.
 // ChatOpenParams is the chat.open request (daemon → machine): spawn the
 // agent's CLI for a chat session and open its ACP connection. The cwd is
-// the agent's STABLE chat directory (~/.agentwork/chat/<agentID>/) — the
+// the agent's STABLE chat directory (~/.ouroflow/chat/<agentID>/) — the
 // CLI keys its session store by cwd, so session/list + session/load work
 // across connections.
 type ChatOpenParams struct {
@@ -513,7 +521,7 @@ type SkillPush struct {
 
 // ConfigPushParams — the daemon pushes an agent's selected skills to its
 // machine (config.push). The machine installs them under
-// <skills_dir>/agentwork-<name>/ — namespaced, never touching the user's
+// <skills_dir>/ouroflow-<name>/ — namespaced, never touching the user's
 // own skills. Idempotent overwrite: register-time full sync replays
 // offline edits safely.
 type ConfigPushParams struct {
@@ -523,7 +531,7 @@ type ConfigPushParams struct {
 	// the per-run role contract stays in the prompt.
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	// Skills: the agent's skill packages, landed in the machine's
-	// platform-managed staging dir (~/.agentwork/skills/<agentID>/...) and
+	// platform-managed staging dir (~/.ouroflow/skills/<agentID>/...) and
 	// copied into each run's workdir at spawn (project-level skills — the
 	// user's own global skills are never touched, names stay original).
 	Skills []SkillPush `json:"skills"`
@@ -533,6 +541,20 @@ type ConfigPushParams struct {
 type ConfigPushResult struct {
 	Written []string `json:"written"`
 	Errors  []string `json:"errors,omitempty"`
+}
+
+// ModelsRefreshParams asks the machine to re-detect one CLI's models. CLI is
+// the runtime name's segment before '@' ("hermes" for "hermes@host1").
+type ModelsRefreshParams struct {
+	CLI string `json:"cli"`
+}
+
+// ModelsRefreshResult is the machine's answer: the freshly detected list
+// ([] = the CLI currently advertises no models — cached empty results are
+// valid) and when the machine ran the detection.
+type ModelsRefreshResult struct {
+	Models     []ModelInfo `json:"models"`
+	DetectedAt string      `json:"detected_at,omitempty"`
 }
 
 // RunFinishedParams is the run.finished request (machine → daemon): the

@@ -149,7 +149,7 @@ blueprint JSON 是唯一规范格式。**校验器是纯代码（零 LLM），�
 - `blueprint`（命名实体）→ `blueprint_version`（不可变内容快照 + version 1..N + draft/published/retired）。
 - **goal 绑定具体 version_id，引用钉版本**（Coze 子工作流模式）：确定性重跑 + 天然的同题 A/B 基础设施。
 - 版本 diff = 结构化三色 diff（节点增/删/改、边增/删/改、参数变化），changelog 字段承载本版变更说明——**优化提案的 hypothesis 就落在这里**。
-- JSON 文件导入导出（`agentwork blueprint export/import`），凭据类内容不入 DSL。
+- JSON 文件导入导出（`ouroflow blueprint export/import`），凭据类内容不入 DSL。
 
 ### 4.7 编译器：blueprint → 执行（两拍编译）
 
@@ -334,8 +334,8 @@ AFlow 式 MCTS 在补丁空间搜索，A/B 门控，预算（goal.budget_usd）�
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agentwork/blueprint/v1",
-  "title": "agentwork workflow blueprint",
+  "$id": "ouroflow/blueprint/v1",
+  "title": "ouroflow workflow blueprint",
   "type": "object",
   "required": ["name", "nodes", "edges"],
   "properties": {

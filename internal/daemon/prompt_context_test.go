@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/service"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // ── The engineered context system (决策 6-22) ──
 //
 // Every prompt = the FIXED BLOCK (once per session) + the WAKE LINE (every
-// turn). The feed is PULLED, never injected; AGENTWORK.md is retired.
+// turn). The feed is PULLED, never injected; OUROFLOW.md is retired.
 
 // seedCtx builds the store bits the context builders read.
 func seedCtx(t *testing.T) (*Daemon, *store.Store, string, string) {
@@ -58,7 +58,7 @@ func TestFixedBlockShape(t *testing.T) {
 	for _, want := range []string{
 		"# Background & Requirements", "# Goal", "# Who You Are", "# Tools",
 		"- Title: g", "- Description: goal desc",
-		"agentwork goal comments", "agentwork help",
+		"ouroflow goal comments", "ouroflow help",
 		"goal status", "subgoal list", "change list", // progress tools
 		"SECURITY", "never attempt to extract", "internal or external systems", // the security rule
 		"WITHOUT --after", // the no-memory contract
@@ -67,7 +67,7 @@ func TestFixedBlockShape(t *testing.T) {
 			t.Fatalf("fixed block must carry %q, got:\n%s", want, block)
 		}
 	}
-	if strings.Contains(block, "# Team") || strings.Contains(block, "agentwork MCP") {
+	if strings.Contains(block, "# Team") || strings.Contains(block, "ouroflow MCP") {
 		t.Fatalf("the prompt must not carry the team block or MCP-era names, got:\n%s", block)
 	}
 	_ = st
@@ -80,7 +80,7 @@ func TestFixedBlockRoleContracts(t *testing.T) {
 	d, _, goalID, agentID := seedCtx(t)
 	ctx := context.Background()
 	owner := d.buildFixedBlock(ctx, goalID, agentID, "B", "owner", "g", "", "repo", "")
-	for _, want := range []string{"only what you post as a", "never write ids", "JUDGED, not declared", "agentwork subgoal create --title T --assignee <agent-id>"} {
+	for _, want := range []string{"only what you post as a", "never write ids", "JUDGED, not declared", "ouroflow subgoal create --title T --assignee <agent-id>"} {
 		if !strings.Contains(owner, want) {
 			t.Fatalf("the owner contract must carry %q", want)
 		}
@@ -130,12 +130,12 @@ func TestTeamProfile(t *testing.T) {
 	}
 
 	leader := d.buildTeamProfile(ctx, goalID, agentID, "")
-	for _, want := range []string{"Squad Operating Protocol", "agentwork subgoal create --title T --assignee <agent-id>", "REVIEWER-ONLY", "playbook says X", "skills: frontend"} {
+	for _, want := range []string{"Squad Operating Protocol", "ouroflow subgoal create --title T --assignee <agent-id>", "REVIEWER-ONLY", "playbook says X", "skills: frontend"} {
 		if !strings.Contains(leader, want) {
 			t.Fatalf("the leader profile must carry %q, got:\n%s", want, leader)
 		}
 	}
-	if strings.Contains(leader, "agentwork_create_sub_goal") {
+	if strings.Contains(leader, "ouroflow_create_sub_goal") {
 		t.Fatalf("the leader profile must not carry MCP-era tool names, got:\n%s", leader)
 	}
 }
@@ -149,7 +149,7 @@ func TestWakeLineShapes(t *testing.T) {
 		!strings.Contains(wl, "你觉得这个方案怎么样？") {
 		t.Fatalf("mention wake line:\n%s", wl)
 	}
-	wl = buildWakeLine("", "the platform", "- 1 change(s) ready to integrate — inspect with agentwork_get_change, merge each with agentwork_integrate_change")
+	wl = buildWakeLine("", "the platform", "- 1 change(s) ready to integrate — inspect with ouroflow_get_change, merge each with ouroflow_integrate_change")
 	if !strings.Contains(wl, "You were mentioned by the platform:") || !strings.Contains(wl, "1 change(s) ready to integrate") {
 		t.Fatalf("platform wake line:\n%s", wl)
 	}
@@ -497,7 +497,7 @@ func TestConsultStatusPicksAgentCommentByRunID(t *testing.T) {
 // HAND-OFF warning — only owner/consult runs can hand work off, so only they
 // may see it. Verify/subgoal/review prompts must never carry it (their ends
 // are dictated by the protocol), and the owner text must name the positive
-// close-out path (`agentwork goal submit-review`).
+// close-out path (`ouroflow goal submit-review`).
 func TestCollaborationWarningScope(t *testing.T) {
 	d, st, goalID, agentID := seedCtx(t)
 	ctx := context.Background()

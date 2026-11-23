@@ -1,7 +1,7 @@
-# agentwork 工作流级 RSI（W-RSI）：调研总结与落地设计
+# ouroflow 工作流级 RSI（W-RSI）：调研总结与落地设计
 
 > 版本：2026-11-08（第三版）· 范围：工作流编排级自迭代；已定范围 T1 结构+T2 分派+T3 信息流；trace 采集退役；产出只读提案+复测计划
-> 方法：两名调研 agent 分别取学术（`docs/research/rsi-academic.md`）与业界（`docs/research/rsi-industry.md`）官方来源；本文做交叉核对、指标统一定义、可优化判定与 agentwork 落地设计。
+> 方法：两名调研 agent 分别取学术（`docs/research/rsi-academic.md`）与业界（`docs/research/rsi-industry.md`）官方来源；本文做交叉核对、指标统一定义、可优化判定与 ouroflow 落地设计。
 > 可信度约定：论文数字标 A（同行评审/arXiv 原文）；官方产品文档标 A-（厂商自述，机制可信、效果未独立验证）；媒体转述标 B；未取到正文的标 C 并注明「未核实」，本文不把 C 当论据。
 > 局限：本机 `web_search` 上游 402，检索依赖已知 URL 直取 + 站点索引；部分厂商页只有导航壳（OTel GenAI 属性名、ADK/Vertex、Uber M3、Copilot 指标定义），已在两份分报告文末列为未核实项。
 
@@ -9,7 +9,7 @@
 
 ## 0. 一页结论
 
-**agentwork 的 RSI 不是「再训练接入的 agent」，也不是只给单个 agent 调 harness；而是把整条 agent workflow 当作可观测、可归因、可复测的优化对象。** 接入的 agent 是执行器，我们不训练它的权重；我们负责的是它被如何编排：任务怎么拆、谁来做、依赖怎么连、哪些能并行、在哪里验证、失败如何回流。
+**ouroflow 的 RSI 不是「再训练接入的 agent」，也不是只给单个 agent 调 harness；而是把整条 agent workflow 当作可观测、可归因、可复测的优化对象。** 接入的 agent 是执行器，我们不训练它的权重；我们负责的是它被如何编排：任务怎么拆、谁来做、依赖怎么连、哪些能并行、在哪里验证、失败如何回流。
 
 ```
 运行中的编排图（谁→谁、并行/串行、等待/验证）
@@ -49,9 +49,9 @@
 
 ### 1.1 定义
 
-Recursive Self-Improvement（RSI）在学术语境里指：系统能修改自身，并用修改后的系统继续产生改进，形成递归。2026 年的 RSI-Dojo（arXiv:2611.03698）把它拆成三类可操作对象：**模型、harness、基础设施**。对 agentwork 有意义的只有第二类——harness：system prompt、工具集、上下文管理、控制流、验证与重试策略。
+Recursive Self-Improvement（RSI）在学术语境里指：系统能修改自身，并用修改后的系统继续产生改进，形成递归。2026 年的 RSI-Dojo（arXiv:2611.03698）把它拆成三类可操作对象：**模型、harness、基础设施**。对 ouroflow 有意义的只有第二类——harness：system prompt、工具集、上下文管理、控制流、验证与重试策略。
 
-形式化地，一个 RSI 循环是 `(A, P, E, S, Π)`：agent A、问题分布 P、可执行环境 E、评分/验证器 S、搜索/提案策略 Π。改进 = 在 E 上执行 A，拿 S 评分，按 Π 修改 A，再验证。**没有 S 的自我修改只是随机漂移**；agentwork 恰好已有 S（`verification_result` + gate + 人工决定），这是做 RSI 的先天优势。
+形式化地，一个 RSI 循环是 `(A, P, E, S, Π)`：agent A、问题分布 P、可执行环境 E、评分/验证器 S、搜索/提案策略 Π。改进 = 在 E 上执行 A，拿 S 评分，按 Π 修改 A，再验证。**没有 S 的自我修改只是随机漂移**；ouroflow 恰好已有 S（`verification_result` + gate + 人工决定），这是做 RSI 的先天优势。
 
 ### 1.2 已发表系统与证据
 
@@ -78,7 +78,7 @@ Recursive Self-Improvement（RSI）在学术语境里指：系统能修改自身
 3. **上下文坍缩**：多轮自我修改把上下文压成同质摘要，探索能力下降（ACE, arXiv:2510.04618）。
 4. **模型坍缩**：用自生成数据反复训练导致分布收窄（model collapse）。
 
-### 1.4 五道闸门（agentwork 直接照抄）
+### 1.4 五道闸门（ouroflow 直接照抄）
 
 | 闸门 | 做法 |
 |---|---|
@@ -99,7 +99,7 @@ Recursive Self-Improvement（RSI）在学术语境里指：系统能修改自身
 - **树形 run/span**：LangSmith（run=span，trace_id 绑定，单 trace 上限 25,000 run；thread 是多次会话的 trace 序列）、OpenAI Agents SDK（task/turn/agent/generation/function/guardrail/handoff 等 10 类 span）、Arize Phoenix（OpenInference `openinference.span.kind`）、AgentOps（session→agent→workflow→operation）。
 - **单表 observation 宽表**：Langfuse 只有 observations 一张表，trace 级属性（user/session/tags/metadata）复制到每行，避免 join。对单机 SQLite 是正确取舍。
 
-agentwork 的映射：**goal ≈ thread，run ≈ trace，tool/step ≈ span，session ≈ 一次 goal 的执行上下文**。span 树用 `parent_span_id` 表达；根 span 是 run，goal 是逻辑分组。
+ouroflow 的映射：**goal ≈ thread，run ≈ trace，tool/step ≈ span，session ≈ 一次 goal 的执行上下文**。span 树用 `parent_span_id` 表达；根 span 是 run，goal 是逻辑分组。
 
 ### 2.2 面板六件套
 
@@ -122,7 +122,7 @@ agentwork 的映射：**goal ≈ thread，run ≈ trace，tool/step ≈ span，s
 
 `trace → dataset → eval → 改 prompt/策略 → 复测`。DSPy 把它做成 optimizer（BootstrapFewShot / MIPROv2 / GEPA），作用对象是 program 的 prompt 与示例，不是权重。Braintrust/LangSmith 把它产品化成 dataset + experiment + scorer。
 
-**对 agentwork：「训练」= 从历史 run 里提取成功/失败模式，生成 prompt few-shot、工具策略、上下文策略的候选改动，再用冻结任务集复测。** 这与「训练模型」不是一回事，产品文案要避免让用户误解。
+**对 ouroflow：「训练」= 从历史 run 里提取成功/失败模式，生成 prompt few-shot、工具策略、上下文策略的候选改动，再用冻结任务集复测。** 这与「训练模型」不是一回事，产品文案要避免让用户误解。
 
 ### 2.5 开关的三层语义
 
@@ -136,7 +136,7 @@ agentwork 的映射：**goal ≈ thread，run ≈ trace，tool/step ≈ span，s
 
 ### 2.6 平台能力阶梯
 
-埋点 → 面板 → 分析 → 优化。多数产品停在第二、三级。agentwork 要自称 RSI，必须做到第四级（提案 + 复测 + 回滚），否则只是更好看的 trace 浏览器。
+埋点 → 面板 → 分析 → 优化。多数产品停在第二、三级。ouroflow 要自称 RSI，必须做到第四级（提案 + 复测 + 回滚），否则只是更好看的 trace 浏览器。
 
 ---
 
@@ -146,11 +146,11 @@ agentwork 的映射：**goal ≈ thread，run ≈ trace，tool/step ≈ span，s
 
 - **画布式低代码**（Coze / Dify / n8n）：节点、连线、变量映射都预先定义，适合确定性流水线；优点是可控、可复用，缺点是长尾任务需要不断加分支，运行黑盒，优化靠人重新画。Coze 的具体兴衰不在本文论证范围（C，行业观察），这里只取工程教训：**固定画布 + 黑盒执行 + 无反馈闭环，遇到真实复杂任务会同时失去表达力和可优化性**。
 - **图即代码**（LangGraph）：状态、节点、边显式写在代码里，可测试、可版本化；但图仍由作者预先定义，agent 不能在执行中长出新节点。
-- **动态多 agent**（OpenAI Agents SDK handoff、AgentOps、agentwork squad）：agent 在运行时决定交给谁、拆什么；表达力最强，但实际图是涌现的，平台默认看不见。
+- **动态多 agent**（OpenAI Agents SDK handoff、AgentOps、ouroflow squad）：agent 在运行时决定交给谁、拆什么；表达力最强，但实际图是涌现的，平台默认看不见。
 
-agentwork 在第三派。正确做法不是退回第一派，而是补上第三派最缺的东西：**运行时图重建 + 结构分析 + 策略级收敛**。图是观测结果，不是编排入口；入口仍是 squad instructions、leader 的分派行为和平台约束。这样既保留动态性，又能把「这次为什么慢」落到具体节点和边上。
+ouroflow 在第三派。正确做法不是退回第一派，而是补上第三派最缺的东西：**运行时图重建 + 结构分析 + 策略级收敛**。图是观测结果，不是编排入口；入口仍是 squad instructions、leader 的分派行为和平台约束。这样既保留动态性，又能把「这次为什么慢」落到具体节点和边上。
 
-## 3. 指标定义（agentwork 口径）
+## 3. 指标定义（ouroflow 口径）
 
 ### 3.1 层级与数据源
 
@@ -296,7 +296,7 @@ UI 必须显示级别，禁止把 L1 写成因果结论。
 
 ---
 
-## 5. agentwork 落地设计
+## 5. ouroflow 落地设计
 
 ### 5.1 概念与边界（含当前实现）
 

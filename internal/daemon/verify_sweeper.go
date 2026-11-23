@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/eushing/agentwork/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // verifySweepInterval is how often the daemon heals verifying sub-goals

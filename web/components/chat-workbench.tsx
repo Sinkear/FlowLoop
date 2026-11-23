@@ -33,9 +33,9 @@ import type { Agent, Runtime, Skill } from "@/lib/types";
 // 叫到的智能体的 prompt，所以它们看到的是同一段讨论，而不是各聊各的。
 //
 // 存储结构（localStorage）：
-//   agentwork-chat-index-v1         [{id,title,participants,updatedAt,...}]
-//   agentwork-chat-conv-v1-<id>     {messages:[...]}
-//   agentwork-chat-active-v1        上一次打开的对话 id
+//   ouroflow-chat-index-v1         [{id,title,participants,updatedAt,...}]
+//   ouroflow-chat-conv-v1-<id>     {messages:[...]}
+//   ouroflow-chat-active-v1        上一次打开的对话 id
 // 只存文本事件；工具卡片的输入输出已在事件里，加载历史后仍能展开。
 
 type ChatMsg = ChatEvent & {
@@ -54,9 +54,9 @@ type ConvMeta = {
   messageCount: number;
 };
 
-const INDEX_KEY = "agentwork-chat-index-v1";
-const ACTIVE_KEY = "agentwork-chat-active-v1";
-const convKey = (id: string) => `agentwork-chat-conv-v1-${id}`;
+const INDEX_KEY = "ouroflow-chat-index-v1";
+const ACTIVE_KEY = "ouroflow-chat-active-v1";
+const convKey = (id: string) => `ouroflow-chat-conv-v1-${id}`;
 const MAX_CONVS = 30;
 const MAX_MSGS = 300;
 const NEW_TITLE = "新对话";
@@ -104,7 +104,7 @@ function newID(): string {
 
 // 旧版管家历史迁移：只迁移一次，迁完删旧 key，避免两套记录同时存在。
 function migrateLegacy(): { meta: ConvMeta; messages: ChatMsg[] } | null {
-  for (const key of ["agentwork-chat-history-steward", "agentwork-chat-history"]) {
+  for (const key of ["ouroflow-chat-history-steward", "ouroflow-chat-history"]) {
     const old = readJSON<ChatEvent[]>(key);
     if (!Array.isArray(old) || !old.length) continue;
     const now = Date.now();

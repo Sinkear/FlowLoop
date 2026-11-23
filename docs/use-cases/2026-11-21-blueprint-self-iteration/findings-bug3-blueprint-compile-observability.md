@@ -4,7 +4,7 @@
 
 > **范围**：蓝本目标的创建/激活入口、`compileBlueprintTx` 的调用面、RSI 翻译器（`draftAutoProposals` / `proposeForkForChain`）的失败可见性，以及「空蓝图通过 finalization guard」的三层放行。
 > **不覆盖**：RSI 报告的统计公式与阈值（见 [analysis.md](analysis.md) §6）；`GATE` 节点的审批语义；历史目标的数据修复方案（只讨论可行性）。
-> **基线**：代码基线 `HEAD = a3d2744`（2026-11-21 15:05 +0800）；事故运行版本为更旧的 featnew 构建（`0.1.0-featnew.20261119`，源码 `/tmp/agentwork-featnew` 已删除，只能靠反汇编与行为取证）。所有行号以 HEAD 为准；工作树里已出现未提交的「Create 编译」补丁，**不算已修**。每条结论给出 HEAD 判定。
+> **基线**：代码基线 `HEAD = a3d2744`（2026-11-21 15:05 +0800）；事故运行版本为更旧的 featnew 构建（`0.1.0-featnew.20261119`，源码 `/tmp/ouroflow-featnew` 已删除，只能靠反汇编与行为取证）。所有行号以 HEAD 为准；工作树里已出现未提交的「Create 编译」补丁，**不算已修**。每条结论给出 HEAD 判定。
 
 ## 一页结论（按影响排序）
 

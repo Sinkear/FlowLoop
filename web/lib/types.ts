@@ -12,7 +12,7 @@ export interface ProbeCLI {
 // Skill is a platform-managed skill package (CLI 分支 Phase 4).
 export interface Skill {
   id: string;
-  name: string; // 机器身份（目录名 / agent.skills 里存的 id），如 agentwork-chat-create
+  name: string; // 机器身份（目录名 / agent.skills 里存的 id），如 ouroflow-chat-create
   title?: string; // 中文展示名（SKILL.md frontmatter 的 title），可能为空
   description: string;
   created_at: string;
@@ -162,7 +162,7 @@ export function hookEventLabel(event: string): string {
   return HOOK_EVENTS.find((e) => e.value === event)?.label ?? event;
 }
 
-// Machine is a remote host registered via `agentwork connect`.
+// Machine is a remote host registered via `ouroflow connect`.
 export interface Machine {
   id: string;
   name: string;
@@ -571,7 +571,7 @@ export interface TeamImportResponse {
 
 // TemplateMeta is the common front matter of every template.
 export interface TemplateMeta {
-  api_version: string; // "agentwork/v1"
+  api_version: string; // "ouroflow/v1"
   kind: string; // "squad-template" | "project-template"
   id: string;
   name: string;

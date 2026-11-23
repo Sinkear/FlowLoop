@@ -1,4 +1,4 @@
-# AgentWork 文档索引
+# OuroFlow 文档索引
 
 项目入口仍是根目录的 [README.md](../README.md)（英文）与 [README.zh.md](../README.zh.md)（中文）。
 本目录集中存放产品/架构设计、调研、基准报告、RSI 自迭代记录与真实用例复盘；根目录不再散放文档。
@@ -37,12 +37,12 @@
 | 文件 | 说明 |
 | --- | --- |
 | [RSI.md](RSI.md) | W-RSI 总纲：把一次 goal 执行冻结为工作流图，异步分析编排结构并产出只读提案（不训练模型权重） |
-| [rsi/self-iter-playbook.md](rsi/self-iter-playbook.md) | 自迭代手册：用 agentwork 迭代 agentwork——跑基准、量化编排开销、提案、批准、复测 |
+| [rsi/self-iter-playbook.md](rsi/self-iter-playbook.md) | 自迭代手册：用 ouroflow 迭代 ouroflow——跑基准、量化编排开销、提案、批准、复测 |
 | [rsi/proposals.md](rsi/proposals.md) | RSI R1 基线与瓶颈提案（round-1，只读分析产物） |
 | [rsi/analysis-r3.md](rsi/analysis-r3.md) | RSI R3 分析报告：R2 过程暴露的问题清单与新提案 |
 | [rsi/round-report-r3.md](rsi/round-report-r3.md) | RSI R3 轮次演进报告（R1→R3，含改进点与效果数字） |
-| [rsi/review-v2.md](rsi/review-v2.md) | agentwork-int-v2 自迭代分支审查报告 |
-| [rsi/fix-v2.md](rsi/fix-v2.md) | agentwork-int-v2 修复落地记录 |
+| [rsi/review-v2.md](rsi/review-v2.md) | ouroflow-int-v2 自迭代分支审查报告 |
+| [rsi/fix-v2.md](rsi/fix-v2.md) | ouroflow-int-v2 修复落地记录 |
 
 ## 调研（research/）
 

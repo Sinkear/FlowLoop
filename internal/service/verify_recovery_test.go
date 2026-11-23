@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // The verify-integrity contract (findings §W6 / contract v2 Task 7): no

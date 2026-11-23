@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // Delete-guard/impact tests: deleting an agent must refuse only LIVE work

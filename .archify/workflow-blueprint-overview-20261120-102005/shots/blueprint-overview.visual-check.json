@@ -8,7 +8,7 @@
   "provenance": "current",
   "deliveryReceiptId": "20f308ea-dcbb-4372-8471-3bdaa0ccf61d",
   "artifact": {
-    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
     "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
     "bytes": 835735
   },
@@ -1936,7 +1936,7 @@
     "contactSheet": "blueprint-overview.visual-check.html"
   },
   "sidecars": {
-    "directory": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/shots",
+    "directory": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/shots",
     "receipt": "blueprint-overview.visual-check.json",
     "contactSheet": "blueprint-overview.visual-check.html",
     "files": [

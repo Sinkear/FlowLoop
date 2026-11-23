@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/logging"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // W-RSI (2026-11-08): the training loop observes the ORCHESTRATION LAYER,

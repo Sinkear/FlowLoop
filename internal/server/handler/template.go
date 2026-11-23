@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/eushing/agentwork/internal/service"
+	"github.com/Sinkear/ouroflow/internal/service"
 )
 
 // ── templates (GitCode YAML 模板：列表 / 详情 / 刷新 / apply) ──

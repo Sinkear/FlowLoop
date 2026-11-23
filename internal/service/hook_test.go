@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eushing/agentwork/internal/events"
-	"github.com/eushing/agentwork/internal/store"
+	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/ouroflow/internal/store"
 )
 
 // newHookFixture opens a store and creates one domain + one active goal to
@@ -195,7 +195,7 @@ func TestHookEffectiveBindingsOrderAndOverride(t *testing.T) {
 // content_hash → exit≠0 recorded as failed without touching the goal.
 func TestHookExecutorFiresOnFinished(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -214,7 +214,7 @@ func TestHookExecutorFiresOnFinished(t *testing.T) {
 	// The script asserts the stdin contract and writes a marker into the
 	// run dir so the test can verify env + cwd.
 	script := `#!/bin/sh
-cat > "$AGENTWORK_HOOK_RUN_ID.stdin.json"
+cat > "$OUROFLOW_HOOK_RUN_ID.stdin.json"
 echo "cwd=$(pwd)" > out.txt
 `
 	h, err := svc.Create(ctx, "contract-hook", "", script, "", 0, nil)
@@ -243,7 +243,7 @@ echo "cwd=$(pwd)" > out.txt
 	if r.ExitCode == nil || *r.ExitCode != 0 {
 		t.Errorf("exit code: got %v", r.ExitCode)
 	}
-	// stdin contract check (run dir lives under AGENTWORK_HOME, i.e. dir).
+	// stdin contract check (run dir lives under OUROFLOW_HOME, i.e. dir).
 	raw, err := os.ReadFile(filepath.Join(dir, "runs", "hooks", r.ID, r.ID+".stdin.json"))
 	if err != nil {
 		t.Fatalf("read stdin capture: %v", err)
@@ -274,7 +274,7 @@ echo "cwd=$(pwd)" > out.txt
 // → failed, goal status untouched.
 func TestHookExecutorDisabledAndFailing(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	if _, err := st.DB().ExecContext(ctx, `INSERT INTO goal (id,title,status,assignee_type,created_at,created_by_type) VALUES ('g-2','G','active','agent',?,'human')`, now()); err != nil {
@@ -324,7 +324,7 @@ func TestHookExecutorDisabledAndFailing(t *testing.T) {
 // TestHookTimeout: timeout_sec enforced, status=timeout.
 func TestHookTimeout(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	svc := NewHookService(st, nil)
@@ -349,7 +349,7 @@ func TestHookTimeout(t *testing.T) {
 // appears after an edit, clears after the next run.
 func TestHookListTripwireBadge(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	svc, st, _, _ := newHookFixture(t)
 	ctx := context.Background()
 	h, _ := svc.Create(ctx, "tripwire-hook", "", "#!/bin/sh\necho v1", "", 0, nil)
@@ -386,7 +386,7 @@ func TestHookListTripwireBadge(t *testing.T) {
 // failed with the daemon-restart note.
 func TestHookOrphanSweep(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	svc := NewHookService(st, nil)
@@ -439,7 +439,7 @@ func TestHookTailWriter(t *testing.T) {
 // (FK cascade) but hook_run history survives (no FK by design).
 func TestHookDeleteCascadesAndKeepsHistory(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	svc, st, domainID, goalID := newHookFixture(t)
 	ctx := context.Background()
 	h, _ := svc.Create(ctx, "doomed-hook", "", "#!/bin/sh\ntrue", "", 0, nil)
@@ -496,7 +496,7 @@ func TestHookEventBusTopics(t *testing.T) {
 // then records a "goal terminal" skip, not an execution.
 func TestHookReviewingSkipOnTerminal(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	if _, err := st.DB().ExecContext(ctx, `INSERT INTO goal (id,title,status,assignee_type,created_at,created_by_type) VALUES ('g-3','G','active','agent',?,'human')`, now()); err != nil {
@@ -532,7 +532,7 @@ func TestHookReviewingSkipOnTerminal(t *testing.T) {
 // event — the executor loop blocks on each script).
 func TestHookSeqOrderWithinEvent(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	if _, err := st.DB().ExecContext(ctx, `INSERT INTO goal (id,title,status,assignee_type,created_at,created_by_type) VALUES ('g-4','G','active','agent',?,'human')`, now()); err != nil {
@@ -667,12 +667,12 @@ func TestHookParamsValidation(t *testing.T) {
 }
 
 // TestHookParamsInjection: params reach the script via all three channels —
-// stdin payload "params" key, AGENTWORK_HOOK_PARAMS (whole JSON), and
-// AGENTWORK_PARAM_<KEY> flattened env. Binding params override hook
+// stdin payload "params" key, OUROFLOW_HOOK_PARAMS (whole JSON), and
+// OUROFLOW_PARAM_<KEY> flattened env. Binding params override hook
 // defaults on the same key while other hook defaults survive (shallow merge).
 func TestHookParamsInjection(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	ctx := context.Background()
 	if _, err := st.DB().ExecContext(ctx, `INSERT INTO goal (id,title,status,assignee_type,created_at,created_by_type) VALUES ('g-5','P','active','agent',?,'human')`, now()); err != nil {
@@ -684,8 +684,8 @@ func TestHookParamsInjection(t *testing.T) {
 	defer svc.Unsubscribe()
 
 	script := `#!/bin/sh
-cat > "$AGENTWORK_HOOK_RUN_ID.stdin.json"
-env | grep '^AGENTWORK_' | sort > env.txt
+cat > "$OUROFLOW_HOOK_RUN_ID.stdin.json"
+env | grep '^OUROFLOW_' | sort > env.txt
 `
 	h, err := svc.Create(ctx, "params-hook", "", script, "", 0, map[string]string{
 		"channel": "default-chan", "webhook-url": "https://hook.example/default",
@@ -736,25 +736,25 @@ env | grep '^AGENTWORK_' | sort > env.txt
 	}
 	env := string(envRaw)
 	for _, want := range []string{
-		"AGENTWORK_HOOK_PARAMS=",
-		`AGENTWORK_PARAM_CHANNEL=proj-alerts`,
-		"AGENTWORK_PARAM_WEBHOOK_URL=https://hook.example/default",
-		"AGENTWORK_PARAM_EXTRA=42",
+		"OUROFLOW_HOOK_PARAMS=",
+		`OUROFLOW_PARAM_CHANNEL=proj-alerts`,
+		"OUROFLOW_PARAM_WEBHOOK_URL=https://hook.example/default",
+		"OUROFLOW_PARAM_EXTRA=42",
 	} {
 		if !strings.Contains(env, want) {
 			t.Errorf("env missing %q in:\n%s", want, env)
 		}
 	}
-	// AGENTWORK_HOOK_PARAMS carries the same merged map as JSON.
+	// OUROFLOW_HOOK_PARAMS carries the same merged map as JSON.
 	line := ""
 	for _, l := range strings.Split(env, "\n") {
-		if strings.HasPrefix(l, "AGENTWORK_HOOK_PARAMS=") {
-			line = strings.TrimPrefix(l, "AGENTWORK_HOOK_PARAMS=")
+		if strings.HasPrefix(l, "OUROFLOW_HOOK_PARAMS=") {
+			line = strings.TrimPrefix(l, "OUROFLOW_HOOK_PARAMS=")
 		}
 	}
 	var envParams map[string]string
 	if err := json.Unmarshal([]byte(line), &envParams); err != nil {
-		t.Fatalf("AGENTWORK_HOOK_PARAMS not JSON: %q", line)
+		t.Fatalf("OUROFLOW_HOOK_PARAMS not JSON: %q", line)
 	}
 	if envParams["channel"] != "proj-alerts" || envParams["extra"] != "42" || envParams["webhook-url"] != "https://hook.example/default" {
 		t.Errorf("HOOK_PARAMS env wrong: %v", envParams)
@@ -803,7 +803,7 @@ func TestHookParamsUpdateMetaReplaceAll(t *testing.T) {
 // until the next orphan sweep.
 func TestHookTestRunSurvivesCanceledRequestContext(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("AGENTWORK_HOME", dir)
+	t.Setenv("OUROFLOW_HOME", dir)
 	st := newTestStore(t)
 	svc := NewHookService(st, nil)
 	bg := context.Background()

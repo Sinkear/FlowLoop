@@ -41,7 +41,7 @@
 
 ## 一、事故事实（数据包实证）
 
-数据源：`/root/job-envs/sandboxes/agentwork-rpa-1795138507/.agentwork/agentwork.db` 备份 `/tmp/agentwork-db-backup-1121.db`，`daemon.log`，`chat_message` 事件流，goal 项目目录，事故二进制；事故数据包原件 `incident-data.zip`（sha256 `80bf2df6…`）为临时附件，未入库，关键事实已转录到本文。
+数据源：`/root/job-envs/sandboxes/ouroflow-rpa-1795138507/.ouroflow/ouroflow.db` 备份 `/tmp/ouroflow-db-backup-1121.db`，`daemon.log`，`chat_message` 事件流，goal 项目目录，事故二进制；事故数据包原件 `incident-data.zip`（sha256 `80bf2df6…`）为临时附件，未入库，关键事实已转录到本文。
 
 | 项 | 数值 | 证据 |
 | --- | --- | --- |
@@ -186,7 +186,7 @@ daemon.log 对应行：`comment: mention dispatch goal=… → consult run … a
 
 1. `blueprintDriven=true`（`team_context.go:107`，只看 pin）；
 2. owner contract（`:304-329`）明说计划已编译、`subgoal create` 会被拒、不要自己干活、用 `subgoal list` 看工作项；
-3. `agentwork subgoal list` 此时是空的（没有 `sub_goal` 行）；
+3. `ouroflow subgoal list` 此时是空的（没有 `sub_goal` 行）；
 4. 服务层确实拒绝 `CreateSubGoal`（`subgoal.go:88-95`），拒绝理由与「是否已编译」无关；
 5. 唯一剩下的协作动作是 `goal comment` mention 一个 agent → 平台生成 `role='consult'` 的 run（`comment.go:459-469` 记录 `consult_request`；`run.go:287-294` 把「trigger comment 存在」解析为 consult）；
 6. consult 在 HEAD 是 READ-ONLY 文案（`daemon.go:1554-1567`、`:1825-1829`），只产出意见/评论。
@@ -358,7 +358,7 @@ if n == 0 { return ValidationError("goal is pinned to a blueprint but its plan w
 | --- | --- | --- |
 | gate auto | **已实现（2026-11-21 工作树）**：gate 增加 `auto: {when, action}`；`when` 是单条 `node.<id>.output <op> "literal"`，`<id>` 必须是 gate 的**直接上游**（校验 V3 同批强制）；`action` 必须是已声明动作。sweeper 每轮对上游 sealed `run.result_summary` 求值：命中即 `ResolveBlueprintGate(..., decided_by=auto)`，未命中回落到人工/超时。发布/编译 stamping `auto_when`/`auto_action`；决策卡展示规则。测试 `blueprint_auto_test.go`（命中/未命中/四类校验失败） | 多个上游证据仍应写成 condition 节点（auto 刻意只支持单子句）；schema/编译器/UI/测试均已接入；事故 t1→g1 的「低风险直通」现在可用一条 auto 规则表达 |
 | timeout 语义 | **已决策并实现（2026-11-21 工作树）**：事故 `timeout.action=rejected` 非有意。`gate.timeout`/`action` 改为可选，缺省语义=park（到点只记 `parked_at`，不决策、不释放分支）；`rejected` 仅由作者显式选择；显式 system 决策保留 | 影响所有 gate 型蓝本；`blueprint.go:443-455`、`:2491-2545`；测试 `TestBlueprintGateWithoutTimeoutHolds`/`TestBlueprintGateTimeoutWithoutActionParks` |
-| consult 工具策略 | **已决策并实现（2026-11-21 工作树）**：consult 只许提意见 → 机器侧 `autopermit` 对 `role=consult` 强制只读：拒绝 fs 写、terminal、`edit|delete|move|execute` 权限请求（记 `policy_violation` 日志），只放行 read/search；`team_context` consult 契约同步声明「平台在工具层强制」 | 会改变现有「@成员 干活」的习惯；若确需执行，另立显式 `delegate` 并编译成节点。`cmd/agentwork-cli/autopermit.go`、`exec.go`；测试 `autopermit_test.go` |
+| consult 工具策略 | **已决策并实现（2026-11-21 工作树）**：consult 只许提意见 → 机器侧 `autopermit` 对 `role=consult` 强制只读：拒绝 fs 写、terminal、`edit|delete|move|execute` 权限请求（记 `policy_violation` 日志），只放行 read/search；`team_context` consult 契约同步声明「平台在工具层强制」 | 会改变现有「@成员 干活」的习惯；若确需执行，另立显式 `delegate` 并编译成节点。`cmd/ouroflow-cli/autopermit.go`、`exec.go`；测试 `autopermit_test.go` |
 | consult 回填 | guest run 完成时把回答评论 id 写回 `response_comment_id`；workflow/RSI 使用该字段展示「咨询结论」 | 纯增量字段，无兼容问题 |
 
 ### P1：plan-vs-actual 对账
@@ -400,7 +400,7 @@ RSI 侧据此产出 `plan_deviation` finding（例如「3/5 节点无执行记�
 
 - **自迭代推进（2026-11-21 已实现）**：`POST /blueprint-proposals/{id}/next-round` 把「发布应用版本 → 克隆原训练目标 → 钉新版建下一轮」合成一次显式动作；UI 在 approved 提案行提供「开始下一轮」（可选择立即 active 或只建 backlog）。仍然由人触发，不在批准时自动 publish/自动跑，遵守 `docs/RSI.md:109` 的人工确认原则。
 - **cap 口径**：`rsi_analyze.go:232` 改为 per-blueprint 计数。**2026-11-21 已实现（工作树）**：解析 version→blueprint_id 后 `COUNT(*) WHERE blueprint_id=?`。
-- **scratch 账本（2026-11-21 已实现，工作树）**：新增 `env_change` 表（goal/run/node、env_id、before/after 版本、snapshot_ref、manifest_sha256、status=started|succeeded|failed|rolled_back、operator、started/finished、error，索引 goal+started、env+started）；`GoalService.RecordEnvChange/ListEnvChanges`（校验终态、sha256 64 hex、时间序）；RPC `env_change.record|list`（身份取自 run token）；CLI `agentwork env-change record|list`；HTTP `GET /goals/{id}/env-changes`；goal 详情页「环境变更账本」卡；scratch 域 run 的 contract 增加「改环境必须记账」段。测试 `env_change_test.go`（往返/排序/9 类校验）。**未做**：由机器自动截获（当前靠执行者显式 record）、artifact 内容上传、按账本自动回滚。
+- **scratch 账本（2026-11-21 已实现，工作树）**：新增 `env_change` 表（goal/run/node、env_id、before/after 版本、snapshot_ref、manifest_sha256、status=started|succeeded|failed|rolled_back、operator、started/finished、error，索引 goal+started、env+started）；`GoalService.RecordEnvChange/ListEnvChanges`（校验终态、sha256 64 hex、时间序）；RPC `env_change.record|list`（身份取自 run token）；CLI `ouroflow env-change record|list`；HTTP `GET /goals/{id}/env-changes`；goal 详情页「环境变更账本」卡；scratch 域 run 的 contract 增加「改环境必须记账」段。测试 `env_change_test.go`（往返/排序/9 类校验）。**未做**：由机器自动截获（当前靠执行者显式 record）、artifact 内容上传、按账本自动回滚。
 - **UI**：蓝本详情页显示「最近一轮 spec vs 实际」覆盖率与未绑定原因（未编译/已停靠）。**2026-11-21 已实现（工作树）**：goal 详情页新增「计划 vs 实际」卡（planned/executed/consult 计数 + 偏离列表 + 逐节点表）。
 
 ### 验收不变量（回归测试）

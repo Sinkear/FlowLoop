@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eushing/agentwork/internal/events"
+	"github.com/Sinkear/ouroflow/internal/events"
 )
 
 // TestScheduleCategoryPersists: the schedule's HITL/HOOTL mode is persisted
