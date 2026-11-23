@@ -303,7 +303,7 @@ func (s *CommentService) create(ctx context.Context, c Comment, dispatch bool) (
 		// Claim's goal gate (P0-1) admits it only after the human releases.
 		return &c, nil
 	}
-	// Consult permission (Collaboration.md §6, 决策 5-2): only the goal's
+	// Consult permission (Collaboration.v2.md §2, 决策 5-2): only the goal's
 	// OWNER (agent run) may mention other agents from a comment — a guest run
 	// is itself a consult and cannot fan out further. Human comments are the
 	// human's consult and stay unrestricted.
@@ -456,7 +456,7 @@ func (s *CommentService) forceMentionCycleFailed(ctx context.Context, goalID str
 	}})
 }
 
-// recordConsult appends a consult_request row (决策 5-8, Collaboration.md
+// recordConsult appends a consult_request row (决策 5-8, Collaboration.v2.md
 // §12): the full chain — requester (the owner run that asked) → trigger
 // comment → guest run — so the reconcile step can auto-resume the requester
 // when the guest's answer lands. response_comment_id is no longer back-filled

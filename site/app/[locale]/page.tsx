@@ -18,7 +18,7 @@ const REPO = "https://github.com/Sinkear/ouroflow";
 
 const FEATURE_ICONS = {
   loop: RefreshCw,
-  policy: FileCheck,
+  acceptance: FileCheck,
   subgoals: GitBranch,
   collab: Users,
   protocol: Cable,
@@ -151,12 +151,14 @@ export default async function LandingPage({
 ./build/ouroflow-daemon
 
 # On the machine that runs the agents:
-./build/ouroflow connect`}</CodeBlock>
+./build/ouroflow connect --server http://127.0.0.1:47813`}</CodeBlock>
 
         <h3 className="mb-2 mt-6 font-semibold text-text">{t("frontendTitle")}</h3>
         <CodeBlock label="bash">{`cd web
 npm install
-npm run build && npm start`}</CodeBlock>
+npm run dev   # http://127.0.0.1:47814
+
+# production: npm run build && npm start`}</CodeBlock>
 
         <h3 className="mb-3 mt-6 font-semibold text-text">{t("firstGoalTitle")}</h3>
         <ol className="max-w-3xl list-inside list-decimal space-y-2 text-sm leading-relaxed text-text">

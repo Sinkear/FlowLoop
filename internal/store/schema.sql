@@ -464,7 +464,7 @@ CREATE TABLE IF NOT EXISTS verification_result (
 
 CREATE INDEX IF NOT EXISTS idx_verification_result_sub ON verification_result(sub_goal_id, created_at);
 
--- handoff_event: one ownership transition (Collaboration.md §20). Append-only
+-- handoff_event: one ownership transition (Collaboration.v2.md §8/§11). Append-only
 -- audit of who handed the goal to whom, from/to which runs, and why — the
 -- handoff-cycle signal (A→B→A→B ping-pong) is counted from here. to_run_id is
 -- back-filled by the caller after the new owner's run is enqueued.
@@ -485,7 +485,7 @@ CREATE TABLE IF NOT EXISTS handoff_event (
 
 CREATE INDEX IF NOT EXISTS idx_handoff_event_goal ON handoff_event(goal_id, created_at);
 
--- consult_request: one Consult (Collaboration.md §12) — an agent's mention of
+-- consult_request: one Consult (Collaboration.v2.md §12) — an agent's mention of
 -- another agent for information/judgment. Links the full chain:
 -- trigger comment → guest run → response comment → (auto) requester resume.
 CREATE TABLE IF NOT EXISTS consult_request (

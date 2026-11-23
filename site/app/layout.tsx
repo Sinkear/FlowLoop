@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     template: "%s | ouroflow",
   },
   description:
-    "A single-user control plane that runs CLI agents unattended through goal → execution → verification → gate → delivery.",
+    "A single-user control plane that turns CLI agent sessions into a durable, human-gated delivery loop: goal → execution → completion record → review → delivery.",
 };
 
 export default function RootLayout({
