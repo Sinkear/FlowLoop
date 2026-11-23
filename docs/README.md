@@ -38,8 +38,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| [assets/ouroflow-loop-en.svg](assets/ouroflow-loop-en.svg) | 根 README 首页主流程图（英文）：define → schedule → execute → verify → review（人工）→ deliver，底部附子任务 / 协作 / RSI 三条支撑环 |
-| [assets/ouroflow-loop-zh.svg](assets/ouroflow-loop-zh.svg) | 同上，中文版（README.zh.md 首页使用） |
+| [assets/ouroflow-self-iteration-en.svg](assets/ouroflow-self-iteration-en.svg) | 根 README 首页主流程图（英文）：编译图 vN → 执行 → 留痕 → RSI 诊断 → 图补丁 → 人批准发布 vN+1 |
+| [assets/ouroflow-self-iteration-zh.svg](assets/ouroflow-self-iteration-zh.svg) | 同上，中文版（README.zh.md 首页使用） |
 
 ## 设计与协作（design/）
 

@@ -10,13 +10,13 @@
     "label": "切换语言"
   },
   "landing": {
-    "tagline": "AI 任务流水线操作系统",
-    "subtitle": "一个单用户控制平面，把 CLI agent 会话变成持久闭环：目标 → 执行 → 完成记录 → 人工评审 → 交付。你定义卡点，agent 干活，平台跟踪状态与证据。",
+    "tagline": "图驱动的 AI 工作流操作系统",
+    "subtitle": "一个单用户控制平面，跑图驱动的 AI 工作流，并让工作流自我迭代：Blueprint vN → 执行图 → RSI findings → 图补丁 → 人批准的 vN+1。下一个 goal 跑在更好的图上。",
     "cta": {
       "github": "在 GitHub 上查看",
       "start": "快速开始"
     },
-    "mentalModel": "goal 是一个工作项，也是状态权威的唯一持有者；run 是某个 agent 在它上面的一轮——run 只上报，从不决策。平台评判完成；你把守关卡。",
+    "mentalModel": "goal 编译在一张不可变的 Blueprint 图上；run 留下真实执行图；RSI 把它变成 finding 与补丁提案。图负责提案——你负责批准、评审和发布。",
     "heroStack": ["Go 1.26", "Next.js 16", "ACP", "SQLite"],
     "terminal": {
       "title": "ouroflow — zsh",
@@ -35,8 +35,8 @@
     "featuresTitle": "核心特性",
     "features": {
       "loop": {
-        "title": "一个有真实评审卡点的闭环",
-        "desc": "目标、运行、隔离 worktree、完成记录、人工评审，以及批准后才发生的交付（合并 + 复验 + 推送）。"
+        "title": "会自我迭代的工作流",
+        "desc": "Blueprint vN 编译出图；run 记录真实执行图；RSI 找出结构浪费并给出图补丁。你批准并发布 vN+1，下一个 goal 跑在新图上。"
       },
       "acceptance": {
         "title": "按 goal 选 HITL / HOOTL",
@@ -60,8 +60,10 @@
       }
     },
     "archTeaserTitle": "架构一览",
-    "archTeaserDesc": "单进程、单机、单用户、无鉴权。本地 SQLite 存状态，进程内事件总线，Go daemon + Next.js web UI。总线只是唤醒提示——每个状态迁移都是一个带条件的 DB 事务，重放下幂等。",
+    "archTeaserDesc": "单 daemon、单机、单用户、无鉴权。本地 SQLite 存状态，进程内事件总线，Go daemon + Next.js web UI。总线只是唤醒提示——每个状态迁移都是一个带条件的 DB 事务，重放下幂等。",
     "archReadMore": "阅读完整架构 →",
+    "loopFigureAlt": "OuroFlow 自迭代闭环：编译图 vN，执行，记录执行图，用 RSI 诊断，产出图补丁，由人发布 vN+1。",
+    "loopFigureCaption": "每次执行都是下一版工作流图的证据。图负责提案；人给 vN+1 签字。",
     "arch": {
       "web": { "title": "Web UI", "sub": "Next.js · 浏览器", "note": "ACP 聊天客户端 + 实时流" },
       "proxy": "/backend/* + /ws 代理",
@@ -80,11 +82,12 @@
     "prereq": "前置条件：Go 1.26+、Node.js 20+、npm 10+、Git，以及一个 ACP-capable agent CLI。",
     "backendTitle": "后端",
     "frontendTitle": "前端",
+    "executionTitle": "执行面",
     "firstGoalTitle": "第一个目标",
     "firstGoal": [
-      "创建一个 domain（项目）：仓库 URL，或 scratch 工作区。",
-      "从 ouroflow connect 探测到的 runtime 创建 agent。",
-      "在你的机器上运行 ouroflow connect——daemon 通过 run.poll（拉模型）派发运行。",
+      "启动 daemon 和 Web（见快速开始），打开 http://127.0.0.1:47814。",
+      "创建 domain：仓库 URL，或 scratch 工作区。",
+      "运行 ouroflow connect，再从它探测到的 runtime 创建 agent。",
       "创建 goal、指派、选 HITL/HOOTL，看状态走：执行 → 评审（人）→ 批准后交付。",
       "或从 Agents 页面直接和任意 agent 聊天——每次打开都重新 staging 该 agent 的 ACP 会话。"
     ]
@@ -101,7 +104,7 @@
     "changelog": "更新日志",
     "arch": {
       "title": "架构",
-      "intro": "单进程、单机、单用户、无鉴权。本地 SQLite 存状态，进程内事件总线，Go daemon + Next.js web UI。",
+      "intro": "单 daemon、单机、单用户、无鉴权。本地 SQLite 存状态，进程内事件总线，Go daemon + Next.js web UI。",
       "layers": [
         {
           "title": "Event ≠ truth",

@@ -2,10 +2,10 @@
 
 # OuroFlow
 
-**The agent delivery pipeline with human checkpoints.**<br>
-You define what "done" means. Agents do the work. The platform keeps state and evidence. **You open the gates.**
+**Graph-driven AI workflows that iterate on themselves.**<br>
+A blueprint-driven goal compiles into a versioned graph. Agents execute it. The platform records what actually happened. RSI turns that evidence into structural findings and a concrete graph patch. **You approve the next version** — and the next goal runs on a better graph.
 
-`goal` → `run` → `verify` → **`review` (human)** → `deliver`
+`Blueprint vN` → `goal` → `execution graph` → `RSI findings` → `graph patch` → **`you approve`** → `Blueprint vN+1` → `next goal`
 
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -14,45 +14,67 @@ You define what "done" means. Agents do the work. The platform keeps state and e
 
 [English](README.md) · [简体中文](README.zh.md)
 
-[Highlights](#-highlights) · [Quick Start](#-quick-start) · [Core Concepts](#-core-concepts) · [Collaboration](#-collaboration) · [Architecture](#-architecture) · [CLI](#-cli-tool) · [Docs](#-docs-upgrades--templates) · [Tech Stack](#-tech-stack) · [Acknowledgments](#-acknowledgments)
+[Self-iteration](#-a-workflow-graph-that-iterates-on-itself) · [Highlights](#-highlights) · [Quick Start](#-quick-start) · [Core Concepts](#-core-concepts) · [Collaboration](#-collaboration) · [Architecture](#-architecture) · [CLI](#-cli-tool) · [Docs](#-docs-upgrades--templates) · [Tech Stack](#-tech-stack) · [Acknowledgments](#-acknowledgments)
 
 **Single daemon · single machine · single user · local-first.** Local SQLite state, in-process event bus, Go daemon + Next.js web UI.
 
 </div>
 
 <div align="center">
-<img src="docs/assets/ouroflow-loop-en.svg" alt="OuroFlow loop: define, schedule, execute, verify, review, deliver. Review is a human gate; delivery happens after approval." width="100%">
+<img src="docs/assets/ouroflow-self-iteration-en.svg" alt="The self-iteration loop: compile graph vN, execute it, record the real execution graph, diagnose structural waste with RSI, produce a graph patch, and let a human approve graph vN+1 for the next goal." width="100%">
 </div>
 
 <div align="center">
-<sub>Default <b>HITL</b>: a finished goal stops at <b>review</b> for your decision. <b>HOOTL</b> skips that gate; repo-backed HOOTL branches are left unmerged.</sub>
+<sub><b>HITL</b> is still the default review gate; repo-backed <b>HOOTL</b> branches are left unmerged. The outer loop is the product: every run is evidence for the next workflow graph.</sub>
 </div>
 
-## 🧭 It runs the loop. You hold the gates.
+## 🔁 A workflow graph that iterates on itself
 
-Most agent sessions end when the chat ends. OuroFlow keeps the work: a **goal** owns the state, a **run** is one agent's attempt in an isolated worktree, and the platform — not the agent — decides whether the goal is done.
+Most agent tools tune the prompt, the model, or the chat. OuroFlow tunes the **workflow graph around the agents**: which nodes exist, how they depend on each other, who gets which lane, where work waits, and which gates a human must open.
 
-It automates the pipeline: queueing, dispatch, retries, worktree setup, completion bookkeeping, review routing, post-approval merge/re-verify/push, and notifications.
+A blueprint-driven goal is compiled against one **immutable Blueprint version** — a DAG of `task`, `condition`, `router`, `gate`, `spawn` and `end` nodes. The run then leaves a second graph: the **execution graph**, with real nodes, edges, waits, retries, consults and human gates. RSI reads that graph, computes structural metrics, and emits findings such as a serial chain, lost parallelism, a merge candidate, the wrong assignee, retry amplification, ping-pong, weak briefs or repeated consults. A finding becomes a structured **graph patch** — add/update/remove a node, add/remove an edge — with the expected effect and a retest plan.
 
-It deliberately leaves the decisions to you: the **HITL/HOOTL** choice, review approval, Blueprint proposal adoption, version publishing, and starting the next RSI round.
+The graph is the deliberate path, not the only one: `infer` goals keep dynamic owner decomposition. Their execution shapes are recorded, and after three identical shapes the platform can draft a `v1` blueprint — still human-published. That is the on-ramp from ad-hoc agent work to a graph.
 
-> OuroFlow does **not** promise a fully autonomous software team. It will not invent the acceptance bar, approve its own proposals, or merge a repo change without a human gate.
+### One round, end to end
+
+| # | Stage | What happens | Who |
+|---|---|---|---|
+| 01 | **Compile** | A blueprint-driven goal pins Blueprint vN; the graph is validated by V1–V6 | platform |
+| 02 | **Execute** | Agents work the nodes in isolated worktrees; the graph is the plan | agents |
+| 03 | **Record** | Real nodes, edges, waits, retries, consults and gates become the execution graph | platform |
+| 04 | **Diagnose** | RSI computes critical path, parallel speedup, rework, retry amplification, human-wait share and nine finding types | RSI |
+| 05 | **Patch** | Findings become graph diffs (`add_node`, `update_node`, `delete_node`, `add_edge`, `delete_edge`); Phase D auto-translates `serial_chain` only | machine |
+| 06 | **Sign & ship** | You approve, V1–V6 rerun, **you publish** vN+1; the next goal pins it | **you** |
+
+The version chain is the audit trail: `v1 → v2 → v3` is diffable, immutable and rollbackable. A/B on seven metrics — critical path, wall time, parallel speedup, rework, verification pass rate, verification overhead, human-wait time — decides whether the new graph is actually better.
+
+> This is **not** model training and **not** prompt self-editing. OuroFlow optimizes the orchestration graph only. It never approves its own proposals or publishes a version: `decided_by` is human, publishing is human, and the next RSI round is human-triggered. Today the analyzer is deterministic rules plus statistics (no LLM attribution), and the Phase E evaluation set / best-checkpoint loop is not built yet.
+
+## 🧭 Under it: a delivery pipeline
+
+A self-iterating graph still has to ship code. The layer underneath turns a goal into work: a **goal** owns the state, a **run** is one agent's attempt in an isolated worktree, and the platform — not the agent — decides whether the goal is done.
+
+It automates the pipeline: queueing, dispatch, retries, worktree setup, completion bookkeeping, review routing, post-approval merge/re-verify/push, and notifications. It deliberately leaves the decisions to you: the **HITL/HOOTL** choice, review approval, graph-patch adoption, version publishing, and starting the next RSI round.
+
+> OuroFlow does **not** promise a fully autonomous software team. The graph proposes; you review, sign and publish.
 
 ### Three places you decide
 
 - **Before work** — write the brief and choose **HITL** (default: a finished goal parks at `review`) or **HOOTL** (finish directly; meant for scratch or work that does not need a merge).
 - **At the review gate** — **approve** emits `goal:approved` and triggers merge --no-ff, re-verify and push; **reject/redirect** sends the goal back to its owner with the reason.
-- **Across rounds** — Blueprint proposals stay `pending` until a human supplies `decided_by`; a human publishes the new version and starts the next RSI round. `rsi.max_auto_rounds` only caps automatic drafting.
+- **At the version gate** — graph patches stay `pending` until a human supplies `decided_by`; V1–V6 rerun, a human publishes `vN+1`, and the next goal pins it. A human also starts the next RSI round. `rsi.max_auto_rounds` only caps automatic drafting.
 
 ## 🌟 Highlights
 
+- **Workflow self-iteration** — the execution graph is the feedback loop: RSI findings → structured graph patch → human-approved `vN+1` → the next goal runs on it. The orchestration improves; the model weights never change.
+- **A version chain, not a prompt pile** — Blueprint versions are immutable, diffable and rollbackable. Seven metrics make each round A/B-testable, and the version chain is the checkpoint.
+- **Evidence from the run, not guesswork** — nodes, edges, critical path, parallelism, retries, rework, consults and human-wait time are recorded as facts; nine finding types are derived from the graph.
 - **Durable state, isolated execution** — goals, runs, sub-goals and changes live in SQLite; every run gets its own worktree under `$OUROFLOW_HOME/runs/<runID>`. Restart the daemon without losing the loop.
 - **A real review gate** — HITL goals stop at `review` for your decision. After approval the platform merges, re-verifies and pushes. HOOTL skips the gate; repo-backed HOOTL goals are **not** auto-merged, so the branch stays for you.
 - **Sub-goals + Changes** — the owner splits work into sub-goals with their own assignee and worktree. Completed sub-goals produce **Changes** with revisions; the owner integrates them, and conflicts wake the assignee to rework.
 - **Collaboration without a shared chat room** — Comment / Consult / Handoff / Sub-goal, exposed through the `ouroflow` CLI. The per-run token is the only identity and owner permissions are enforced server-side.
-- **Blueprint + RSI, with a human signature** — graph workflows, node-level metrics and self-iteration findings. Machines propose; humans approve proposals, publish versions and start the next round.
-- **Your agent stack** — ACP / JSONL / JSON-RPC over stdio / ws / tcp, extra MCP servers, GitHub/GitCode/cron/Feishu triggers, and remote skill sync.
-- **A console, not a log tail** — live event stream, execution timeline, sub-goal / change / verification panels, per-agent ACP chat, and conversation-first creation.
+- **Your agent stack + a console** — ACP / JSONL / JSON-RPC over stdio / ws / tcp, extra MCP servers, GitHub/GitCode/cron/Feishu triggers, remote skill sync, live timeline, sub-goal/change/verification panels and per-agent chat.
 
 ## 🚀 Quick Start
 
@@ -96,13 +118,15 @@ ouroflow create goal   --title "build the thing" --domain demo --assignee dev
 ## 🧩 Core Concepts
 
 <details>
-<summary><b>The object model — 14 concepts, one table</b></summary>
+<summary><b>The object model — 16 concepts, one table</b></summary>
 
 | Concept | What it is |
 |---|---|
 | **Domain** (Project) | A repo-backed or scratch workspace: git URL/credentials/default branch. Acceptance is chosen per goal (HITL/HOOTL), not compiled from prose. |
+| **Blueprint** | The versioned workflow graph a goal compiles against: `task`, `condition`, `router`, `gate`, `spawn`, `end`; validated by V1–V6 and immutable once published. A goal pins exactly one version. |
 | **Goal** | A work item (product plane). Status: backlog → active → review → done / failed / cancelled. The sole holder of state authority; `category` is `hitl` or `hootl`. |
 | **Run** | One agent's turn on a goal. Status: queued → running → completed / failed / cancelled, plus a **role** (owner / subgoal / consult / review / verify). No authority — it reports to the goal layer. |
+| **RSI** | Workflow-level self-iteration: in `train` mode a finished goal is frozen into an execution graph, measured and analyzed; output is findings plus graph-patch proposals. A human approves and publishes. |
 | **Runtime** | A launch spec — transport (stdio/ws/tcp) + provider (acp/jsonl/jsonrpc) + executable/args or endpoint + env. |
 | **Agent** | A runtime + persona (system prompt / model / env / extra MCP servers / max concurrency). |
 | **Chat** | A direct ACP conversation with an agent over `GET /agents/{id}/acp` — the daemon relays frames unparsed to the machine-side CLI; sessions live in the CLI's own store, permissions are answered in the panel. |
@@ -232,7 +256,7 @@ OuroFlow is an independent derivative distribution of [agentwork](https://github
 
 <div align="center">
 
-**OuroFlow** — you hold the gates, the platform runs the loop.
+**OuroFlow** — the graph proposes; you sign. Every round runs on a better workflow.
 
 [⬆ Back to top](#ouroflow)
 
