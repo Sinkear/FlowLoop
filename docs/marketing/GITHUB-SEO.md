@@ -9,10 +9,10 @@
 
 ## 0. TL;DR — paste these
 
-**About / description** (326 chars, limit 350):
+**About / description** (330 chars, limit 350):
 
 ```text
-Open-source, self-hosted multi-agent orchestration with human-in-the-loop gates for self-improving workflow automation (RPA-style). Define 'done'; coding agents execute, machine-verify, merge and push; a workflow RSI loop proposes the next round — you approve proposals, the next goal and gates. Go + Next.js, ACP/MCP, SQLite.
+Open-source, self-hosted graph-driven AI workflow OS for multi-agent orchestration. Blueprint goals compile into versioned graphs; coding agents execute them; workflow RSI turns the execution graph into structural findings and graph patches. You approve the next version, the gate and the next goal. Go + Next.js, ACP/MCP, SQLite.
 ```
 
 **Topics** (20, limit 20):
@@ -40,25 +40,26 @@ trust more than no link.
 
 | Element | Choice | Reason |
 |---|---|---|
-| Lead keyword | `multi-agent orchestration` | Highest-intent category phrase with real search demand; front-loaded in the first 40 chars. |
-| Human boundary | `human-in-the-loop gates` + `you approve proposals, the next goal and gates` | The loop is not an unattended closed loop: proposal adoption, the next round's goal and every gate stay with the human. This is a feature, not a disclaimer. |
-| Self-iteration | `workflow RSI` | Names the W-RSI loop (`docs/rsi/self-iter-playbook.md`): benchmark → optimizer proposal → human review → build → next round. |
-| Category bridge | `RPA-style workflow automation` | Captures RPA demand **as a qualifier**. OuroFlow automates software/workflow processes, not desktop UI robots; "RPA-style" is the honest bridge. |
-| Differentiator | `define 'done'` → execute → machine-verify → merge + push | The actual product loop, written as a benefit, not a feature list. |
+| Lead category | `graph-driven AI workflow OS` | Says what the product is in the first 36 chars: a workflow OS whose unit is a graph, not another chat wrapper. |
+| Demand bridge | `multi-agent orchestration` | Keeps the highest-intent category phrase while the graph positioning carries the differentiation. |
+| Human boundary | `you approve the next version, the gate and the next goal` | The loop is not unattended: version approval, every gate and the next round stay with the human. This is a feature, not a disclaimer. |
+| Self-iteration | `workflow RSI` + `execution graph → findings → graph patches` | Names the loop precisely: the run leaves an execution graph, RSI finds structural waste, and a structured patch becomes the next version. |
+| Differentiator | `Blueprint goals → versioned graphs → execution → RSI → vN+1` | The product loop, written as a benefit rather than a feature list. |
 | Proof / integrations | `ACP/MCP`, `SQLite`, `Go + Next.js` | Captures protocol/stack queries without keyword stuffing. |
 | Deployment | `self-hosted` | Matches the `self-hosted` topic and the local daemon/SQLite reality. |
 
-- 326 chars, under GitHub's 350 cap.
-- First sentence is **131 chars** and ends with the RPA/RSI hook; Google/Bing typically
-  truncate around 155–160, so the snippet carries the category, the human boundary and
-  the start of the loop instead of cutting mid-claim. GitHub's OG card uses the full string.
+- 330 chars, under GitHub's 350 cap.
+- First sentence is **97 chars** and front-loads the graph category plus the multi-agent
+  demand term; Google/Bing typically truncate around 155–160, so the snippet carries the
+  category and the start of the loop instead of cutting mid-claim. GitHub's OG card uses
+  the full string.
 - It does **not** repeat the repo name as the first words ("OuroFlow is…"), so the
   description adds information instead of restating the `<title>`.
 - The human-approval claim is evidence-backed: `docs/rsi/self-iter-playbook.md` T6 makes
   human approval mandatory before any platform-code change; `docs/use-cases/2026-11-21-blueprint-self-iteration/timeline.md`
   records `human_wait` 1,735.5m ≈ 28.9h, **78.1%** of wall+wait across 50 runs. Do not
   replace this with "autonomous" or "fully unattended".
-- "RPA-style" is deliberately a modifier, not the category. The repo contains **no RPA
+- RPA remains a discovery topic, not a description claim. The repo contains **no RPA
   feature or docs**; only `ouroflow-rpa-*` sandbox names in use-case records. Leading with
   "RPA" would attract UiPath/Power Automate buyers and invite a relevance complaint.
 - **Claude Code is intentionally absent** — see §2, "Deliberately excluded". Add it only
@@ -68,11 +69,11 @@ trust more than no link.
 **Site `<meta name="description">`** should be shorter (120–160 chars); use:
 
 ```text
-Human-in-the-loop AI agent orchestration with workflow RSI: agents execute, verify, merge; you approve proposals, goals and gates. Self-hosted Go + Next.js.
+Graph-driven AI workflow OS: versioned Blueprint graphs, agent execution, RSI-proposed graph patches, human-approved vN+1. Self-hosted Go + Next.js, ACP/MCP.
 ```
 
-(156 chars — does not repeat the title tag, keeps the human boundary, and ends with
-the stack.)
+(157 chars — does not repeat the title tag, keeps the graph category and the human
+boundary, and ends with the stack.)
 
 ---
 
@@ -273,24 +274,24 @@ Recommended metadata (per locale, in `site/app/[locale]/layout.tsx` or via
 export const metadata: Metadata = {
   metadataBase: new URL("https://sinkear.github.io"),
   title: {
-    default: "AI Task Pipeline OS for Coding Agents | OuroFlow", // 48 chars, keyword first
+    default: "Graph-Driven AI Workflow OS for Coding Agents | OuroFlow", // 56 chars, keyword first
     template: "%s | OuroFlow",
   },
   description:
-    "Human-in-the-loop AI agent orchestration with workflow RSI: agents execute, verify, merge; you approve proposals, goals and gates. Self-hosted Go + Next.js.",
+    "Graph-driven AI workflow OS: versioned Blueprint graphs, agent execution, RSI-proposed graph patches, human-approved vN+1. Self-hosted Go + Next.js, ACP/MCP.",
   alternates: { canonical: "/ouroflow/en/" }, // per-locale
   openGraph: {
     type: "website",
     siteName: "OuroFlow",
-    title: "AI Task Pipeline OS for Coding Agents",
-    description: "Human-gated workflow RSI: agents execute and verify; you approve proposals, goals and gates.",
+    title: "Graph-Driven AI Workflow OS for Coding Agents",
+    description: "Blueprint goals compile into versioned graphs; agents execute; RSI proposes graph patches; you approve vN+1 and the gates.",
     url: "https://sinkear.github.io/ouroflow/en/",
     images: [{ url: "/ouroflow/og.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "AI Task Pipeline OS for Coding Agents",
-    description: "Define 'done'. Agents run the loop.",
+    title: "Graph-Driven AI Workflow OS for Coding Agents",
+    description: "Blueprint goals compile into versioned graphs. Agents execute. RSI proposes the next graph. You approve vN+1.",
     images: ["/ouroflow/og.png"],
   },
   robots: { index: true, follow: true },

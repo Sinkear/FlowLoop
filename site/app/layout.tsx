@@ -9,11 +9,11 @@ import "./globals.css";
 // "en" 默认；如需精确 lang，可在此处读 segment，但静态导出下保持简单。
 export const metadata: Metadata = {
   title: {
-    default: "ouroflow — Graph-Driven AI Workflow OS",
-    template: "%s | ouroflow",
+    default: "OuroFlow — Graph-Driven AI Workflow OS",
+    template: "%s | OuroFlow",
   },
   description:
-    "A single-user control plane for graph-driven AI workflows that iterate on themselves: Blueprint vN → execution graph → RSI findings → graph patch → human-approved vN+1.",
+    "Graph-driven AI workflow OS: versioned Blueprint graphs, agent execution, RSI-proposed graph patches, human-approved vN+1. Self-hosted Go + Next.js, ACP/MCP.",
 };
 
 export default function RootLayout({
