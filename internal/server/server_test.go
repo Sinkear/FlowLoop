@@ -45,6 +45,46 @@ func TestIsLoopbackAddr(t *testing.T) {
 	}
 }
 
+func TestCSRFMiddleware(t *testing.T) {
+	cases := []struct {
+		name    string
+		method  string
+		origin  string
+		host    string
+		want    int
+		reached bool
+	}{
+		{"same-origin POST", http.MethodPost, "http://127.0.0.1:7373", "127.0.0.1:7373", http.StatusOK, true},
+		{"dev-server origin POST", http.MethodPost, "http://localhost:3000", "127.0.0.1:7373", http.StatusOK, true},
+		{"no origin (curl/CLI)", http.MethodPost, "", "127.0.0.1:7373", http.StatusOK, true},
+		{"cross-site POST", http.MethodPost, "https://evil.example", "127.0.0.1:7373", http.StatusForbidden, false},
+		{"null origin POST", http.MethodPost, "null", "127.0.0.1:7373", http.StatusForbidden, false},
+		{"cross-site GET stays readable", http.MethodGet, "https://evil.example", "127.0.0.1:7373", http.StatusOK, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest(tc.method, "http://"+tc.host+"/api/thing", nil)
+			req.Host = tc.host
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			csrfMiddleware(next).ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			if reached != tc.reached {
+				t.Fatalf("next reached = %v, want %v", reached, tc.reached)
+			}
+		})
+	}
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	settings := newTestSettings(t, "secret123")
 	called := false

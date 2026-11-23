@@ -333,47 +333,73 @@ func probeCLIs(ctx context.Context, scanDirs []string) []link.ProbeCLI {
 }
 
 // detectCLIModels returns the CLI's model list, cached per CLI name for
-// modelsCacheTTL. Strategy: run ModelsCmd when the table configured it and
-// parse its one-model-per-line (or JSON array) output; when that yields
-// nothing (no ModelsCmd, command missing, empty output) fall back to ACP
-// introspection. An empty result is cached too — retrying an ACP spawn for a
-// model-less CLI every probe tick would be waste.
+// modelsCacheTTL. Strategy: introspect over ACP when the CLI is spawnable;
+// when the handshake fails or advertises no models, fall back to ModelsCmd
+// and parse its one-model-per-line (or JSON array) output. Only successful
+// detections are cached: a failed spawn/timeout must be retried on the next
+// probe tick rather than pinning "0 models" for 30 minutes.
 func detectCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
 	if models, ok := cachedModels(e.Name); ok {
 		return models
 	}
-	models := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+	models, ok := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+	if !ok {
+		return models
+	}
 	storeModels(e.Name, models)
 	return models
 }
 
-// detectCLIModelsUncached performs the detection and caches the result. The
-// manual refresh path (machine.models_refresh) must bypass the 30-minute
-// cache — a user clicking refresh expects the CLI to be probed NOW.
-func refreshCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
-	models := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+// refreshCLIModels performs an uncached detection for the manual refresh
+// (machine.models_refresh). Unlike the periodic path it reports failure, so
+// the daemon can refuse to overwrite a working catalog with the empty result
+// of a transient probe failure. A successful handshake that yields zero models
+// is still a valid empty answer and IS cached.
+func refreshCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) ([]link.ModelInfo, error) {
+	models, ok := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+	if !ok {
+		return nil, fmt.Errorf("model detection failed for CLI %q — model list left unchanged", e.Name)
+	}
 	storeModels(e.Name, models)
-	return models
+	return models, nil
 }
 
 // detectCLIModelsUncached is the detection strategy itself, without the
-// read-side cache. Returns never-nil.
-func detectCLIModelsUncached(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
+// read-side cache. ok reports that at least one source completed a handshake /
+// command successfully; an empty list with ok=true is an authoritative "this
+// CLI currently exposes no usable models". ok=false means infrastructure
+// failure (spawn error, timeout, JSON-RPC error, failed models_cmd) and the
+// returned list never represents the CLI's actual catalog.
+func detectCLIModelsUncached(ctx context.Context, e probeEntry, spawn []string, extraPath string) ([]link.ModelInfo, bool) {
 	// Prefer the ACP handshake when the CLI is spawnable: its session/new
 	// model selector lists the models the CLI will actually accept (opencode
 	// advertises configOptions and rejects registry-only ids). The `models`
-	// subcommand is the fallback for CLIs whose ACP server advertises none.
+	// subcommand is the fallback for CLIs whose ACP server is unavailable or
+	// advertises none.
 	var models []link.ModelInfo
+	ok := false
 	if len(spawn) > 0 {
-		models = probeModelsViaACP(ctx, spawn)
+		models, ok = probeModelsViaACP(ctx, spawn)
 	}
-	if len(models) == 0 && e.ModelsCmd != "" {
-		models = parseModelsOutput(runModelsCmd(ctx, e.ModelsCmd, extraPath))
+	if !ok || len(models) == 0 {
+		if e.ModelsCmd != "" {
+			raw, cmdOK := runModelsCmd(ctx, e.ModelsCmd, extraPath)
+			if cmdOK {
+				parsed := parseModelsOutput(raw)
+				// A successful handshake that advertised zero models stays
+				// authoritative; the command only fills a gap, it cannot
+				// resurrect a failed ACP probe into a "failure".
+				if len(parsed) > 0 || !ok {
+					models = parsed
+				}
+				ok = true
+			}
+		}
 	}
 	if models == nil {
 		models = []link.ModelInfo{}
 	}
-	return models
+	return models, ok
 }
 
 // ── model detection cache ──
@@ -415,9 +441,11 @@ func resetModelsCache() {
 }
 
 // runModelsCmd runs a models_cmd with a hard timeout and returns its
-// combined output (” on failure). extraPath (a --scan dir) is prepended to
-// PATH so a CLI resolved outside PATH still runs.
-func runModelsCmd(ctx context.Context, cmd, extraPath string) string {
+// combined output. ok is false when the command could not start, exited
+// non-zero, or timed out — callers must treat that as a detection failure, not
+// as "the CLI has no models". extraPath (a --scan dir) is prepended to PATH so
+// a CLI resolved outside PATH still runs.
+func runModelsCmd(ctx context.Context, cmd, extraPath string) (string, bool) {
 	pctx, cancel := context.WithTimeout(ctx, modelsTimeout)
 	defer cancel()
 	c := exec.CommandContext(pctx, "sh", "-c", cmd)
@@ -426,9 +454,9 @@ func runModelsCmd(ctx context.Context, cmd, extraPath string) string {
 	}
 	b, err := c.CombinedOutput()
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(b)
+	return string(b), true
 }
 
 // parseModelsOutput parses a models_cmd's output into model infos. Two
@@ -569,31 +597,14 @@ func acpConfigOptionModels(opts []acpConfigOption) []link.ModelInfo {
 	return out
 }
 
-// mergeModelInfos appends in to dst, skipping empty and already-present ids
-// (first occurrence wins — shape order decides when duplicates disagree).
-func mergeModelInfos(dst, in []link.ModelInfo) []link.ModelInfo {
-	seen := make(map[string]bool, len(dst)+len(in))
-	for _, m := range dst {
-		seen[m.ID] = true
-	}
-	for _, m := range in {
-		if m.ID == "" || seen[m.ID] {
-			continue
-		}
-		seen[m.ID] = true
-		dst = append(dst, m)
-	}
-	return dst
-}
-
 // parseACPModels extracts the model list from an ACP session/new RESULT
-// payload. The sources are NOT unioned: an explicit model list (result.models
-// object's availableModels, result.models as an array, or top-level
-// availableModels) is the CLI's authoritative selector; only when it is
-// absent/empty does the parser fall back to configOptions' model selector.
+// payload. The sources are NOT unioned: the first explicit model list present
+// (result.models as an array, result.models.availableModels, or top-level
+// availableModels) is the CLI's authoritative selector; only when none is
+// present does the parser fall back to configOptions' model selector.
 //
-// Unioning the two inflates the list with a registry catalog the CLI does not
-// currently offer (the refresh path used to report every model a provider
+// Unioning the sources inflates the list with a registry catalog the CLI does
+// not currently offer (the refresh path used to report every model a provider
 // knows about, including ones the user has no key/entitlement for). One
 // source, first present, wins; ids are deduplicated within that source.
 func parseACPModels(result json.RawMessage) []link.ModelInfo {
@@ -614,51 +625,27 @@ func parseACPModels(result json.RawMessage) []link.ModelInfo {
 		if strings.HasPrefix(models, "[") {
 			var arr []acpModel
 			if err := json.Unmarshal([]byte(models), &arr); err == nil {
-				out = mergeModelInfos(out, acpModelsToInfos(arr))
+				out = acpModelsToInfos(arr)
 			}
 		} else {
 			var obj struct {
 				AvailableModels []acpModel `json:"availableModels"`
 			}
 			if err := json.Unmarshal([]byte(models), &obj); err == nil {
-				out = mergeModelInfos(out, acpModelsToInfos(obj.AvailableModels))
+				out = acpModelsToInfos(obj.AvailableModels)
 			}
 		}
 	}
-	out = mergeModelInfos(out, acpModelsToInfos(top.AvailableModels))
+	if len(out) == 0 {
+		out = acpModelsToInfos(top.AvailableModels)
+	}
 	if len(out) > 0 {
 		// Explicit selector wins outright — configOptions is the agent's
 		// full registry and may contain providers/models this CLI cannot
 		// actually run right now.
 		return out
 	}
-	out = mergeModelInfos(out, acpConfigOptionModels(top.ConfigOptions))
-	return out
-}
-
-// acpAuthConfigured reports whether an initialize reply's authMethods show a
-// usable (non-terminal) credential path. Hermes' ACP adapter, for example,
-// advertises the provider auth method only when a provider API key actually
-// resolves; with no key it advertises ONLY the terminal `--setup` method and
-// session/new fails anyway. Treating terminal-only as "not configured" stops
-// an agent that merely knows a public catalog from reporting models the user
-// cannot run. An absent/empty authMethods list means "not advertised" — the
-// CLI may authenticate out of band, so it is NOT treated as unconfigured.
-func acpAuthConfigured(initResult json.RawMessage) bool {
-	var v struct {
-		AuthMethods []struct {
-			Type string `json:"type"`
-		} `json:"authMethods"`
-	}
-	if len(initResult) == 0 || json.Unmarshal(initResult, &v) != nil || len(v.AuthMethods) == 0 {
-		return true
-	}
-	for _, m := range v.AuthMethods {
-		if !strings.EqualFold(strings.TrimSpace(m.Type), "terminal") {
-			return true
-		}
-	}
-	return false
+	return acpConfigOptionModels(top.ConfigOptions)
 }
 
 // filterModelsByAuth keeps only models whose provider-namespaced id
@@ -713,7 +700,9 @@ func filterModelsByAuth(models []link.ModelInfo, initResult json.RawMessage) []l
 	}
 	out := make([]link.ModelInfo, 0, len(models))
 	for _, m := range models {
-		if p := prefix(m.ID); p != "" && authed[p] {
+		// Keep un-namespaced ids: a plain id carries no provider evidence, and
+		// dropping it in a partly-namespaced catalog would lose a valid model.
+		if p := prefix(m.ID); p == "" || authed[p] {
 			out = append(out, m)
 		}
 	}
@@ -724,15 +713,22 @@ func filterModelsByAuth(models []link.ModelInfo, initResult json.RawMessage) []l
 // its initialize reply, then session/new (empty mcpServers, temp cwd) and
 // parse the model list off the reply — from result.models shapes or the
 // result.configOptions model selector (opencode/hermes). The process is
-// always killed and the temp cwd removed. Returns nil on any failure
-// (caller treats it as "no models").
-func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
+// always killed and the temp cwd removed.
+//
+// ok=false means the handshake itself failed (spawn error, timeout, JSON-RPC
+// error); the caller must not treat that as "no models". A successful
+// session/new that advertises zero usable models returns (empty, true) — an
+// authoritative empty answer. initialize's authMethods are not used as a
+// precondition: a CLI may authenticate from env/config while advertising only
+// a terminal setup method, and hermes already fails session/new itself when
+// no provider is configured.
+func probeModelsViaACP(ctx context.Context, spawn []string) ([]link.ModelInfo, bool) {
 	if len(spawn) == 0 {
-		return nil
+		return nil, false
 	}
 	cwd, err := os.MkdirTemp("", "ouroflow-models-")
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	defer os.RemoveAll(cwd)
 
@@ -742,14 +738,14 @@ func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
 	cmd.Dir = cwd
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	if err := cmd.Start(); err != nil {
-		return nil
+		return nil, false
 	}
 	defer func() {
 		cancel() // CommandContext kills the process on ctx cancel
@@ -818,25 +814,18 @@ func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
 		"clientCapabilities": map[string]any{},
 	})
 	if !ok {
-		return nil
-	}
-	if !acpAuthConfigured(initResult) {
-		// Terminal-only auth = the CLI has not been set up with a provider
-		// credential; any catalog it advertises is not actually usable.
-		return nil
+		return nil, false
 	}
 	result, ok := call(2, "session/new", map[string]any{
 		"cwd":        cwd,
 		"mcpServers": []any{},
 	})
 	if !ok {
-		return nil
+		return nil, false
 	}
-	models := filterModelsByAuth(parseACPModels(result), initResult)
-	if len(models) == 0 {
-		return nil
-	}
-	return models
+	// The handshake succeeded: whatever it advertises (possibly nothing after
+	// the provider-namespace filter) is the CLI's real answer.
+	return filterModelsByAuth(parseACPModels(result), initResult), true
 }
 
 // scanDirsFor expands one --scan argument into concrete directories: ~ is

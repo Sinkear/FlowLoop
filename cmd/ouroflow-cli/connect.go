@@ -276,9 +276,10 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 	// models refresh (runtime detail 「刷新检测」): force a fresh model probe
 	// for one CLI, bypassing the 30-minute models cache. The probe may spawn
 	// the agent over ACP, so it is slow by nature — the daemon call that
-	// drives it carries its own 30s timeout. An empty list is a VALID answer
-	// (the CLI is installed but currently exposes no usable models): the
-	// daemon persists it authoritatively, clearing stale ids.
+	// drives it carries its own 30s timeout. A successful handshake that
+	// advertises zero usable models is a VALID empty answer (the daemon
+	// persists it and clears stale ids); a probe infrastructure failure is
+	// returned as an RPC error so the daemon keeps the previous catalog.
 	peer.Handle(link.MethodModelsRefresh, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
 		var p link.ModelsRefreshParams
 		if err := json.Unmarshal(raw, &p); err != nil || strings.TrimSpace(p.CLI) == "" {
@@ -304,7 +305,11 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 		if !ok {
 			return nil, &link.RPCError{Code: link.CodeInternal, Message: fmt.Sprintf("CLI %q is not installed on this machine", p.CLI)}
 		}
-		models := refreshCLIModels(ctx, entry, spawn, extraPath)
+		models, err := refreshCLIModels(ctx, entry, spawn, extraPath)
+		if err != nil {
+			cliLogf("models refresh: %s failed: %v", p.CLI, err)
+			return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
+		}
 		cliLogf("models refresh: %s → %d model(s)", p.CLI, len(models))
 		return link.ModelsRefreshResult{
 			Models:     models,

@@ -579,6 +579,13 @@ func TestParseACPModels(t *testing.T) {
 			result: `{"sessionId":"s1","availableModels":[{"modelId":"c"},{"modelId":"d"}]}`,
 			want:   []string{"c", "d"},
 		},
+		{
+			// Two explicit shapes at once: the first present (result.models)
+			// wins; the parser must not union them.
+			name:   "models wins over top-level availableModels",
+			result: `{"models":{"availableModels":[{"modelId":"a"}]},"availableModels":[{"modelId":"b"}]}`,
+			want:   []string{"a"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -602,8 +609,8 @@ func TestParseACPModels(t *testing.T) {
 }
 
 // TestParseACPModelsConfigOptions covers the configOptions shape `opencode
-// acp` (verified 2.2.5) and other ACP-only agents such as hermes-acp return
-// instead of result.models: [{id:"model",category:"model",type:"select",
+// acp` (verified 2.2.5) returns when it does not provide an explicit model
+// list: [{id:"model",category:"model",type:"select",
 // options:[{value,name,description}]}].
 func TestParseACPModelsConfigOptions(t *testing.T) {
 	// id=="model" selector: value/name/description become the ModelInfo.
@@ -649,30 +656,6 @@ func TestParseACPModelsConfigOptions(t *testing.T) {
 	}
 }
 
-// TestACPAuthConfigured pins the "usable credential" heuristic applied
-// before session/new: a CLI whose initialize advertises only terminal setup
-// auth has not been configured with provider credentials, so its advertised
-// catalog must not be reported as available models.
-func TestACPAuthConfigured(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want bool
-	}{
-		{"absent authMethods (unknown, do not filter)", `{"protocolVersion":1}`, true},
-		{"empty authMethods", `{"authMethods":[]}`, true},
-		{"terminal-only (unconfigured)", `{"authMethods":[{"id":"hermes-setup","type":"terminal"}]}`, false},
-		{"provider credential advertised", `{"authMethods":[{"id":"opencode-zen"},{"id":"hermes-setup","type":"terminal"}]}`, true},
-		{"opencode-style entry without type", `{"authMethods":[{"id":"opencode-login","name":"Login with opencode"}]}`, true},
-		{"malformed result", `{`, true},
-	}
-	for _, tc := range cases {
-		if got := acpAuthConfigured([]byte(tc.raw)); got != tc.want {
-			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
 // TestFilterModelsByAuth covers the mixed-provider defense: a CLI that
 // advertises a catalog for several provider namespaces while only one
 // provider has a credential must report only the credentialed namespace.
@@ -699,6 +682,12 @@ func TestFilterModelsByAuth(t *testing.T) {
 	if got := filterModelsByAuth([]link.ModelInfo{{ID: "plain-model"}}, init); len(got) != 1 {
 		t.Fatalf("un-namespaced catalog must be untouched, got %+v", got)
 	}
+	// Mixed catalog: a plain id has no provider evidence and must survive
+	// even though the colon-namespaced filtering is active.
+	mixed := []link.ModelInfo{{ID: "opencode-zen:good"}, {ID: "plain-model"}, {ID: "openrouter:nokey"}}
+	if got := filterModelsByAuth(mixed, init); len(got) != 2 || got[0].ID != "opencode-zen:good" || got[1].ID != "plain-model" {
+		t.Fatalf("mixed catalog must keep the authed namespace and the plain id, got %+v", got)
+	}
 	// Terminal-only or absent auth → no provider ids to filter by → untouched.
 	if got := filterModelsByAuth(models, []byte(`{"authMethods":[{"id":"setup","type":"terminal"}]}`)); len(got) != 3 {
 		t.Fatalf("terminal-only auth must not reach the filter, got %+v", got)
@@ -724,35 +713,66 @@ echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","models":{"availableMod
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := probeModelsViaACP(context.Background(), []string{script})
+	got, ok := probeModelsViaACP(context.Background(), []string{script})
+	if !ok {
+		t.Fatal("mixed-provider probe must complete its handshake")
+	}
 	if len(got) != 1 || got[0].ID != "opencode-zen:good" {
 		t.Fatalf("no-key provider models must be dropped, got %+v", got)
 	}
 }
 
-// TestProbeModelsViaACPTerminalOnlyAuthStopsBeforeSession: with only
-// terminal setup auth, detection must not even open a session — the catalog
-// hermes would return for an unconfigured install is not usable.
-func TestProbeModelsViaACPTerminalOnlyAuthStopsBeforeSession(t *testing.T) {
+// TestProbeModelsViaACPTerminalOnlyAuthStillProbesSession: a terminal-only
+// authMethods advertisement must NOT short-circuit detection. CLIs can
+// authenticate from env/config while advertising only terminal setup; the
+// session/new outcome is the authoritative answer.
+func TestProbeModelsViaACPTerminalOnlyAuthStillProbesSession(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "session-new-called")
-	script := filepath.Join(dir, "unconfigured-acp")
+	script := filepath.Join(dir, "env-authed-acp")
 	body := `#!/bin/sh
 read line
 echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"setup","type":"terminal"}]}}'
 read line
 echo "$line" > "` + marker + `"
-echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","models":{"availableModels":[{"modelId":"leaked","name":"Leaked"}]}}}'
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","models":{"availableModels":[{"modelId":"env-authed-model","name":"Env Authed"}]}}}'
 `
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := probeModelsViaACP(context.Background(), []string{script})
-	if len(got) != 0 {
-		t.Fatalf("terminal-only auth must report no models, got %+v", got)
+	got, ok := probeModelsViaACP(context.Background(), []string{script})
+	if !ok {
+		t.Fatal("a successful session/new must report ok even with terminal-only authMethods")
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("session/new must not be called when no provider credential is configured")
+	if len(got) != 1 || got[0].ID != "env-authed-model" {
+		t.Fatalf("env-authenticated CLI models must be reported, got %+v", got)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("session/new must be called regardless of authMethods shape")
+	}
+}
+
+// TestProbeModelsViaACPSessionErrorNotOK: a JSON-RPC error from session/new
+// is an infrastructure/probe failure (ok=false), not an authoritative empty
+// catalog — refresh must not clear the persisted model list because of it.
+func TestProbeModelsViaACPSessionErrorNotOK(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "failing-acp")
+	body := `#!/bin/sh
+read line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read line
+echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"Internal error","data":{"details":"No LLM provider configured"}}}'
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	models, ok := probeModelsViaACP(context.Background(), []string{script})
+	if ok {
+		t.Fatalf("session/new error must report ok=false, got models %+v", models)
+	}
+	if len(models) != 0 {
+		t.Fatalf("failed handshake must not yield models, got %+v", models)
 	}
 }
 
@@ -805,8 +825,8 @@ func TestRefreshCLIModelsBypassesCache(t *testing.T) {
 	if b, _ := os.ReadFile(counter); string(b) != "1\n" {
 		t.Fatalf("cached call must not re-probe, counter=%q", b)
 	}
-	if got := refreshCLIModels(ctx, e, nil, ""); len(got) != 1 || got[0].ID != "model-2" {
-		t.Fatalf("refresh must bypass the cache, got %+v", got)
+	if got, err := refreshCLIModels(ctx, e, nil, ""); err != nil || len(got) != 1 || got[0].ID != "model-2" {
+		t.Fatalf("refresh must bypass the cache, got %+v (err=%v)", got, err)
 	}
 	// The refreshed value replaces the cached one for subsequent reads.
 	if got, ok := cachedModels("refreshcli"); !ok || len(got) != 1 || got[0].ID != "model-2" {
@@ -883,25 +903,74 @@ func TestProbeModelsViaACPRealOpencode(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	models := probeModelsViaACP(ctx, []string{path, "acp"})
+	models, ok := probeModelsViaACP(ctx, []string{path, "acp"})
+	if !ok {
+		t.Log("opencode acp handshake failed (unauthenticated/offline install?) — parse shapes covered by the fake-agent tests")
+		return
+	}
 	for _, m := range models {
 		if m.ID == "" {
 			t.Fatalf("advertised model has an empty id: %+v", m)
 		}
 	}
 	if len(models) == 0 {
-		t.Log("opencode acp advertised no models (unauthenticated/offline install?) — parse shapes covered by the fake-agent tests")
+		t.Log("opencode acp advertised no models (unauthenticated install?) — parse shapes covered by the fake-agent tests")
 	}
 }
 
 // TestDetectCLIModelsFailureIsEmpty: a CLI that yields nothing (bad models
-// subcommand, dead ACP spawn) reports an empty list and does not error.
+// subcommand, dead ACP spawn) reports an empty list and does not error — but
+// the failure must NOT be cached as a real "no models" answer.
 func TestDetectCLIModelsFailureIsEmpty(t *testing.T) {
 	resetModelsCache()
 	e := probeEntry{Name: "missing", ProbeCmd: "missing --version", ModelsCmd: "missing models", ACPSpawn: []string{"missing", "acp"}}
 	got := detectCLIModels(context.Background(), e, e.ACPSpawn, "")
 	if got == nil || len(got) != 0 {
 		t.Fatalf("failed detection must return an empty slice, got %+v", got)
+	}
+	if _, ok := cachedModels("missing"); ok {
+		t.Fatal("a failed detection must not be cached")
+	}
+}
+
+// TestDetectCLIModelsRetriesAfterFailure: a failing models_cmd must be re-run
+// on the next probe tick instead of being pinned for modelsCacheTTL.
+func TestDetectCLIModelsRetriesAfterFailure(t *testing.T) {
+	resetModelsCache()
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "n")
+	script := filepath.Join(dir, "badcli")
+	body := "#!/bin/sh\nn=$(cat '" + counter + "' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '" + counter + "'\nexit 1\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := probeEntry{Name: "badcli", ModelsCmd: script}
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if got := detectCLIModels(ctx, e, nil, ""); len(got) != 0 {
+			t.Fatalf("call %d: expected no models, got %+v", i, got)
+		}
+	}
+	if b, _ := os.ReadFile(counter); string(b) != "2\n" {
+		t.Fatalf("failed detection must be retried, counter=%q", b)
+	}
+	if _, ok := cachedModels("badcli"); ok {
+		t.Fatal("a failed detection must not be cached")
+	}
+}
+
+// TestRefreshCLIModelsFailureReturnsError: the manual refresh path must
+// surface probe failure rather than store/return an empty authoritative list
+// (M1: a transient failure must never clear the persisted catalog).
+func TestRefreshCLIModelsFailureReturnsError(t *testing.T) {
+	resetModelsCache()
+	e := probeEntry{Name: "failing", ModelsCmd: "exit 7"}
+	got, err := refreshCLIModels(context.Background(), e, nil, "")
+	if err == nil {
+		t.Fatalf("refresh must return an error on probe failure, got models %+v", got)
+	}
+	if _, ok := cachedModels("failing"); ok {
+		t.Fatal("a failed refresh must not populate the cache")
 	}
 }
 

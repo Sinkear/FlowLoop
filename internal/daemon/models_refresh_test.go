@@ -17,7 +17,7 @@ import (
 
 // fakeRefreshPeer registers a machine peer that answers machine.models_refresh
 // with the given result and records the requested CLI.
-func fakeRefreshPeer(t *testing.T, d *Daemon, machineID string, result link.ModelsRefreshResult) <-chan string {
+func fakeRefreshPeer(t *testing.T, d *Daemon, machineID string, result link.ModelsRefreshResult, rpcErr *link.RPCError) <-chan string {
 	t.Helper()
 	asked := make(chan string, 4)
 	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -34,7 +34,7 @@ func fakeRefreshPeer(t *testing.T, d *Daemon, machineID string, result link.Mode
 				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: err.Error()}
 			}
 			asked <- p.CLI
-			return result, nil
+			return result, rpcErr
 		})
 		close(registered)
 	}))
@@ -75,7 +75,7 @@ func TestRefreshRuntimeModelsForwardsAndReturns(t *testing.T) {
 		Models:     []link.ModelInfo{{ID: "m1", Name: "One"}, {ID: "m2"}},
 		DetectedAt: "2026-11-23T10:00:00Z",
 	}
-	asked := fakeRefreshPeer(t, d, "m1", want)
+	asked := fakeRefreshPeer(t, d, "m1", want, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -91,6 +91,32 @@ func TestRefreshRuntimeModelsForwardsAndReturns(t *testing.T) {
 		if cli != "hermes" {
 			t.Fatalf("machine was asked to refresh %q, want hermes", cli)
 		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("machine never received machine.models_refresh")
+	}
+}
+
+// TestRefreshRuntimeModelsProbeFailurePropagates: a machine-side probe
+// failure must surface as an error (HTTP 502) instead of looking like an
+// authoritative empty catalog — the caller keeps the previous model list.
+func TestRefreshRuntimeModelsProbeFailurePropagates(t *testing.T) {
+	d, _, _ := newSkillPushDaemon(t)
+	asked := fakeRefreshPeer(t, d, "m1", link.ModelsRefreshResult{}, &link.RPCError{
+		Code:    link.CodeInternal,
+		Message: "model detection failed for CLI %q",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := d.RefreshRuntimeModels(ctx, "m1", "hermes")
+	if err == nil {
+		t.Fatalf("expected probe failure to propagate, got %+v", got)
+	}
+	if !strings.Contains(err.Error(), "machine models refresh") {
+		t.Fatalf("error must be wrapped by the daemon, got %v", err)
+	}
+	select {
+	case <-asked:
 	case <-time.After(3 * time.Second):
 		t.Fatal("machine never received machine.models_refresh")
 	}

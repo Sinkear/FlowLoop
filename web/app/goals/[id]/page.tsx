@@ -123,7 +123,8 @@ function PlanAlignmentCard({ goalId }: { goalId: string }) {
               label: "已落地",
               value: fmtInt(data.executed),
               // 拿 mapped 而不是 planned 当分母：gate/end 这类节点本来就不带
-              // 执行子任务，用 planned 比会永远显示警告。
+              // 执行子任务，用 planned 比会永远显示警告；executed < mapped
+              // 说明节点绑定的子任务已不存在（或一任务被多节点重复引用）。
               tone: data.executed < data.mapped ? "warn" : "ok",
               hint: `已绑定子任务 ${fmtInt(data.mapped)}`,
             },
