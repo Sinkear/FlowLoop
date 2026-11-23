@@ -11,7 +11,7 @@
   },
   "landing": {
     "tagline": "AI 任务流水线操作系统",
-    "subtitle": "一个单用户控制平面，让 CLI agent 无人值守跑完完整闭环：目标 → 执行 → 机器验证 → 人工关卡 → 交付。你用自然语言定义验收策略，agent 做事，平台评判，你只在关卡出现。",
+    "subtitle": "一个单用户控制平面，把 CLI agent 会话变成持久闭环：目标 → 执行 → 完成记录 → 人工评审 → 交付。你定义卡点，agent 干活，平台跟踪状态与证据。",
     "cta": {
       "github": "在 GitHub 上查看",
       "start": "快速开始"
@@ -23,24 +23,24 @@
       "lines": [
         { "type": "cmd", "text": "ouroflow connect" },
         { "type": "ok", "text": "已链接 daemon（machine=m4.local，探测到 3 个 agent CLI）" },
-        { "type": "cmd", "text": "ouroflow goal create \"重构 intake parser\" --assignee claude" },
+        { "type": "cmd", "text": "ouroflow create goal --title \"重构 intake parser\" --assignee claude" },
         { "type": "out", "text": "goal g7a3 已创建 → run r9k1 已入队" },
         { "type": "cmd", "text": "ouroflow goal list" },
         { "type": "out", "text": "  g7a3  active    重构 intake parser     [claude]" },
         { "type": "out", "text": "  g6f2  review    修复飞书流式           [opencode]" },
         { "type": "ok", "text": "2 个 goal" },
-        { "type": "comment", "text": "# 平台自动验证 + 人工关卡；你只在 checkpoint 出现" }
+        { "type": "comment", "text": "# 平台跟踪状态 + 人工评审；你只在卡点出现" }
       ]
     },
     "featuresTitle": "核心特性",
     "features": {
       "loop": {
-        "title": "完整无人值守闭环",
-        "desc": "目标、运行、机器验证、结构守卫、人工关卡、自动交付（合并 + 再验证 + 推送）。"
+        "title": "一个有真实评审卡点的闭环",
+        "desc": "目标、运行、隔离 worktree、完成记录、人工评审，以及批准后才发生的交付（合并 + 复验 + 推送）。"
       },
-      "policy": {
-        "title": "按域验收策略",
-        "desc": "用自然语言说明「完成意味着什么」；处理器 agent 把它编译成可执行检查，你确认一次即可。"
+      "acceptance": {
+        "title": "按 goal 选 HITL / HOOTL",
+        "desc": "创建 goal 时选择：HITL（默认，交付前必须人工评审）或 HOOTL（直接完成；仓库型 HOOTL 不会自动合入）。"
       },
       "subgoals": {
         "title": "子目标与变更",
@@ -65,7 +65,7 @@
     "arch": {
       "web": { "title": "Web UI", "sub": "Next.js · 浏览器", "note": "ACP 聊天客户端 + 实时流" },
       "proxy": "/backend/* + /ws 代理",
-      "daemon": { "title": "Daemon", "sub": "Go · :7373", "note": "HTTP API + WS hub" },
+      "daemon": { "title": "Daemon", "sub": "Go · :47813", "note": "HTTP API + WS hub" },
       "sqlite": "SQLite（真相源）",
       "bus": "事件总线（唤醒提示）",
       "scheduler": "per-agent workers · PULL 派发",
@@ -77,15 +77,15 @@
       "deliver": "验证 · 人工关卡 → 合并 + 再验证 + 推送"
     },
     "quickstartTitle": "快速开始",
-    "prereq": "前置条件：Go 1.26+、Node.js 20+、npm 10+。",
+    "prereq": "前置条件：Go 1.26+、Node.js 20+、npm 10+、Git，以及一个 ACP-capable agent CLI。",
     "backendTitle": "后端",
     "frontendTitle": "前端",
     "firstGoalTitle": "第一个目标",
     "firstGoal": [
-      "创建一个 domain（项目）：仓库 URL + 自然语言验收策略。",
-      "创建一个 runtime（如 opencode acp --pure）和一个 agent。",
+      "创建一个 domain（项目）：仓库 URL，或 scratch 工作区。",
+      "从 ouroflow connect 探测到的 runtime 创建 agent。",
       "在你的机器上运行 ouroflow connect——daemon 通过 run.poll（拉模型）派发运行。",
-      "创建一个 goal，分配 agent，看闭环跑起来：执行 → 验证 → 评审 → 你的批准 → 交付。",
+      "创建 goal、指派、选 HITL/HOOTL，看状态走：执行 → 评审（人）→ 批准后交付。",
       "或从 Agents 页面直接和任意 agent 聊天——每次打开都重新 staging 该 agent 的 ACP 会话。"
     ]
   },
@@ -149,7 +149,7 @@
               "name": "Goal",
               "desc": "一个工作项。状态权威的唯一持有者——run 只上报，从不决策。",
               "chips": ["backlog", "active", "review", "done"],
-              "example": "$ ouroflow goal create \"重构 intake\" --assignee claude\ngoal g7a3 已创建 → run r9k1 已入队"
+              "example": "$ ouroflow create goal --title \"重构 intake\" --assignee claude\ngoal g7a3 已创建 → run r9k1 已入队"
             },
             {
               "name": "Run",
@@ -159,9 +159,9 @@
             },
             {
               "name": "Domain",
-              "desc": "一个资产/演进域：共享仓库 + 验收策略 + 默认关卡。",
-              "chips": ["repo", "policy", "gates"],
-              "example": "$ ouroflow domain create --repo git@github.com:org/repo \\\n    --policy \"测试通过 + 覆盖率 ≥ 80%\""
+              "desc": "仓库型或 scratch 工作区。验收级别在 goal 上选。",
+              "chips": ["repo", "scratch", "hitl/hootl"],
+              "example": "$ ouroflow create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
             }
           ]
         },
@@ -216,15 +216,15 @@
           "items": [
             {
               "name": "Verifier",
-              "desc": "默认是机器（domain verify 命令），或出具结构化判定的具名 agent。",
-              "chips": ["machine", "agent", "verdict"],
-              "example": "# 先跑 domain verify 命令\n# agent 验证器: verify_sub_goal → pass/fail"
+              "desc": "具名 agent 通过 verify_sub_goal 出结构化判定。没有内置域测试执行器：检查写进任务说明，或加 verifier agent。",
+              "chips": ["agent", "verdict", "optional"],
+              "example": "# verifier agent: verify_sub_goal → pass/fail\n# 平台不执行域测试命令"
             },
             {
               "name": "Gates",
-              "desc": "来自验收策略的人工关卡规则。弱验证强制触发关卡。",
-              "chips": ["merge", "diff_contains", "human"],
-              "example": "# gate: merge  →  需人工批准\n# gate: diff_contains  →  自动检查"
+              "desc": "人工卡点：goal 的 HITL 评审、蓝图的 gate 节点。",
+              "chips": ["hitl", "blueprint gate", "human"],
+              "example": "# HITL: goal 停在 review\n# 批准 → goal:approved → 合并 + 复验 + 推送"
             },
             {
               "name": "Mention",

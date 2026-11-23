@@ -15,7 +15,7 @@ R<n> goal (execution_mode=train, assignee=squad self-iter)
 ```
 
 - sg-B 每轮**同一个任务模板**（只有轮次标记不同），保证轮间可比。
-- sg-O 产出 `docs/rsi/proposals.md`（只读提案：假设/证据/预期效果/复测计划/风险）。
+- sg-O 产出 `docs/rsi/proposals.md`（只读提案：假设/证据/预期效果/复测计划/风险；R1 的两份同名提案已归档合并为 `docs/rsi/r1-proposals.md`，后续轮次仍按 `proposals.md` 命名）。
 - 人工在 goal review 批准后，builder 才实施（`sg-Bd`，depends_on sg-O）；T6 约束：平台永不自动改自己。
 - 每轮分析冻结进 `rsi_round`（round_no + delta_json），训练页「洞察」tab 看趋势。
 
@@ -97,7 +97,8 @@ tail -f /tmp/ouroflow-daemon.log
 - 每个 RSI 自迭代 goal（R1、R2、…）到达终态前，**必须**运行
   `scripts/rsi-round-report.sh <轮次号N>`（N 可写 `3` 或 `R3`），生成
   `docs/rsi/round-report-r<N>.md` 并随本轮交付一并提交（commit message 用
-  `docs(rsi): R<N> 轮次演进报告`）。
+  `docs(rsi): R<N> 轮次演进报告`）。R3 的轮次报告已与分析报告合并归档为
+  `docs/rsi/r3-report.md`（**只读**）；后续轮次仍按 `round-report-r<N>.md` 生成。
 - 报告固定五节，缺一不可，节名与生成器输出一致：
   【① 本轮概览】【② 失败与取消】【③ 提交清单】【④ 指标】【⑤ 候选项】。
   - ① 本轮概览：goals/sessions、node_count、critical_path、parallel_speedup、top findings；
@@ -117,8 +118,10 @@ tail -f /tmp/ouroflow-daemon.log
   （`/rsi/sessions`、`/rsi/sessions/{id}`、`/goals`、`/goals/{id}/runs`、
   `/goals/{id}/comments`、`/rsi/sessions/{id}/rounds`）与本地 git log。
   注意：`/rsi` 与 `/runs/{id}` 单查端点为 404，不要使用。
-- 报告中的效果数字（before/after）必须来自基准复测报告（`benchmark-report*.md`），
-  不得凭记忆填写；API 不可得的小节显式标注，不得伪造。
+- 报告中的效果数字（before/after）必须来自基准复测报告（历史归档：`docs/reports/benchmark-history.md`；后续轮次：`benchmark-report-r<N>.md`），
+  不得凭记忆填写；API 不可得的小节显式标注，不得伪造。R1–R3 三份基准报告已合并归档为
+  `docs/reports/benchmark-history.md`（**只读**，引用历史数字看此文件）；后续轮次仍按
+  `benchmark-report-r<N>.md` 命名。
 - 下一轮的 optimizer 分析与本轮收尾验证都以最新一份 round-report 为起点。
 - **路径约定**：本约定宿主在 `docs/rsi/self-iter-playbook.md`（随仓库跟踪、
   集成无冲突）。不要把本节写入仓库根 `AGENTS.md`——根级 AGENTS.md 是

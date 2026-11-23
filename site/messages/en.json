@@ -11,7 +11,7 @@
   },
   "landing": {
     "tagline": "An AI Task Pipeline OS",
-    "subtitle": "A single-user control plane that runs CLI agents unattended through the full loop: goal → execution → machine verification → human gate → delivery. You define acceptance policies in natural language, agents do the work, the platform judges, and you only appear at checkpoints.",
+    "subtitle": "A single-user control plane that turns CLI agent sessions into a durable loop: goal → execution → completion record → human review → delivery. You define the gates; agents do the work; the platform tracks state and evidence.",
     "cta": {
       "github": "View on GitHub",
       "start": "Get Started"
@@ -23,24 +23,24 @@
       "lines": [
         { "type": "cmd", "text": "ouroflow connect" },
         { "type": "ok", "text": "linked to daemon (machine=m4.local, 3 agent CLI(s) probed)" },
-        { "type": "cmd", "text": "ouroflow goal create \"refactor intake parser\" --assignee claude" },
+        { "type": "cmd", "text": "ouroflow create goal --title \"refactor intake parser\" --assignee claude" },
         { "type": "out", "text": "goal g7a3 created → run r9k1 queued" },
         { "type": "cmd", "text": "ouroflow goal list" },
         { "type": "out", "text": "  g7a3  active    refactor intake parser     [claude]" },
         { "type": "out", "text": "  g6f2  review    fix feishu streaming       [opencode]" },
         { "type": "ok", "text": "2 goals" },
-        { "type": "comment", "text": "# platform auto-verifies + human gates; you only appear at checkpoints" }
+        { "type": "comment", "text": "# platform tracks state + human review; you only appear at checkpoints" }
       ]
     },
     "featuresTitle": "Highlights",
     "features": {
       "loop": {
-        "title": "Full unattended loop",
-        "desc": "Goals, runs, machine verification, structural guards, human gates, automatic delivery (merge + re-verify + push)."
+        "title": "A loop with a real review gate",
+        "desc": "Goals, runs, isolated worktrees, completion records, human review, and delivery only after approval (merge + re-verify + push)."
       },
-      "policy": {
-        "title": "Acceptance policy per domain",
-        "desc": "State \"what done means\" in natural language; a processor agent compiles it into executable checks you confirm once."
+      "acceptance": {
+        "title": "HITL / HOOTL per goal",
+        "desc": "Choose HITL (default: review before delivery) or HOOTL (finish directly; repo-backed HOOTL is not auto-merged) when you create the goal."
       },
       "subgoals": {
         "title": "Sub-goals with changes",
@@ -65,7 +65,7 @@
     "arch": {
       "web": { "title": "Web UI", "sub": "Next.js · browser", "note": "ACP chat client + live stream" },
       "proxy": "/backend/* + /ws proxy",
-      "daemon": { "title": "Daemon", "sub": "Go · :7373", "note": "HTTP API + WS hub" },
+      "daemon": { "title": "Daemon", "sub": "Go · :47813", "note": "HTTP API + WS hub" },
       "sqlite": "SQLite (truth)",
       "bus": "event bus (wakeup hint)",
       "scheduler": "per-agent workers · PULL dispatch",
@@ -77,15 +77,15 @@
       "deliver": "verify · human gate → merge + re-verify + push"
     },
     "quickstartTitle": "Quick start",
-    "prereq": "Prerequisites: Go 1.26+, Node.js 20+, npm 10+.",
+    "prereq": "Prerequisites: Go 1.26+, Node.js 20+, npm 10+, Git, and an ACP-capable agent CLI.",
     "backendTitle": "Backend",
     "frontendTitle": "Frontend",
     "firstGoalTitle": "First goal",
     "firstGoal": [
-      "Create a domain (project): repo URL + acceptance policy in natural language.",
-      "Create a runtime (e.g. opencode acp --pure) and an agent.",
+      "Create a domain (project): a repo URL or a scratch workspace.",
+      "Create an agent from a runtime detected by ouroflow connect.",
       "Run ouroflow connect on your machine — the daemon dispatches runs via run.poll (pull model).",
-      "Create a goal, assign the agent, and watch the loop: execution → verification → review → your approval → delivery.",
+      "Create a goal, assign it, choose HITL/HOOTL, and watch: execution → review (human) → delivery after approval.",
       "Or chat with any agent from the Agents page — a per-agent ACP session staged fresh every open."
     ]
   },
@@ -149,7 +149,7 @@
               "name": "Goal",
               "desc": "A work item. The sole holder of state authority — runs report up, never decide.",
               "chips": ["backlog", "active", "review", "done"],
-              "example": "$ ouroflow goal create \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
+              "example": "$ ouroflow create goal --title \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
             },
             {
               "name": "Run",
@@ -159,9 +159,9 @@
             },
             {
               "name": "Domain",
-              "desc": "An asset/evolution domain: shared repo + acceptance policy + default gates.",
-              "chips": ["repo", "policy", "gates"],
-              "example": "$ ouroflow domain create --repo git@github.com:org/repo \\\n    --policy \"tests pass + coverage ≥ 80%\""
+              "desc": "A repo-backed or scratch workspace. The acceptance level is chosen per goal.",
+              "chips": ["repo", "scratch", "hitl/hootl"],
+              "example": "$ ouroflow create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
             }
           ]
         },
@@ -216,15 +216,15 @@
           "items": [
             {
               "name": "Verifier",
-              "desc": "Machine (domain verify commands) by default, or a named agent issuing structured verdicts.",
-              "chips": ["machine", "agent", "verdict"],
-              "example": "# domain verify commands run first\n# agent verifier: verify_sub_goal → pass/fail"
+              "desc": "A named agent issuing structured verdicts (verify_sub_goal). No built-in domain test runner: put the check in the brief or add a verifier agent.",
+              "chips": ["agent", "verdict", "optional"],
+              "example": "# verifier agent: verify_sub_goal → pass/fail\n# the platform does not run domain test commands"
             },
             {
               "name": "Gates",
-              "desc": "Human checkpoint rules from the acceptance policy. Weak verification forces a checkpoint.",
-              "chips": ["merge", "diff_contains", "human"],
-              "example": "# gate: merge  →  needs human approve\n# gate: diff_contains  →  auto-check"
+              "desc": "Human checkpoints: HITL review on a goal, gate nodes in a Blueprint.",
+              "chips": ["hitl", "blueprint gate", "human"],
+              "example": "# HITL: goal parks at review\n# approve → goal:approved → merge + re-verify + push"
             },
             {
               "name": "Mention",

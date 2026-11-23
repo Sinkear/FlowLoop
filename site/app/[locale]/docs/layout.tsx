@@ -1,7 +1,7 @@
 import { DocSidebar } from "@/components/doc-sidebar";
 
 // docs 子树共享布局：左侧暗色 sticky 侧边栏（DocSidebar）+
-// 右侧内容区（max-width 1120px，对齐 DESIGN.html 的 main 宽度）。
+// 右侧内容区（max-width 1120px，对齐 2026-08 设计稿 docs/archive/DESIGN-vision-2026-08.html 的 main 宽度）。
 export default function DocsLayout({
   children,
 }: {

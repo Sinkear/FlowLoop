@@ -1,8 +1,8 @@
 # 设计提案：工作流蓝图（Blueprint）— 把编排权威从自然语言迁到可序列化图数据
 
-> **状态：已批准（2026-11-17）— Phase A 启动**；Q1/Q2/Q4 开放问题按推荐定稿（见 §8）。
-> 批准后动作：design/DESIGN.md 增补决策条目（编号顺延）→ 本提案升格为设计基线 → 启动 Phase A。
-> 变更纪律遵循 design/DESIGN.md 头部条款：**先改文档、后改代码。实现与文档冲突时以文档为准。**
+> **状态：已落地（Phase A–D + §14，2026-11）— 本文件保留为设计依据、schema 与决策存档，不再是待批提案。**
+> 现行行为说明与全项目细节见 [OUROFLOW-SPEC.html](OUROFLOW-SPEC.html)；产品与架构决策基线见 [design/DESIGN.md](design/DESIGN.md)；协作模型见 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
+> 变更纪律：**先改文档、后改代码。** 行为/架构/接口/流程变更必须同步更新 OUROFLOW-SPEC.html 对应章节；蓝图 schema 或节点语义变更还必须同步本文件。
 >
 > **证据基线**（本仓库 `docs/research/` 归档，三份独立调研交叉收敛）：
 > - `research/research-workflow-dsl-definitions.md` — 7 平台工作流定义格式（官方文档 + Dify 源码 + 262 个真实 DSL 导出语料）

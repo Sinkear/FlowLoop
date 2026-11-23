@@ -10,7 +10,7 @@ import (
 	"github.com/Sinkear/ouroflow/internal/events"
 )
 
-// ── Collaboration semantics tests (决策 5-x, Collaboration.md adopted) ──
+// ── Collaboration semantics tests (决策 5-x, Collaboration.v2.md final) ──
 
 // TestAssignPermissionOnlyOwner: an agent actor can only hand off a goal it
 // owns (决策 5-6) — agent-assigned → the assignee; anyone else is rejected;

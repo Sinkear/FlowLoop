@@ -83,6 +83,11 @@
 </nav>
 
 <main>
+<div class="warn callout" style="border-color:#b45309">
+<strong>⚠ 归档文档（2026-08 愿景快照，非现状）：</strong>本文档已归档，<strong>不再维护、不保证链接可用</strong>。它记录的是 Phase A（蓝图）落地之前的产品愿景，其中 <code>blocked</code> 状态、worker lease / claim SQL、<code>OpenAgent-go</code> runtime 等描述均已过时。<br>
+现行全项目说明见 <a href="../OUROFLOW-SPEC.html">OUROFLOW-SPEC.html</a>；决策基线见 <a href="../design/DESIGN.md">design/DESIGN.md</a>；协作模型见 <a href="../design/Collaboration.v2.md">design/Collaboration.v2.md</a>。任何现行事实与本文冲突时，以上述文档与代码为准。
+</div>
+
 <h1>OuroFlow 架构与设计文档</h1>
 <p class="lead">一个面向多种 Agent Runtime 的任务管理、调度、协作、验收与交付控制平面。</p>
 <div class="meta">
@@ -98,7 +103,7 @@
 </div>
 
 <div class="warn callout">
-<strong>阅读说明：</strong>本文档是 <strong>架构愿景</strong>（目标态设计），<strong>不是现状基线</strong>。现状的权威是 <a href="docs/design/DESIGN.md">DESIGN.md</a>（决策 2-x / 3-x / 4-x 编号，代码注释引用它）；数据库结构以 <code>internal/store/schema.sql</code> 为准。本文描述的能力（AgentSession 统一抽象、Run Admission、worker lease、持久化 Event Log、Capability Token、Repository 层等）多数为<strong>规划未实现</strong>；与 DESIGN.md 冻结决策冲突处（§6 状态机、§7 Delegation、Roadmap）已就地标注。愿景与现状冲突时，<strong>以 DESIGN.md 与代码为准</strong>。
+<strong>阅读说明：</strong>本文档是 <strong>架构愿景</strong>（目标态设计），<strong>不是现状基线</strong>。现状的权威是 <a href="../design/DESIGN.md">DESIGN.md</a>（决策 2-x / 3-x / 4-x 编号，代码注释引用它）；数据库结构以 <code>internal/store/schema.sql</code> 为准。本文描述的能力（AgentSession 统一抽象、Run Admission、worker lease、持久化 Event Log、Capability Token、Repository 层等）多数为<strong>规划未实现</strong>；与 DESIGN.md 冻结决策冲突处（§6 状态机、§7 Delegation、Roadmap）已就地标注。愿景与现状冲突时，<strong>以 DESIGN.md 与代码为准</strong>。
 </div>
 
 <h2 id="principles">1. 设计目标与原则</h2>
@@ -894,7 +899,7 @@ Future Context</code></pre>
 </div>
 
 <div class="footer">
-OuroFlow Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="docs/design/DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）。愿景与现状冲突时以 DESIGN.md 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
+OuroFlow Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="../design/DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）与 <a href="../OUROFLOW-SPEC.html">OUROFLOW-SPEC.html</a>。愿景与现状冲突时以 DESIGN.md、OUROFLOW-SPEC.html 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
 </div>
 </main>
 </div>

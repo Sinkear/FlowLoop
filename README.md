@@ -2,9 +2,10 @@
 
 # OuroFlow
 
-**An AI task pipeline OS — you define "done" in natural language, CLI agents run the whole loop unattended.**
+**The agent delivery pipeline with human checkpoints.**<br>
+You define what "done" means. Agents do the work. The platform keeps state and evidence. **You open the gates.**
 
-goal → execution → machine verification → human gate → automatic delivery
+`goal` → `run` → `verify` → **`review` (human)** → `deliver`
 
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -15,79 +16,92 @@ goal → execution → machine verification → human gate → automatic deliver
 
 [Highlights](#-highlights) · [Quick Start](#-quick-start) · [Core Concepts](#-core-concepts) · [Collaboration](#-collaboration) · [Architecture](#-architecture) · [CLI](#-cli-tool) · [Docs](#-docs-upgrades--templates) · [Tech Stack](#-tech-stack) · [Acknowledgments](#-acknowledgments)
 
-**Single process · single machine · single user · no auth.** Local SQLite state, in-process event bus, Go daemon + Next.js web UI.
+**Single daemon · single machine · single user · local-first.** Local SQLite state, in-process event bus, Go daemon + Next.js web UI.
 
 </div>
 
+<div align="center">
+<img src="docs/assets/ouroflow-loop-en.svg" alt="OuroFlow loop: define, schedule, execute, verify, review, deliver. Review is a human gate; delivery happens after approval." width="100%">
+</div>
+
+<div align="center">
+<sub>Default <b>HITL</b>: a finished goal stops at <b>review</b> for your decision. <b>HOOTL</b> skips that gate; repo-backed HOOTL branches are left unmerged.</sub>
+</div>
+
+## 🧭 It runs the loop. You hold the gates.
+
+Most agent sessions end when the chat ends. OuroFlow keeps the work: a **goal** owns the state, a **run** is one agent's attempt in an isolated worktree, and the platform — not the agent — decides whether the goal is done.
+
+It automates the pipeline: queueing, dispatch, retries, worktree setup, completion bookkeeping, review routing, post-approval merge/re-verify/push, and notifications.
+
+It deliberately leaves the decisions to you: the **HITL/HOOTL** choice, review approval, Blueprint proposal adoption, version publishing, and starting the next RSI round.
+
+> OuroFlow does **not** promise a fully autonomous software team. It will not invent the acceptance bar, approve its own proposals, or merge a repo change without a human gate.
+
+### Three places you decide
+
+- **Before work** — write the brief and choose **HITL** (default: a finished goal parks at `review`) or **HOOTL** (finish directly; meant for scratch or work that does not need a merge).
+- **At the review gate** — **approve** emits `goal:approved` and triggers merge --no-ff, re-verify and push; **reject/redirect** sends the goal back to its owner with the reason.
+- **Across rounds** — Blueprint proposals stay `pending` until a human supplies `decided_by`; a human publishes the new version and starts the next RSI round. `rsi.max_auto_rounds` only caps automatic drafting.
+
 ## 🌟 Highlights
 
-- **Full unattended loop** — goals, runs, machine verification, structural guards, human gates, automatic delivery (merge + re-verify + push)
-- **Acceptance policy per domain** — you state "what done means" in natural language; a processor agent compiles it into executable checks (verify commands, guards, gates) which you confirm once
-- **Sub-goals with changes** — the owner splits work into sub-goals (own assignee, own worktree, machine or agent verification); verified sub-goals produce **Changes** with revisions the owner integrates — conflicts wake the assignee to rework automatically
-- **Four collaboration behaviors** — Comment / Consult / Handoff / Sub-goal, exposed as the `ouroflow` CLI with owner-only permissions enforced server-side
-- **Multi-protocol & transport** — ACP / JSONL / JSON-RPC over stdio / ws / tcp; agents can carry their own extra MCP servers
-- **Triggers** — Web, cron schedules, GitHub/GitCode issues + pull requests (poll; issues also webhook), Feishu IM inbound (@-bot task creation)
-- **Task acceptance modes (HITL / HOOTL)** — goals and schedules are created as HITL (human recheck at gates — the default) or HOOTL (the goal finishes directly when its run completes, skipping the human gate)
-- **Remote skill sources** — attach a GitHub/GitCode repository (branch, path, token) to a skill, compare local vs remote, pull remote updates, push local edits, or submit a pull request; sync and PR are verified against the provider API, and a pull immediately refreshes the skill copies of that agent's LIVE sessions
-- **Feishu notifications** — approval cards (approve/reject right in IM), completion/failure pushes, a daily digest
-- **Real-time web UI** — live event stream, execution timeline, sub-goal / change / verification panels
-- **Conversation-first creation** — a built-in skill rides every steward conversation, so goals, squads, agents, schedules and blueprints are created by describing them in chat
-- **Agent chat (ACP bridge)** — the web is a real ACP client for each agent: `GET /agents/{id}/acp` relays ACP frames unparsed to the machine-side CLI; permission requests surface as an approval modal, and turns can be interrupted or retried on a fresh session
-
-> **One-line mental model:** a **goal** is a work item and the sole holder of state authority; a **run** is one agent's turn on it — runs report up, never decide. The platform judges completion; you hold the gates.
+- **Durable state, isolated execution** — goals, runs, sub-goals and changes live in SQLite; every run gets its own worktree under `$OUROFLOW_HOME/runs/<runID>`. Restart the daemon without losing the loop.
+- **A real review gate** — HITL goals stop at `review` for your decision. After approval the platform merges, re-verifies and pushes. HOOTL skips the gate; repo-backed HOOTL goals are **not** auto-merged, so the branch stays for you.
+- **Sub-goals + Changes** — the owner splits work into sub-goals with their own assignee and worktree. Completed sub-goals produce **Changes** with revisions; the owner integrates them, and conflicts wake the assignee to rework.
+- **Collaboration without a shared chat room** — Comment / Consult / Handoff / Sub-goal, exposed through the `ouroflow` CLI. The per-run token is the only identity and owner permissions are enforced server-side.
+- **Blueprint + RSI, with a human signature** — graph workflows, node-level metrics and self-iteration findings. Machines propose; humans approve proposals, publish versions and start the next round.
+- **Your agent stack** — ACP / JSONL / JSON-RPC over stdio / ws / tcp, extra MCP servers, GitHub/GitCode/cron/Feishu triggers, and remote skill sync.
+- **A console, not a log tail** — live event stream, execution timeline, sub-goal / change / verification panels, per-agent ACP chat, and conversation-first creation.
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Requirements
 
-- Go 1.26+
-- Node.js 20+
-- npm 10+
+Go 1.26+, Node.js 20+/npm 10+, Git, and an ACP-capable agent CLI on the execution machine.
 
-### Backend
+### From source
 
 ```bash
-./build.sh   # builds build/ouroflow (CLI) + build/ouroflow-daemon
-             # with one shared version stamp (OUROFLOW_COMPILE_VERSION)
+./build.sh                                  # build/ouroflow + build/ouroflow-daemon
+./build/ouroflow-daemon                     # terminal 1 — control plane, :47813
 
-# Start the daemon (default :47813)
-./build/ouroflow-daemon
+cd web && npm install && npm run dev        # terminal 2 — web UI, :47814
 
-# And on the machine that runs the agents:
-./build/ouroflow connect
+./build/ouroflow connect \
+  --server http://127.0.0.1:47813           # terminal 3 — execution plane
 ```
 
-<details open>
-<summary><b>Frontend</b></summary>
+Open **<http://127.0.0.1:47814>**.
+
+- `ouroflow connect` is the **execution plane**: it pulls runs, spawns the agent CLI and hosts chats. The daemon never spawns agents itself; keep `connect` running on the machine that has your agent CLIs.
+- The web UI is a separate Next.js app. For a production build use `npm run build && npm start`; `./package.sh` produces a tarball with `start-all.sh` that runs both processes.
+- On first launch, the web UI walks you through registering a domain (repo URL or `scratch`) and an agent. A runtime appears after `connect` probes the installed agent CLIs.
+
+### First goal
+
+1. Create a **domain** — a repo URL, or `scratch` for a local workspace.
+2. Create or pick an **agent** from a runtime detected by `connect`.
+3. Create a **goal**, write the task brief, assign the agent, and choose **HITL** (default) or **HOOTL**.
+4. Watch `queued → running → review`. Inspect the report and diff, then **approve**, **reject**, or **redirect**. HOOTL goals finish directly; if the domain is repo-backed, their branch is left unmerged.
+
+You can do the same from the CLI:
 
 ```bash
-cd web
-npm install
-npm run build && npm start
+ouroflow create domain --name demo --type scratch
+ouroflow create agent  --name dev --runtime <runtime-id>
+ouroflow create goal   --title "build the thing" --domain demo --assignee dev
 ```
-
-</details>
-
-<details open>
-<summary><b>First goal</b></summary>
-
-1. Create a **domain** (project): repo URL + acceptance policy in natural language (or leave it unfrozen to force a human checkpoint)
-2. Create a **runtime** (e.g. `opencode acp --pure`, stdio + acp) and an **agent**
-3. Run `ouroflow connect` on your machine — the daemon dispatches runs to it via `run.poll` (pull model)
-4. Create a **goal**, assign the agent, and watch the loop run: execution → verification → review → your approval → automatic delivery
-5. Or chat with any agent directly from the Agents page — a per-agent ACP session with the persona/skills staged fresh at every open
-
-</details>
 
 ## 🧩 Core Concepts
 
 <details>
-<summary><b>The object model — 13 concepts, one table</b></summary>
+<summary><b>The object model — 14 concepts, one table</b></summary>
 
 | Concept | What it is |
 |---|---|
-| **Domain** (Project) | An asset/evolution domain: shared repo + acceptance policy (NL intent compiled into checks) + default gates. |
-| **Goal** | A work item (product plane). Status: backlog → active → review → done / failed / cancelled. The sole holder of state authority. |
+| **Domain** (Project) | A repo-backed or scratch workspace: git URL/credentials/default branch. Acceptance is chosen per goal (HITL/HOOTL), not compiled from prose. |
+| **Goal** | A work item (product plane). Status: backlog → active → review → done / failed / cancelled. The sole holder of state authority; `category` is `hitl` or `hootl`. |
 | **Run** | One agent's turn on a goal. Status: queued → running → completed / failed / cancelled, plus a **role** (owner / subgoal / consult / review / verify). No authority — it reports to the goal layer. |
 | **Runtime** | A launch spec — transport (stdio/ws/tcp) + provider (acp/jsonl/jsonrpc) + executable/args or endpoint + env. |
 | **Agent** | A runtime + persona (system prompt / model / env / extra MCP servers / max concurrency). |
@@ -95,10 +109,10 @@ npm run build && npm start
 | **Squad** | A routing group that does no work itself: goals route to its leader, who delegates via sub-goals; members with role=reviewer are auto-pulled into review checkpoints. |
 | **Sub-goal** | A work item split off a goal (not a child goal — no recursion). Own assignee + optional agent verifier; machine retries (≤3) and verifier rejections are counted separately. |
 | **Change** | A sub-goal's logical deliverable: ready → integrating → integrated, or conflict → assignee rework → revision N+1. The owner integrates it via the `integrate_change` tool. |
-| **Verifier** | Machine (domain verify commands) by default, or a named agent issuing structured verdicts (`verify_sub_goal`). |
-| **Gates** | Human checkpoint rules from the acceptance policy (merge, diff_contains, ...); weak verification forces a checkpoint. |
+| **Verifier** | A named agent issuing structured verdicts (`verify_sub_goal`). This version has no built-in domain test runner: put the real check in the brief, or add a verifier agent. |
+| **Gates** | Human checkpoints: HITL review on a goal, gate nodes in a Blueprint. The old compiled gate rules (`merge`, `diff_contains`, …) are retired. |
 | **Mention** | The Consult primitive: a structured URI in a comment pulls an agent into a read-only guest run; the requester resumes automatically after the answer. |
-| **Schedule** | A cron template that clones a goal per firing (idempotent, timezone-aware). |
+| **Schedule** | A cron template that clones a goal per firing (idempotent, timezone-aware); `category` is inherited from the template. |
 | **Trigger** | Web, cron, GitHub/GitCode issues + PRs (poll, deduped by source ref; issues also webhook), Feishu IM inbound. |
 
 </details>
@@ -115,7 +129,7 @@ npm run build && npm start
 | **Handoff** (transfer) | `ouroflow goal assign <to-agent-id> [--note N]` | the goal's owner |
 | **Sub-goal** (split) | `ouroflow subgoal create --title T --assignee A` / `subgoal cancel <id>` | the goal's owner |
 
-Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (`OUROFLOW_TOKEN`), which the daemon's `/rpc` endpoint resolves to the run's `(goal, agent, role)` — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side. Plus `subgoal verify`, `change integrate`, and the `*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
+Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon binary, placed on the agent's PATH at spawn). Every command carries the per-run token (`OUROFLOW_TOKEN`), which the daemon's `/rpc` endpoint resolves to the run's `(goal, agent, role)` — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side. Plus `subgoal verify`, `change integrate`, and the `*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
 
 </details>
 
@@ -145,16 +159,16 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
                        (stdio/ws/tcp)
                        └─ fs/terminal RPC + ouroflow CLI (/rpc)
                           (worktree, collaboration commands)
-             ┌───────────────┬─────────────────────────────┘
+             ┌───────────────┬─────────────────────────────┐
              ▼               ▼
-      machine verify /   review gate → deliver
-      guards (domain)    (human approve → merge+re-verify+push)
+   completion record /   review gate → deliver
+   optional verifier     (human approve → merge + re-verify + push)
 ```
 
-- **Event ≠ truth** — the bus is a wakeup hint; every transition is a conditional DB transaction, idempotent under replay
-- **Machine executor** — `ouroflow connect` holds a persistent JSON-RPC link and pulls work (`run.poll`); it executes runs, hosts the per-agent chat bridge (spawns the CLI, relays ACP frames unparsed, tears down gracefully with stdin EOF before the kill)
-- **Per-run worktrees** — `$OUROFLOW_HOME/runs/<runID>` (default `~/.ouroflow`) ephemeral git worktrees against per-domain bare repos; crash recovery replays terminal runs and re-derives attention at startup
-- **Coordinator** — derived OwnerAttention (integration / recovery / user_action) wakes the owner exactly when there is work for it
+- **Event ≠ truth** — the bus is a wakeup hint; every transition is a conditional DB transaction, idempotent under replay.
+- **Two planes** — the daemon owns state, scheduling and delivery and never spawns agents; `ouroflow connect` owns execution: it holds a persistent JSON-RPC link, pulls work (`run.poll`), spawns the CLI, hosts the per-agent chat bridge, and relays ACP frames unparsed.
+- **Per-run worktrees** — `$OUROFLOW_HOME/runs/<runID>` (default `~/.ouroflow`) ephemeral git worktrees against per-domain bare repos; crash recovery replays terminal runs and re-derives attention at startup.
+- **Coordinator** — derived OwnerAttention (integration / recovery / user_action) wakes the owner exactly when there is work for it.
 
 </details>
 
@@ -166,21 +180,26 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
 `ouroflow` is the **machine executor** and a human debugging tool (agents use the `ouroflow` CLI shim for collaboration):
 
 ```bash
-ouroflow connect               # the machine side: pulls dispatches, runs them, hosts chats
-ouroflow goal list --limit 5   # debugging commands (default http://localhost:47813,
-ouroflow stats                 #   or set OUROFLOW_SERVER_URL)
+ouroflow connect --server http://127.0.0.1:47813   # execution plane: pulls work, runs it, hosts chats
+ouroflow status                                    # machine id, probed CLIs, heartbeat
+ouroflow goal list --limit 5                       # debugging commands
 ```
+
+The CLI defaults to `http://localhost:47813`; override with `OUROFLOW_SERVER_URL`.
 
 </details>
 
 ## 📚 Docs, Upgrades & Templates
 
+- **[OuroFlow project spec](docs/OUROFLOW-SPEC.html)** — the whole-project reference: product, architecture, scheduling, collaboration, delivery, Blueprint and RSI
+- **[Docs index](docs/README.md)** — every other document, grouped by role (design decisions, guides, research, reports, use-cases, archive)
+- [Blueprint & RSI design](docs/BLUEPRINT-PROPOSAL.md) — graph schema, node semantics, phase history and the convergence rules; current behavior lives in the spec
 - [Paths and data layout](docs/PATHS.md) — every directory/env var, and what must survive an upgrade
 - [Upgrade without losing data](docs/UPGRADE.md) — stop → backup → replace only bin/web → start, including JEM
 - [Run identity & instruction ownership](docs/IDENTITY.md) — a run's identity comes from THIS run alone: the shared-workdir hijack postmortem and the three-layer fix
 - [Turn your workflow into a template](docs/TEMPLATES.md) — export with `ouroflow-daemon export-template`
 - [Artifact-swap skill](skills/ouroflow-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
-- [Design baseline](docs/design/DESIGN.md) — the frozen product & architecture document
+- [Design baseline](docs/design/DESIGN.md) — product & architecture decisions, invariants and boundaries (current behavior lives in the spec)
 - [Collaboration model](docs/design/Collaboration.v2.md) — the full owner/role/permission model
 
 ## 🧪 Tech Stack

@@ -1,6 +1,7 @@
 # OuroFlow 协作模型终稿（v2 · final）
 
 - Status: **Approved**（已定稿，决策写入 DESIGN.md 6-1~6-10）
+- **取代关系：本文件是协作模型的唯一终稿，取代 `Collaboration.md`（v1，2026-08）。** v1 已归档到 [`docs/archive/Collaboration.v1-2026-08.md`](../archive/Collaboration.v1-2026-08.md)，仅作设计史保留；v1 中仍有教学价值的三种协作流、Agent 决策速查、UI/时间线与反模式已改写并入本文件附录 A–D（已按 v2 的 Sub-goal 实体与事件名校正，不要照抄 v1 正文）。
 - 核心原则：**Goal 定义协作目标，Run 定义执行主体，Workspace 定义执行隔离，Worktree 定义代码隔离，Change 定义变更交付，Integration 定义变更进入 Owner 工作区的方式。**
 
 ---
@@ -213,7 +214,7 @@ run.terminal {run_id, goal_id, status}
 | `verification_result` 表（新） | `id, goal_id, sub_goal_id, verifier_run_id, status, summary, evidence, created_at` |
 | `run` 表 | 加 `sub_goal_id`；`role` 加 `subgoal`/`verify`；**`attempt` 降级为实例序号**（展示/prompt 上下文），重试判定权威在实体计数；status 五态（handed_off 撤销） |
 | `goal` 表 | 加 `execution_attempt`（机器重试计数，权威）、`attention`（派生状态持久化）；`parent_id` 子 goal 用法退役 |
-| `consult_request` | 已有（requester_run_id 即恢复锚点） |
+| `consult_request` | 已有（requester_run_id 即恢复锚点）。字段核对：`id, goal_id, requester_agent_id, requester_run_id, target_agent_id, trigger_comment_id, guest_run_id, response_comment_id, created_at` |
 | 删除 | blocked 路径、wake_count、WaitChildren/wakeParentIfReadyInTx/goal_wait |
 | 新增 MCP 工具 | `ouroflow_cancel_sub_goal`（reassign 用 cancel + create 替代）、`ouroflow_verify_sub_goal`、`ouroflow_get_sub_goal` / `get_change` / `get_verification` |
 
@@ -257,3 +258,79 @@ run.terminal {run_id, goal_id, status}
 - **机器验证 vs Verifier reject**：机器失败 3 次 → Failed 报 owner；QA reject 2 轮 → 第三轮 Verified（quality_iteration=2）
 - **Goal Cancel**：级联停 sub-goals/run，Change/Verification 历史保留；Reopen 不复活旧 sub-goal
 - **Human owner**：all-ready → goal.attention 落库 + IM 通知，无 spawn
+
+---
+
+# 附录 A. 三条协作流（教学骨架，来自 v1 §3，已校正）
+
+```
+                  Collaboration
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+     Information    Ownership      Work
+        Flow          Flow         Flow
+          │            │            │
+          ▼            ▼            ▼
+       Consult      Handoff       Sub-goal
+          │            │            │
+          ▼            ▼            ▼
+     response      Owner 变更    assignee + verifier
+     comment        （仅此）      （独立实体，不递归）
+```
+
+- **Information Flow / Consult**："我需要你告诉我一些东西。" 产物是 response comment；requester 的 successor run 被恢复，goal owner 不变。
+- **Ownership Flow / Handoff**："我不再负责这个 Sub-goal／Goal，你接着负责。" 只改变 owner/assignee，run、change、verification 均不动。
+- **Work Flow / Sub-goal**："这块独立工作交给你，并由 verifier 判定是否 done。" Sub-goal 是不可递归的独立实体，不是 child goal。
+- **Comment** 只用于同步信息，不触发 run，也不改变归属。
+
+# 附录 B. Agent 决策速查（来自 v1 §28，已按 v2 改写）
+
+| 处境 | 动作 | 不要做 |
+|---|---|---|
+| 需要别人的知识或判断 | **Consult** 目标 agent，等 response comment 后自己继续 | 不要把它当成交付责任转移 |
+| 自己不再适合继续这个 Goal / Sub-goal | **Handoff** 给更合适的 owner/assignee | 不要用 cancel + 新建来伪装 handoff |
+| 发现一块可独立验收的工作 | 创建 **Sub-goal**（assignee + verifier），由平台 Reconcile 调度 | 不要创建 child goal，也不要自己 spawn |
+| 只是同步进度 / 留证据 | **Comment** | 不要 @ 即视为派活 |
+| 已经做完自己的 Sub-goal | 提交 **Change** 并标 ready，等集成 | 不要直接改 owner workspace |
+| 被指派为 verifier | **Verify**（机器或 agent），给出证据化结论 | 不要既当 assignee 又当 verifier |
+
+> `goal_wait` 的 blocked/wake 语义已随 blocked/wait 退役；等待方由 run 正常结束 + successor Reconcile 恢复。CLI 的 `goal wait` 仍保留为**有界等待**（最多 10 分钟，供 owner 等依赖子任务），不写 blocked/wake 状态，也不构成新的唤醒来源。
+
+# 附录 C. UI 与时间线表达（来自 v1 §29–§30，已按 v2 事件校正）
+
+四种行为在 UI 中不能都渲染成普通 Comment：
+
+| 行为 | UI 呈现 | 关键字段 |
+|---|---|---|
+| Comment | 💬 普通评论流 | author、run、时间 |
+| Consult | 💬 Consultation：`A → @B`，回答后回到 A 的 successor run | requester_run_id、target、response_comment_id |
+| Handoff | 🔄 Handoff：`A → B`，只改 owner/assignee | from/to owner、run 不重建 |
+| Sub-goal | ➕ Sub-goal 卡片：assignee + verifier + 状态 | sub_goal.id、verification_result |
+
+Goal Timeline 建议（事件名对齐 §11 事件清单）：
+
+```
+08:00  A started Goal                         (run.started)
+08:15  💬 A consulted B                       (consult.requested)
+08:16  B answered                             (consult.answered → A successor)
+08:25  🔄 A handed off Goal to C              (handoff.completed)
+08:26  C started Goal                         (run.started)
+08:40  ➕ C created Sub-goal #102             (sub_goal.created)
+09:10  ✓ Sub-goal #102 verified              (sub_goal.verified)
+09:15  🔄 C handed off Goal back to A         (handoff.completed)
+09:16  A resumed                              (goal.reconciled → run.started)
+```
+
+Goal Card 上固定显示 `Owner`；子任务进入 Goal 详情/看板，不再画 child-goal 树。
+
+# 附录 D. Anti-Patterns（来自 v1 §43，删去已失效的 child goal 条目）
+
+- ❌ `@Agent` = 把任务 assign 给他（@ 只产生 comment 或 consult）
+- ❌ `@Agent` = handoff（handoff 必须显式改变 owner）
+- ❌ Guest Run = Worker Run（consult guest 是只读域，不产出 deliverable/change）
+- ❌ Leader = 每个 Goal 的 Owner（leader 是监控/集成/汇报角色）
+- ❌ Handoff = Goal Failure（handoff 只是换 owner，不是失败态）
+- ❌ 多个 Active Owner Run（同一时刻只有一个 owner run）
+- ❌ Guest Agent 无限创建 Sub-goal（fan-out 上限 20 active）
+- ❌ 把 Sub-goal 当成可递归的 child goal（v2 已取消递归；Done ≠ Verified）

@@ -1242,7 +1242,7 @@ func (s *GoalService) Delete(ctx context.Context, goalID string) error {
 }
 
 // AgentOwnsGoal reports whether agentID is the goal's current owner
-// (决策 5-6, Collaboration.md Invariant 2): agent-assigned → the assignee;
+// (决策 5-6, Collaboration.v2.md §8): agent-assigned → the assignee;
 // squad-assigned → the squad's CURRENT leader (dynamic, like ownRunByGoal);
 // human-assigned → nobody (no agent owns it). The ownership permission anchor
 // for handoff/consult/sub-goal MCP tools.

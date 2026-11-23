@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>图说了算 —— ouroflow 新一代工作流规范（Phase A–D 全量落地版）</title>
+<title>OuroFlow 项目规范与详细说明（2026-11）</title>
 <style>
   :root{
     --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#ffffff; --bgsoft:#f8fafc;
@@ -29,7 +29,7 @@
   h2 .no{background:var(--teal);color:#fff;border-radius:8px;font-size:15px;padding:1px 10px;font-weight:700;flex:none}
   h3{font-size:18px;margin:30px 0 4px;color:#0f172a}
   h4{font-size:15.5px;margin:20px 0 4px}
-  p{margin:10px 0}
+  p{margin:10px 0;overflow-wrap:anywhere}
   ul,ol{padding-left:24px;margin:8px 0}
   li{margin:4px 0}
   strong{color:#0f172a}
@@ -106,24 +106,113 @@
   .notes>li .use{color:var(--muted);font-size:13px;display:block;margin-top:3px}
   .notes>li a{color:var(--teal);word-break:break-all;text-decoration:none;border-bottom:1px dotted #99f6e4}
   .notes h4{color:var(--teal);margin:26px 0 4px;font-size:15px}
+
+  /* ── 项目级文档：快速章节跳转（侧栏 + 进度条 + 移动端抽屉） ── */
+  h2,h3{scroll-margin-top:24px}
+  .progress{position:fixed;top:0;left:0;right:0;height:3px;background:transparent;z-index:60}
+  .progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--cyan));transition:width .1s linear}
+  .shell{max-width:1320px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:252px minmax(0,1fr);gap:44px;align-items:start;justify-content:center}
+  .wrap{max-width:960px;min-width:0;margin:0;padding:44px 0 96px}
+  .sidenav{position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto;padding:34px 4px 40px;font-size:13.5px;scrollbar-width:thin}
+  .sidenav .side-head{font-weight:800;color:var(--teal);letter-spacing:.08em;font-size:12px;margin-bottom:10px}
+  .sidenav .grp{margin:16px 0 4px;font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.06em}
+  .sidenav a{display:block;color:#374151;text-decoration:none;padding:4px 8px;border-radius:6px;border-left:2px solid transparent;line-height:1.5}
+  .sidenav a:hover{background:var(--bgsoft);color:var(--teal)}
+  .sidenav a.active{background:var(--tealsoft);color:#0f766e;border-left-color:var(--teal);font-weight:700}
+  .sidenav a .n{display:inline-block;min-width:20px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .sidenav a.active .n{color:var(--teal)}
+  .sidenav .toplink{border-bottom:1px dashed var(--line);padding-bottom:10px;margin-bottom:4px}
+  .navtoggle{display:none;position:fixed;right:18px;bottom:18px;z-index:70;background:var(--teal);color:#fff;border:none;border-radius:999px;
+             padding:11px 18px;font-size:14px;font-weight:700;box-shadow:0 6px 20px rgba(13,148,136,.35);cursor:pointer}
+  .navscrim{display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:65}
+  .part-label{margin:78px 0 -34px;padding:8px 0;border-top:2px solid var(--line);color:var(--teal);font-size:13px;font-weight:800;letter-spacing:.16em}
+  .doc-role{font-size:13px;color:var(--muted);margin:9px 0 0}
+  @media(max-width:1320px){
+    .wrap table{display:block;max-width:100%;overflow-x:auto}
+  }
+  @media(max-width:1100px){
+    .shell{grid-template-columns:minmax(0,1fr);padding:0 20px}
+    .wrap{max-width:960px;width:100%;margin:0 auto;padding-top:32px}
+    .sidenav{position:fixed;z-index:66;top:0;left:0;width:290px;max-width:84vw;height:100%;max-height:none;background:#fff;
+             padding:22px 18px 40px;box-shadow:0 10px 40px rgba(15,23,42,.18);transform:translateX(-104%);transition:transform .22s ease}
+    body.nav-open .sidenav{transform:translateX(0)}
+    body.nav-open .navscrim{display:block}
+    .navtoggle{display:block}
+  }
+  @media(max-width:720px){
+    .wrap{padding:26px 0 72px}
+    .wrap table{display:block;max-width:100%;overflow-x:auto}
+    .sidenav{width:86vw}
+    h2{font-size:21px;margin-top:52px}
+    .toc ol{columns:1}
+  }
+  @media print{
+    .progress,.sidenav,.navtoggle,.navscrim{display:none!important}
+    .shell{display:block;max-width:none;padding:0}
+    .wrap{max-width:none;padding:0}
+    body{font-size:12px}
+  }
 </style>
 </head>
 <body>
+<div class="progress" aria-hidden="true"><span id="progressbar"></span></div>
+<button class="navtoggle" id="navtoggle" type="button" aria-controls="sidenav" aria-expanded="false">☰ 章节速跳</button>
+<div class="navscrim" id="navscrim" aria-hidden="true"></div>
+<div class="shell">
+<aside class="sidenav" id="sidenav" aria-label="章节快速跳转">
+  <div class="side-head">OUROFLOW · SPEC</div>
+  <a class="toplink" href="#overview">◎ 项目全貌速览</a>
+  <div class="grp">第一篇 · 项目全貌</div>
+  <a href="#ch1"><span class="n">1</span>产品定位与闭环</a>
+  <a href="#ch2"><span class="n">2</span>快速开始</a>
+  <a href="#ch3"><span class="n">3</span>系统架构</a>
+  <a href="#ch4"><span class="n">4</span>核心域模型与状态机</a>
+  <a href="#ch5"><span class="n">5</span>调度与执行</a>
+  <a href="#ch6"><span class="n">6</span>协作模型 v2</a>
+  <a href="#ch7"><span class="n">7</span>验收与交付</a>
+  <a href="#ch8"><span class="n">8</span>数据与存储</a>
+  <a href="#ch9"><span class="n">9</span>接口与集成</a>
+  <a href="#ch10"><span class="n">10</span>Web UI</a>
+  <a href="#ch11"><span class="n">11</span>权限、安全与隔离</a>
+  <a href="#ch12"><span class="n">12</span>运维与文档地图</a>
+  <div class="grp">第二篇 · 蓝图与 RSI 规范</div>
+  <a href="#ch13"><span class="n">13</span>导读：这一代改了什么</a>
+  <a href="#ch14"><span class="n">14</span>结构化总纲</a>
+  <a href="#ch15"><span class="n">15</span>蓝本（Blueprint）</a>
+  <a href="#ch16"><span class="n">16</span>角色词汇表</a>
+  <a href="#ch17"><span class="n">17</span>四道结构性闸门</a>
+  <a href="#ch18"><span class="n">18</span>管家三角色</a>
+  <a href="#ch19"><span class="n">19</span>自迭代闭环</a>
+  <a href="#ch20"><span class="n">20</span>指标四层金字塔</a>
+  <a href="#ch21"><span class="n">21</span>收敛条件</a>
+  <a href="#ch22"><span class="n">22</span>命名建议</a>
+  <a href="#ch23"><span class="n">23</span>实践案例</a>
+  <a href="#ch24"><span class="n">24</span>名词与指标字典</a>
+  <div class="grp">第三篇 · 附录</div>
+  <a href="#notes"><span class="n">25</span>注解与出处</a>
+</aside>
 <div class="wrap">
 
 <header class="hero">
-  <div class="kicker">OUROFLOW · 新一代项目规范 · 2026-11</div>
-  <h1>图说了算：<br>从「管家编排」到「图驱动自迭代」</h1>
-  <p class="subtitle">Phase A（规范化）→ B（资源池）→ C（优化闭环）→ D（度量与翻译）→ §14（收敛补强）全量落地的技术详解</p>
+  <div class="kicker">OUROFLOW · 项目详细说明 · 2026-11</div>
+  <h1>OuroFlow<br>图驱动的 AI 工作流操作系统</h1>
+  <p class="subtitle">从产品定义、系统架构、调度执行、协作与交付，到工作流蓝图（Blueprint）与 RSI 自迭代的全项目详细说明；Phase A–D + §14 已全量落地。</p>
   <div class="meta">
-    <span class="chip">版本：Phase A–D 已部署</span>
+    <span class="chip">产品版本：v0.0.1-beta.1（build.sh 默认）</span>
+    <span class="chip">代码基线：<code>6e6a6a7</code>（2026-11）</span>
+    <span class="chip">Phase A–D + §14：已部署</span>
     <span class="chip">Phase E（评测集 / best checkpoint）：已立项未实施</span>
-    <span class="chip">配套提案：docs/BLUEPRINT-PROPOSAL.md（§1–§14）</span>
-    <span class="chip">注解：正文 <sup class="nref"><a href="#n1">n</a></sup> = 出处编号，见文末「注解与出处」</span>
+    <span class="chip">注解：正文 <sup class="nref"><a href="#n1">n</a></sup> = 出处编号，见 <a href="#notes">文末注解</a></span>
   </div>
 </header>
 
-<h2 id="overview"><span class="no">◎</span>全景总览：一张图看完整个闭环</h2>
+<div class="callout emerald">
+  <span class="t">维护约定（必读）</span>
+  <b>本文档是 OuroFlow 整个项目的详细说明总入口。</b>任何影响行为、架构、流程、接口、配置或运维方式的改动，都必须在同一个 PR 内同步更新本文档对应章节；只改代码不改这里，视为文档债。
+  <span class="doc-role">文档分工：本文档＝全项目详细说明；<code>design/DESIGN.md</code>＝产品与架构决策基线（代码注释 <code>DESIGN.md §N</code> 指向它）；<code>design/Collaboration.v2.md</code>＝协作模型终稿；<code>BLUEPRINT-PROPOSAL.md</code>＝蓝图设计依据（已落地）；<code>PATHS.md</code> / <code>UPGRADE.md</code> / <code>TEMPLATES.md</code> / <code>RSI.md</code>＝专题操作指南。</span>
+</div>
+
+<h2 id="overview"><span class="no">◎</span>项目全貌速览：图驱动闭环一图看懂</h2>
 
 <p>下面这张图把这一代改动的五个角色位摆在一起：<b>人 → 引擎 → 拍板权 → 蓝本版本链 → RSI 闭环</b>。横向是时间（越往右越晚），纵向是角色。你可以直接读，也可以点「关系线」视图、拖动画布，或用右下角的方向键在图里游走。</p>
 
@@ -146,27 +235,501 @@
 </div>
 
 <div class="toc">
-  <b>目录</b>
+  <b>目录 · 快速跳转</b>
   <ol>
-    <li><a href="#overview">全景总览图：一图看懂</a></li>
-    <li><a href="#s0">导读：三分钟看懂这一代改了什么</a></li>
-    <li><a href="#s1">结构化总纲：一句话药方与三层串联</a></li>
-    <li><a href="#s2">图的结构化：蓝本（Blueprint）</a></li>
-    <li><a href="#s3">Agent 小队的结构化：角色词汇表</a></li>
-    <li><a href="#s4">篡位残留怎么治：四道结构性闸门</a></li>
-    <li><a href="#s5">管家角色的更新：从大管家到进门登记员</a></li>
-    <li><a href="#s6">自迭代的完整流程：优化闭环怎么做</a></li>
-    <li><a href="#s7">指标考核：四层金字塔与诚实边界</a></li>
-    <li><a href="#s8">收敛条件怎么定义</a></li>
-    <li><a href="#s9">命名建议</a></li>
-    <li><a href="#s10">终章：一个完整迭代的实践案例</a></li>
-    <li><a href="#s11">名词与指标字典（持续补充）</a></li>
-    <li><a href="#notes">注解与出处：每个结论从哪来</a></li>
+    <li><a href="#overview">项目全貌速览：图驱动闭环</a></li>
+    <li><a href="#ch1">1 产品定位与闭环</a></li>
+    <li><a href="#ch2">2 快速开始：构建、运行与连接</a></li>
+    <li><a href="#ch3">3 系统架构：进程、模块与数据流</a></li>
+    <li><a href="#ch4">4 核心域模型与状态机</a></li>
+    <li><a href="#ch5">5 调度与执行</a></li>
+    <li><a href="#ch6">6 协作模型 v2</a></li>
+    <li><a href="#ch7">7 验收与交付</a></li>
+    <li><a href="#ch8">8 数据与存储</a></li>
+    <li><a href="#ch9">9 接口与集成</a></li>
+    <li><a href="#ch10">10 Web UI</a></li>
+    <li><a href="#ch11">11 权限、安全与隔离</a></li>
+    <li><a href="#ch12">12 运维与文档地图</a></li>
+    <li><a href="#ch13">13 导读：三分钟看懂这一代改了什么</a></li>
+    <li><a href="#ch14">14 结构化总纲：三层串联与双簿记</a></li>
+    <li><a href="#ch15">15 图的结构化：蓝本（Blueprint）</a></li>
+    <li><a href="#ch16">16 Agent 小队的结构化：角色词汇表</a></li>
+    <li><a href="#ch17">17 篡位残留怎么治：四道结构性闸门</a></li>
+    <li><a href="#ch18">18 管家角色的更新：三个各司其职的身份</a></li>
+    <li><a href="#ch19">19 自迭代的完整流程：优化闭环</a></li>
+    <li><a href="#ch20">20 指标考核：四层金字塔与诚实边界</a></li>
+    <li><a href="#ch21">21 收敛条件怎么定义</a></li>
+    <li><a href="#ch22">22 命名建议：体现 RSI / RPA</a></li>
+    <li><a href="#ch23">23 实践案例：一个完整迭代</a></li>
+    <li><a href="#ch24">24 名词与指标字典</a></li>
+    <li><a href="#notes">25 注解与出处：每个结论从哪来</a></li>
   </ol>
+  <p class="doc-role">点击任意章节跳转；宽屏左侧还有常驻的「章节速跳」侧栏，移动端用右下角按钮打开。文末脚本会随滚动高亮当前章节。</p>
 </div>
 
-<!-- ============ 0 导读 ============ -->
-<h2 id="s0"><span class="no">0</span>导读：三分钟看懂这一代改了什么</h2>
+<div class="part-label">第一篇 · 项目全貌：产品、架构、运行与运维</div>
+
+
+<h2 id="ch1"><span class="no">1</span>产品定位与闭环</h2>
+
+<p><b>OuroFlow 是「AI 干活的流水线操作系统」。</b>它把 agent 从一次性的对话框里拎出来，放进一条可触发、可验证、可卡点、可交付的自动流水线：平台管「活怎么流」，人只管「门什么时候开」。一句话概括分工——<b>系统管活，人管门</b>。当前版本 <code>v0.0.1-beta.1</code>，定位是单机、单用户的个人开发者基础设施，架构上焊死单用户，不做多租户。</p>
+
+<table>
+  <thead><tr><th style="width:16%">维度</th><th>定义</th></tr></thead>
+  <tbody>
+    <tr><td><b>为谁做</b></td><td>一个人维护多个仓库/项目的开发者：希望下班前把任务丢进去，第二天看验收结果，而不是整晚盯着 agent 聊天。</td></tr>
+    <tr><td><b>卖什么</b></td><td>把 agent 从「互动工具」升级为「可调度、可审计的执行设施」：定时触发、无人执行、完成记账、人工出现在关键卡点、批准后合入并汇报。</td></tr>
+    <tr><td><b>不做什么</b></td><td>不做执行引擎（真正干活的是各家 agent CLI）；不做「无人工全自动」（卡点是产品的一部分）；不做通用工作流编排（蓝图面向软件任务）；暂不做多用户与云端多租户。</td></tr>
+    <tr><td><b>差异化</b></td><td><b>卡点是第一公民</b>：卡点可声明、可挂状态转换、可统计（<code>gate_decision</code>），并随验收级别连续调节自主度。</td></tr>
+  </tbody>
+</table>
+
+<p><b>七步闭环</b>（一次 goal 的完整生命周期）：</p>
+<div class="flow">
+  <div class="step"><b>① 触发</b><small>cron / Web / Issue / IM / 评论 mention</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>② 执行</b><small>claim 派发到机器，agent CLI 在 worktree 里干</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>③ 机器验证</b><small>子任务完成判定 / 可选的 verifier run</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>④ 验收判定</b><small>仲裁事务内读验收级别，决定 done / review / 重试</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑤ 卡点</b><small>review 停车等人；approve / reject / redirect</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑥ 交付</b><small>合并回默认分支并推送</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑦ 汇报</b><small>评论、通知、活动时间线、RSI 分析</small></div>
+</div>
+
+<p><b>自主度光谱</b>不是并列模式，而是同一个旋钮的两端——验收级别决定卡点密度：</p>
+<table>
+  <thead><tr><th>验收级别</th><th>完成时的行为</th><th>适用</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-wait">hitl</span>（默认）</td><td>完成即 park 到 <code>review</code>，人 approve 后才交付；reject 回到 <code>active</code> 并唤醒 owner。</td><td>生产仓库、不可逆改动、需要人拍板的任务。</td></tr>
+    <tr><td><span class="pill p-ok">hootl</span></td><td>通过终态守卫后直接 <code>done</code>，记录 <code>auto_completed</code>，跳过 review。</td><td>低风险、可回滚、人已明确豁免的任务。</td></tr>
+  </tbody>
+</table>
+
+<div class="callout emerald">
+  <span class="t">当前实现边界（务必区分设计与现状）</span>
+  DESIGN.md §5 描述的「自然语言验收策略 → 编译成机器检查 + 卡点规则」子系统的代码已退役（<code>compiled checks/gates retired</code>）：当前唯一的验收模式是上面的 HITL / HOOTL 二值；<code>verification_strength</code>、<code>checks</code>、<code>setup</code> 命令执行均不再运行。蓝图与 RSI 的 Phase A–D + §14 已落地，<b>Phase E（评测集 / best checkpoint）已立项未实施</b>。详见第 7 章与第 19–21 章。
+</div>
+
+<h2 id="ch2"><span class="no">2</span>快速开始</h2>
+
+<p>OuroFlow 由一个 Go daemon、一个 agent/机器侧 CLI、一个 Next.js Web 控制台组成。最短可用路径是：<b>起 daemon → 起 Web → 在 Web 里完成首次登记 → 在目标机器上 <code>connect</code> → 建第一个 goal</b>。</p>
+
+<table>
+  <thead><tr><th>前置</th><th>版本 / 说明</th></tr></thead>
+  <tbody>
+    <tr><td>Go</td><td><code>1.26+</code>（<code>go.mod</code> 声明 <code>go 1.26.4</code>）</td></tr>
+    <tr><td>Node.js / npm</td><td><code>20+</code> / <code>10+</code>，仅构建 Web 需要</td></tr>
+    <tr><td>Git</td><td>repo 型项目与交付需要；目标机器可访问代码仓库</td></tr>
+    <tr><td>agent CLI</td><td>目标机器上至少装一个支持 ACP 的 CLI（claude / opencode / kimi / hermes 等，见第 5 章）</td></tr>
+  </tbody>
+</table>
+
+<p><b>构建后端与启动 daemon：</b></p>
+<pre><code>./build.sh                        # 产出 build/ouroflow 与 build/ouroflow-daemon
+./build/ouroflow-daemon           # 默认监听 127.0.0.1:47813
+# 可选：--db /path/to/ouroflow.db
+# 监听 0.0.0.0 前必须先配置 platform.worker_token，否则启动被拒绝</code></pre>
+
+<p><b>启动 Web 控制台：</b></p>
+<pre><code>cd web
+npm install
+npm run build &amp;&amp; npm start        # 默认 127.0.0.1:47814</code></pre>
+
+<p>开发态可用 <code>npm run dev</code>（同样 47814）。前端通过 Next rewrite 把 <code>/backend</code>、<code>/ws</code>、<code>/webhooks</code> 转发到 daemon；<b>daemon 端口在打包时固化</b>，改端口需要重新构建前端或重新打包。</p>
+
+<table>
+  <thead><tr><th>产物 / 命令</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>build/ouroflow-daemon</code></td><td>控制面：HTTP/WS 服务、SQLite、调度器、交付与守卫；子命令 <code>version</code> / <code>paths</code> / <code>backup</code> / <code>export-template</code>。</td></tr>
+    <tr><td><code>build/ouroflow</code></td><td>双身份：① 注入 agent 的 <code>PATH</code>，作为协作工具；② <code>ouroflow connect</code> 把一台机器注册为执行节点。</td></tr>
+    <tr><td><code>./package.sh</code></td><td>发布包 <code>dist/ouroflow-v&lt;版本&gt;-&lt;os&gt;-&lt;arch&gt;.tar.gz</code>：<code>bin/</code> + <code>web/</code> + <code>start-all.sh</code>，daemon 47813 / Web 47814。</td></tr>
+  </tbody>
+</table>
+
+<p><b>在目标机器上接入执行节点：</b></p>
+<pre><code>./build/ouroflow connect --server http://127.0.0.1:47813
+# 可选：--name build-box --scan ~/src --scan '~/work/*' --agents ~/.ouroflow/agents.yaml
+./build/ouroflow status           # 查看 machine id、探测到的 CLI、最后一次心跳</code></pre>
+
+<p>首次登记（推荐在 Web 的「新建」页按对话引导完成，也可用 CLI）：创建项目（domain）→ 选择运行时（runtime，connect 探测后自动出现）→ 创建智能体（agent）→ 创建 goal。CLI 的 <code>create</code> 走的是管家登记通道：</p>
+<pre><code>./build/ouroflow create domain --name demo --type scratch
+./build/ouroflow create agent  --name dev --runtime &lt;runtime-id&gt;
+./build/ouroflow create goal   --title "修复登录超时" --domain demo --assignee dev</code></pre>
+
+<p>判断首次链路是否打通，看三个信号：<code>ouroflow status</code> 有心跳、<code>/runtimes</code> 出现探测到的 CLI、goal 详情出现 <code>queued → running</code> 的 run。若机器已注册但任务不派发，先确认 agent 绑定的 runtime 属于哪台 machine（<code>runtime.machine_id</code>）——daemon 不会把 run 派给「没有机器」的 runtime。</p>
+
+<table>
+  <thead><tr><th>环境变量</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td><code>OUROFLOW_HOME</code></td><td>数据根，默认 <code>~/.ouroflow</code>；生产建议独立持久目录（如 <code>/root/ouroflow-data</code>）。</td></tr>
+    <tr><td><code>OUROFLOW_DB</code></td><td>单独覆盖 SQLite 路径，默认 <code>$OUROFLOW_HOME/ouroflow.db</code>。</td></tr>
+    <tr><td><code>OUROFLOW_SERVER_URL</code></td><td>CLI 访问 daemon 的基地址，默认 <code>http://127.0.0.1:47813</code>。</td></tr>
+    <tr><td><code>OUROFLOW_DAEMON_PORT</code></td><td>仅构建期参与前端 rewrite；运行期改它不会迁移已固化的反代目标。</td></tr>
+    <tr><td><code>OUROFLOW_COMPILE_VERSION</code></td><td>覆盖 <code>build.sh</code> 的版本戳，两个二进制必须同戳。</td></tr>
+  </tbody>
+</table>
+
+<h2 id="ch3"><span class="no">3</span>系统架构</h2>
+
+<p>OuroFlow 是<b>控制面 / 执行面分离</b>的单机系统：daemon 只做状态、调度与交付，真正的代码执行全部发生在运行 <code>ouroflow connect</code> 的机器上。daemon 从不 <code>spawn</code> agent 进程（早期本地 transport 已退役），这既是安全边界，也是「一台笔记本控制多台构建机」的扩展点。</p>
+
+<table>
+  <thead><tr><th>进程 / 目录</th><th>角色</th><th>权威</th></tr></thead>
+  <tbody>
+    <tr><td><code>ouroflow-daemon</code></td><td>HTTP/WS 控制面；持有 SQLite；跑调度、仲裁、交付、守卫、探针与恢复循环。</td><td>全部状态的唯一权威。</td></tr>
+    <tr><td><code>internal/service</code></td><td>领域规则与事务边界：goal/run/sub-goal/change/review 的状态转换都在这里。</td><td>业务规则权威（代码注释指向 DESIGN.md）。</td></tr>
+    <tr><td><code>internal/store</code></td><td>单文件 SQLite（WAL）；<code>schema.sql</code> 42 张表 + 启动期增量迁移。</td><td>持久化权威。</td></tr>
+    <tr><td><code>internal/daemon</code></td><td>调度 tick、机器派发、deliver、verify/gate sweeper、watchdog、worktree 生命周期。</td><td>运行时编排权威。</td></tr>
+    <tr><td><code>internal/server</code> + <code>internal/link</code></td><td>HTTP/WS 路由、鉴权；机器侧 JSON-RPC 协议常量与参数类型。</td><td>接口边界。</td></tr>
+    <tr><td><code>cmd/ouroflow-cli</code></td><td>agent 协作工具（comment / subgoal / change / env-change）+ 机器侧 <code>connect</code> worker + ACP 执行器。</td><td>执行面。</td></tr>
+    <tr><td><code>web/</code>、<code>site/</code></td><td>Next.js 控制台与独立营销站；Web 只是 daemon 的客户端，不持业务状态。</td><td>展示面。</td></tr>
+  </tbody>
+</table>
+
+<p><b>一次 goal 的数据流</b>（以 Web 创建、机器执行为例）：</p>
+<div class="flow">
+  <div class="step"><b>① 写入</b><small>Web/CLI/cron → HTTP/JSON 或 intake → service 事务写 SQLite</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>② 提交后发事件</b><small>commit 成功才 <code>bus.Publish</code>；事件不是真相</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>③ 调度</b><small>dispatch tick 原子 Claim → 机器 PULL 队列</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>④ 执行</b><small>connect 取任务 → ACP stdio → 在 worktree 改代码</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑤ 回传</b><small>事件批量上报 → run 终态 → 仲裁事务</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑥ 判定与交付</b><small>review / done / retry → approve 后 merge+push</small></div>
+</div>
+
+<p><b>模块边界</b>：依赖方向是 <code>server → service → store</code>；HTTP handler 只做参数校验与调用，不自己发明状态机；daemon 只做编排、原子 stamp 与外部副作用（git / 进程 / 队列）；<code>cmd/ouroflow-cli</code> 只经 HTTP 或 <code>/rpc</code> 说话，不直接碰 daemon 的数据库。新增能力优先落在 service（规则）或 daemon（编排），跨层直写是腐化的开始。</p>
+
+<p><b>部署形态</b>：单机裸进程（systemd 或 <code>start-all.sh</code>）是最常见形态；daemon 默认只绑定 <code>127.0.0.1</code>，Web 同机反代。也可以把 Web 与 daemon 装在同一台机器、把 <code>connect</code> 指向多台构建机。没有 Kubernetes、消息队列或外部数据库依赖——SQLite 与文件系统就是全部基础设施。JEM 沙箱部署见 <code>docs/UPGRADE.md</code> 与第 12 章。</p>
+
+<h2 id="ch4"><span class="no">4</span>核心域模型与状态机</h2>
+
+<p>域模型的权威定义在 <code>docs/design/DESIGN.md</code> §2–§6；协作对象（sub-goal / change / verification / handoff / consult）的终稿在 <code>docs/design/Collaboration.v2.md</code> §2、§12。这里只给出一张可工作的地图。</p>
+
+<table>
+  <thead><tr><th>对象</th><th>职责</th><th>权威边界</th></tr></thead>
+  <tbody>
+    <tr><td><b>domain</b>（项目）</td><td>共享仓库 + 验收级别 + 默认卡点 + git 身份/凭据 + issue/PR 映射；repo 型或 scratch 型。</td><td>验收策略属于域；goal 可显式覆盖 <code>category</code>。</td></tr>
+    <tr><td><b>goal</b>（任务）</td><td>用户可感知的工作单元；绑定 domain、assignee（agent 或 squad）、可选蓝本版本。</td><td>goal 状态是唯一权威。</td></tr>
+    <tr><td><b>run</b>（执行实例）</td><td>一次 agent 进程执行；有 <code>run_kind</code>（worker/processor）、<code>role</code>（owner/subgoal/consult/review/verify）、attempt、token。</td><td>run 无权威：终态必须被仲裁事务读取后才算数。</td></tr>
+    <tr><td><b>sub_goal</b>（子任务）</td><td>goal 内的可委派工作项；不是 child goal，不可递归；assignee + verifier 分离。</td><td>子任务状态机独立于 goal；Done ≠ Verified。</td></tr>
+    <tr><td><b>workspace / worktree</b></td><td>执行隔离：run 级 workspace；repo 型项目使用每 run 一个 git worktree，分支承载检查点。</td><td>workspace 属于 run，不跨 run 复用。</td></tr>
+    <tr><td><b>change / revision</b></td><td>跨 workspace 的逻辑交付物；<code>ready → integrating → integrated</code>，冲突转 <code>conflict</code>；revision 绑定 base/head。</td><td>Change 由 owner 集成，Coordinator 不执行 git。</td></tr>
+    <tr><td><b>integration</b>（集成）</td><td>owner 把 sub-goal 的 change 合入自己的 workspace；合并后的再验证是后续动作。</td><td>集成动作由 owner run 执行。</td></tr>
+    <tr><td><b>verification_result</b></td><td>verifier 的裁决记录（passed / rejected + summary + evidence）。</td><td>verifier 只产生判定，不启动下一轮。</td></tr>
+    <tr><td><b>attention</b></td><td>派生字段：integration / wrapup / recovery / user_action，驱动 owner 的 successor run。</td><td>由 Reconcile 从权威状态推导，不手写。</td></tr>
+  </tbody>
+</table>
+
+<p><b>goal 状态机</b>：<code>backlog → active ↔ review → done / failed / cancelled</code>。完成判定的关键分支都在同一条仲裁事务里：</p>
+<div class="flow">
+  <div class="step"><b>backlog</b><small>已登记未激活</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>active</b><small>可 claim、可重试、可 review 往返</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>review</b><small>hitl 完成停车；人可 approve/reject/redirect</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>done</b><small>交付完成或 hootl 自动完成</small></div>
+</div>
+<p>旁路：<code>failed</code>（重试耗尽 / 不可重试错误）、<code>cancelled</code>（人取消，级联停 run）。<code>reject</code> 不新建状态，而是 <code>review → active</code>，<code>human_iterations++</code> 并唤醒 owner。</p>
+
+<p><b>run / sub_goal 状态</b>：run 为 <code>queued → running → completed / failed / cancelled</code>；sub_goal 为 <code>running → verifying → verified / rejected</code>，失败分支 <code>failed</code>，人工放弃 <code>cancelled</code>。review 与 verify 是两种不同的门：review 是 goal 级人工卡点，verify 是子任务级质量判定。</p>
+
+<div class="callout">
+  <span class="t">四条最值钱的不变量（背下来）</span>
+  ① <b>run 无权威</b>：agent 的 stdout 永不被解析成状态，终态必须经过仲裁；② <b>事件不是真相</b>：DB 是唯一真相，Reconcile 幂等、状态转移带条件；③ <b>每 goal 每 agent 至多一个活跃 run</b>，owner 单飞，consult/verify/review 只读并行；④ <b>任何终态 run 最终必被 Reconcile</b>——崩溃恢复靠重放，不靠内存。完整 16 条见 Collaboration.v2 §13，19 条见 DESIGN.md §9。
+</div>
+
+<h2 id="ch5"><span class="no">5</span>调度与执行</h2>
+
+<p>调度器把「该谁干活」变成一条可审计的流水线：<b>触发 → 建 goal/run → 原子 Claim → 机器 PULL → ACP 执行 → 事件回传 → Reconcile</b>。触发渠道共享同一套幂等与去重规则。</p>
+
+<table>
+  <thead><tr><th>渠道</th><th>入口</th><th>幂等 / 去重</th></tr></thead>
+  <tbody>
+    <tr><td>定时</td><td>5 字段 cron + IANA 时区；到点克隆模板建 goal。</td><td><code>UNIQUE(schedule_id, planned_at)</code>；错过即跳过（迟到 ≤1 分钟仍触发），不补跑。</td></tr>
+    <tr><td>Web / CLI</td><td><code>POST /goals</code>、<code>/intake/dispatch</code>（对话式创建）、goal 评论 mention。</td><td>评论触发按评论 ID 去重；<code>@all</code> 抑制自动触发。</td></tr>
+    <tr><td>Issue / PR</td><td>GitHub / GitCode 轮询（默认 30s，下限 15s）+ webhook 双通道。</td><td><code>source_ref</code> 唯一；webhook 验签；每次投递（含拒绝）落 <code>webhook_delivery</code>。</td></tr>
+    <tr><td>IM 入站</td><td>飞书消息 → processor run 解析意图 → 创建草稿/goal。</td><td>消息 ID 去重；多项目草稿 10 分钟过期。</td></tr>
+    <tr><td>协作</td><td>mention、sub-goal 依赖唤醒、咨询回复、review 驳回。</td><td>每条触发都带 <code>trigger_comment_id</code>，回复自动挂到来源评论下。</td></tr>
+  </tbody>
+</table>
+
+<p><b>队列与 Claim</b>：dispatch tick 每 500ms 扫描；只对仍有空闲槽的 agent 发起原子 Claim（SQL 条件更新 + 每 goal 至多一个 running）；队列深度上限 64，满了退回 <code>queued</code> 等下一轮。worker 并发由 <code>agent.max_concurrent</code>（默认 1）控制；processor run 不挂 goal，不受 goal 串行限制。API 进程与执行进程之间没有 RPC 调用——机器用长轮询 PULL（daemon 最多挂 30s），60 秒未领取即判失败，保证 at-least-once 而不是「以为派了」。</p>
+
+<table>
+  <thead><tr><th>run 维度</th><th>取值</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>run_kind</code></td><td><code>worker</code> / <code>processor</code></td><td>worker 挂 goal；processor 是平台侧 LLM 执行者（intake / 路由等），<code>goal_id=''</code>。</td></tr>
+    <tr><td><code>run_type</code></td><td><code>intake</code> / <code>intake_web</code></td><td>对话式创建与 Web 收件通道。</td></tr>
+    <tr><td><code>role</code></td><td><code>owner</code> / <code>subgoal</code> / <code>consult</code> / <code>review</code> / <code>verify</code></td><td>决定 prompt、worktree 权限与仲裁路由。</td></tr>
+  </tbody>
+</table>
+
+<p><b>执行协议</b>：机器侧统一走 <b>ACP over stdio</b>；<code>internal/proto</code> 另有 JSONL / JSON-RPC 两种 backend 作为扩展位，当前派发不会选择它们。每次 run 会重写 staged <code>AGENTS.md</code>（人设 + RunProfile + 技能索引），把 <code>ouroflow</code> shim 注入 <code>PATH</code>，并下发 per-run token；agent 的权限请求由 autopermit 按角色策略自动应答（consult 只读，见第 11 章）。事件按 100ms 或 64 条批量回传，终态上报带 HeadSHA / SessionID / WorkDir。</p>
+
+<p><b>失败与恢复</b>：机器失败按 attempt ≤3 重试，退避 30s / 60s（上限 5 分钟）；确定性错误（模型/配置/认证）直接失败并标注「重试无效」。运行超 <code>max_run_duration</code>（默认 7200s）由 runaway reaper 标 <code>cancelled(runaway)</code>，不消耗 attempt；idle watchdog 2 分钟只通知、不再自动取消。daemon 启动执行一串恢复：<code>RecoverStuckRunning</code>（running→queued）→ 回放未仲裁终态 → 重 derive attention → verify / gate sweeper → review 窗口恢复 → 交付补偿（10 分钟一轮）。</p>
+
+<div class="callout amber">
+  <span class="t">与 DESIGN 的口径差异</span>
+  DESIGN.md §5 的 <code>verify_timeout</code>（600s）、域 <code>setup</code>/<code>verify</code> 命令执行、<code>worktree 干净性检查</code>均已退役或未落地；当前「机器验证」指子任务完成后的审计记录或可选 agent verifier，不是平台执行域命令。写扩展前先核对代码，不要按旧文档实现。
+</div>
+
+<h2 id="ch6"><span class="no">6</span>协作模型 v2</h2>
+
+<p>协作终稿是 <code>docs/design/Collaboration.v2.md</code>（Approved）。它把多 agent 协作拆成四个原语和一条变更交付链，核心原则是：<b>Goal 定义协作目标，Run 定义执行主体，Workspace 定义执行隔离，Change 定义变更交付</b>。当前代码已实现 Change / Revision / Integration / attention / Coordinator 主体，旧的 <code>blocked</code> / <code>wait</code> / parent goal 语义已退役；<code>goal wait</code> CLI 仍保留为有界等待工具（最多 10 分钟，不写 blocked 状态）。</p>
+
+<table>
+  <thead><tr><th>原语</th><th>做什么</th><th>权限 / 唤醒</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag t-task">Comment 说</span></td><td>在 goal 评论区发言；不建 run、不改归属。</td><td>所有角色可评论；系统状态不写进评论区。</td></tr>
+    <tr><td><span class="tag t-condition">Consult 问</span></td><td>向另一个 agent 提问，拉一个只读 guest 语境的 run；回答后 requester 得到 successor run。</td><td>owner / assignee / squad leader；<code>role=consult</code>，ABCD 四类写操作在工具层拒绝。</td></tr>
+    <tr><td><span class="tag t-gate">Handoff 接力</span></td><td>把 owner 身份交给另一个 agent；只终止旧 owner run，不动 sub-goal 的 run/change。</td><td>human / 当前 owner / squad leader；循环 4 次警告、8 次停靠。</td></tr>
+    <tr><td><span class="tag t-spawn">Sub-goal 做</span></td><td>在 goal 内新建可委派工作项；owner 可创建，assignee 只能干自己被派的那条。</td><td>不可递归：schema 无 parent 列、工具只收 <code>goal_id</code>、权限只给 owner/human/leader。</td></tr>
+  </tbody>
+</table>
+
+<p><b>角色词汇</b>：小队（squad）是路由组，不是执行者——成员是 agent 或 human，各自携带 <code>role</code>；已注册 <code>squad_role</code> 词表的小队，成员 role 必须来自词表（保留词 <code>reviewer</code> / <code>member</code> 例外）。leader 必须是 agent，团队 leader 代表 squad 承担 owner 职责；<code>reviewer</code> 结构性排除在派工之外（裁判不下场）。没有注册词表的小队保持自由文本，存量团队零破坏。</p>
+
+<p><b>Change 与 Integration</b>：sub-goal 完成并通过验证后生成 Change（原子的 <code>change + 首条 revision</code>，revision 记录 base/head）；owner 在下次 run 里执行 integrate，成功转 <code>integrated</code>，冲突转 <code>conflict</code> 并开返修轮次。owner 只负责集成，不替 sub-goal 写代码；Coordinator 只做唤醒与状态推导，不执行 git。</p>
+
+<div class="callout">
+  <span class="t">mention 语法与语义</span>
+  <code>[@名字](mention://agent/&lt;id&gt;)</code> 建 run；<code>mention://squad/&lt;id&gt;</code> 路由到 leader；<code>mention://human/&lt;id&gt;</code> 只渲染链接；<code>mention://all/all</code> 抑制自动触发并通知人。只解析<b>持久化的评论内容</b>，绝不解析 agent stdout。mention 往返超过 4 次警告、达到 8 次强制 failed；handoff 与 consult 的完整规则见 Collaboration.v2 §7–§9。
+</div>
+
+<h2 id="ch7"><span class="no">7</span>验收与交付</h2>
+
+<p><b>验收级别</b>是当前唯一的验收开关，优先级：goal 显式 <code>category</code> → domain <code>acceptance_level</code> → 平台默认 <code>hitl</code>。接口校验只接受 <code>hitl</code> / <code>hootl</code>；domain 的清空必须走 <code>PATCH /domains/{id}/acceptance</code>（普通 PATCH 的空值表示保持旧值）。平台自身的 digest / team-import goal 有额外的自动批准白名单，普通任务不走该白名单。</p>
+
+<div class="dual">
+  <div class="col spec">
+    <h4>📘 判定的三个角色</h4>
+    <ul>
+      <li><b>定义</b>：域所有者 / 人——选择验收级别、是否指派 verifier。</li>
+      <li><b>执行</b>：agent——只负责产出，不定义验收标准。</li>
+      <li><b>判定</b>：平台（完成守卫 + review 状态机）与人（review 卡点）；子任务可选 agent verifier。</li>
+    </ul>
+  </div>
+  <div class="col exec">
+    <h4>📗 当前实际发生的判定</h4>
+    <ul>
+      <li>子任务完成：无 verifier → 写一条 <code>verification_result</code>（<code>machine verification passed</code>）后转 verified；有 verifier → 派 verify run，由 verifier 用 <code>subgoal verify --verdict</code> 出裁决。</li>
+      <li>goal 完成：先过 finalization guard（未 settle 的子任务 / change / consult / ask-human / 蓝图节点），再过验收级别。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout amber">
+  <span class="t">「机器验证」的现状必须说清</span>
+  编译式验收（NL → checks + gates、<code>verification_strength → 卡点密度</code>）已退役。当前没有平台侧「跑测试 / 结构检查 / 覆盖率」的自动执行：子任务的 machine verification 是<b>完成即记账</b>；需要真实质量门时，显式给子任务配 <code>verifier</code> agent，或把测试写进 agent 的任务说明。旧文档中的 <code>gate diff_contains</code>、<code>verify_timeout</code> 均不再是运行路径。
+</div>
+
+<p><b>review 卡点</b>：hitl goal 完成即 park 到 <code>review</code>，<code>review_request</code> 记录原因；execution 被冻结（新 run 只能排队，不能 claim），intent 不被冻结。人的决策三种：<code>approve</code> → 写 <code>gate_decision</code> 并发布 <code>goal:approved</code> 触发交付；<code>reject</code> / <code>redirect</code> → 回 <code>active</code>、<code>human_iterations++</code>、写驳回评论并唤醒 owner。重复决定有守卫；批准后交付若失败，2 分钟宽限期内可重新批准重试。</p>
+
+<p><b>交付</b>（repo 型）：approve → 等 owner run 结束（≤5 分钟）→ 取 per-domain 锁 → fetch → 在 <code>runs/deliver-&lt;goalID&gt;</code> 临时 worktree 上 <code>git merge --no-ff</code> → 三方合并冲突则 abort 并把 goal 留在 review（<code>review_request</code> 前缀 <code>deliver:</code>）→ push 默认分支 → 记录蓝图交付台账 → 清理 <code>feat-&lt;goalID8&gt;</code> 本地与远程分支 → 标 done。空分支、已合并、scratch 型项目都幂等成功；失败不 push，10 分钟补偿循环重放。分支清理只在成功/已合并/取消/删除时做，失败必留分支供重试。</p>
+
+<div class="flow">
+  <div class="step"><b>approve</b><small>gate_decision</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>merge --no-ff</b><small>交付临时 worktree</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>push</b><small>默认分支</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>cleanup</b><small>删 feat 分支</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>done</b><small>MarkDelivered</small></div>
+</div>
+
+<div class="callout red">
+  <span class="t">hootl 的交付边界（已由代码确认）</span>
+  代码里 hootl goal 通过终态守卫后直接 <code>done</code>，只发布 <code>goal:finished</code>；而交付订阅的是 <code>goal:approved</code>。因此<b>仓库型 hootl goal 当前不会自动合入默认分支</b>——变更留在 worktree/分支上。hootl 适用的是 scratch 型或「本来就不需要合入」的任务；repo 项目需要合入时用 hitl，或把 <code>category</code> 设回 hitl 后人工 approve。若要让 hootl 也走交付，需要改代码而不是改本文档。
+</div>
+
+<h2 id="ch8"><span class="no">8</span>数据与存储</h2>
+
+<p>全部业务状态在一只 SQLite 文件里（WAL 模式），默认 <code>$OUROFLOW_HOME/ouroflow.db</code>；文件系统负责 run 的 worktree、共享裸仓、技能包与摘要。daemon 与机器侧<b>各有独立的数据根</b>，升级时只替换制品、不碰数据根（见第 12 章与 <code>docs/PATHS.md</code>）。</p>
+
+<table>
+  <thead><tr><th>路径</th><th>内容</th><th>升级必须保留</th></tr></thead>
+  <tbody>
+    <tr><td><code>$OUROFLOW_HOME/ouroflow.db</code>（+ <code>-wal</code>/<code>-shm</code>）</td><td>42 张表：域、goal、run、协作、调度、蓝图、RSI、设置。</td><td><span class="pill p-ok">必须</span></td></tr>
+    <tr><td><code>runs/repos/&lt;domainID&gt;/</code></td><td>每域的共享 bare 仓（机器推送的 <code>ouroflow/*</code> 分支在此汇合）。</td><td><span class="pill p-ok">必须</span></td></tr>
+    <tr><td><code>runs/scratch/&lt;domain&gt;/goals/&lt;goalID&gt;/</code></td><td>scratch 项目的产物目录（不依赖 git）。</td><td><span class="pill p-ok">必须</span></td></tr>
+    <tr><td><code>runs/skills/&lt;skillID&gt;/</code></td><td>技能包与解压内容。</td><td><span class="pill p-ok">必须</span></td></tr>
+    <tr><td><code>agents.yaml</code>、<code>digest/</code></td><td>机器侧 CLI 清单；日报摘要缓存。</td><td><span class="pill p-wait">建议</span></td></tr>
+    <tr><td><code>runs/&lt;runID&gt;/</code>、<code>deliver-*</code>、<code>proc/</code>、<code>sessions/</code>、<code>gates/</code></td><td>run 工作副本与临时交付 worktree；分支状态已在裸仓，删除不影响历史。</td><td><span class="pill p-no">可清</span></td></tr>
+  </tbody>
+</table>
+
+<p><b>表分组</b>（共 42 张）：</p>
+<table>
+  <thead><tr><th>组</th><th>表</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>核心域（10）</td><td>domain、goal、run、sub_goal、change、change_revision、verification_result、gate_decision、handoff_event、consult_request</td><td>状态机与仲裁的权威表；<code>run.reconciled_at</code> 是仲裁边界。</td></tr>
+    <tr><td>会话与审计（3）</td><td>comment、chat_message、activity_log</td><td>评论是协作入口；chat_message 属于 run；activity_log 只追加。</td></tr>
+    <tr><td>组织与执行（8）</td><td>machine、runtime、agent、agent_pin、skill、squad、squad_member、squad_role</td><td>runtime 记录每台机器探测出的 CLI 启动规格；本地 transport 字段已退役。</td></tr>
+    <tr><td>调度与蓝图（12）</td><td>schedule、schedule_run、blueprint、blueprint_version、blueprint_node、blueprint_proposal、infer_shape、workflow_edge、blueprint_write、hook、hook_binding、hook_run</td><td>蓝图版本不可变；<code>blueprint_node</code> 是每 goal 的施工账本。</td></tr>
+    <tr><td>集成与平台（5）</td><td>connection、webhook_delivery、team_import、env_change、app_settings</td><td>connection 是 squad↔repo 绑定；app_settings 存平台参数与凭据。</td></tr>
+    <tr><td>训练与 RSI（4）</td><td>training_session、rsi_report、rsi_finding、rsi_round</td><td>goal 终态触发一次训练会话与报告。</td></tr>
+  </tbody>
+</table>
+
+<p><b>保留与迁移</b>：启动时执行幂等的 <code>ALTER TABLE ADD COLUMN</code> 增量迁移（<code>internal/store/store.go:72+</code>），没有 <code>schema_version</code> 表；升级前必须备份。<code>webhook_delivery</code> 只保留最新 500 行；run worktree 保留 7 天后清理；机器侧 goal 级持久 worktree 30 天未触碰清理；daemon 日志 10MB × 3 份压缩。数据库本身没有自动过期策略——它就是项目历史。</p>
+
+<p><b>一致性</b>：SQLite 单写者 + WAL 提供事务与崩溃恢复；在线备份必须走 daemon 的 <code>VACUUM INTO</code> 快照，不要直接 <code>cp</code> 正在写的数据库文件。恢复时先停服务、清掉残留的 <code>-wal</code>/<code>-shm</code>，再放回快照，避免半提交页。<code>run.reconciled_at</code> 与 <code>change + revision</code> 的原子写入是两条最重要的提交边界。</p>
+
+<h2 id="ch9"><span class="no">9</span>接口与集成</h2>
+
+<p>接口面分四层：<b>HTTP 控制 API</b>（Web/CLI/集成）、<b>WebSocket 事件与机器通道</b>、<b>agent 侧 CLI / RPC</b>、<b>协议适配层</b>。默认只监听 loopback；跨机部署必须配置平台 token（见第 11 章）。</p>
+
+<table>
+  <thead><tr><th>HTTP 组</th><th>代表端点</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td>goals / runs</td><td><code>GET/POST /goals</code>、<code>/goals/{id}/review</code>、<code>/goals/{id}/activate|reopen|cancel</code>、<code>/goals/{id}/runs/{runID}/stop</code>、<code>/goals/{id}/continue</code></td><td>任务生命周期、评审决策、人工停/续。</td></tr>
+    <tr><td>agents / squads</td><td><code>/agents</code>、<code>/agents/{id}/history</code>、<code>/squads</code>、<code>/squads/{id}/members|roles</code></td><td>执行主体与协作组织。</td></tr>
+    <tr><td>domains / machines</td><td><code>/domains</code>、<code>/domains/test</code>、<code>/domains/{id}/acceptance|webhook-secret</code>、<code>/machines</code></td><td>项目配置、git 连通性测试、验收级别。</td></tr>
+    <tr><td>schedules / blueprints</td><td><code>/schedules</code>、<code>/blueprints</code>、<code>/blueprints/{id}/versions|publish|graph</code>、<code>/blueprints/proposals</code></td><td>定时触发与蓝图版本/提案。</td></tr>
+    <tr><td>rsi / training</td><td><code>/rsi/sessions</code>、<code>/rsi/overview</code>、<code>/rsi/rounds</code>、finding 处置</td><td>训练分析与自迭代。</td></tr>
+    <tr><td>templates / skills / hooks</td><td><code>/templates*</code>、<code>/skills</code>、<code>/hooks</code>、<code>/hooks/{id}/test|runs</code></td><td>可复用组织资产与事件钩子。</td></tr>
+    <tr><td>intake / settings / IM</td><td><code>/intake</code>、<code>/intake/dispatch</code>、<code>/settings/platform</code>、<code>/im/feishu/*</code></td><td>对话式创建、平台参数、飞书连接。</td></tr>
+    <tr><td>webhooks / issue</td><td><code>/webhooks/{provider}/{id}</code>、<code>/issue-comments</code>、<code>/gate-decisions/stats</code></td><td>代码托管集成与卡点统计。</td></tr>
+  </tbody>
+</table>
+
+<table>
+  <thead><tr><th>WebSocket / 协议</th><th>端点</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>Web 实时事件</td><td><code>GET /ws</code></td><td>单条全局连接，按 topic 分发；断线指数退避重连。</td></tr>
+    <tr><td>机器通道</td><td><code>GET /connect</code>（JSON-RPC over WS）</td><td><code>machine.register/heartbeat/probe_update</code> + <code>run.poll/claimed/event_batch/finished</code> + <code>chat.*</code> + <code>config.push</code>。</td></tr>
+    <tr><td>Web 对话</td><td><code>GET /agents/{id}/acp</code></td><td>把 Web 聊天接到 agent 的 ACP 会话。</td></tr>
+    <tr><td>agent 协作</td><td><code>GET /rpc</code>（WebSocket，一次请求一条短连接）</td><td>per-run token 解析身份；覆盖 comment / subgoal / change / env-change / goal.wait（有界等待）等 31 个方法。</td></tr>
+    <tr><td>执行 backend</td><td><code>internal/proto</code></td><td>ACP（当前）/ JSONL / JSON-RPC（保留扩展位）。</td></tr>
+  </tbody>
+</table>
+
+<p><b>CLI 命令面</b>：顶层 17 个命令——<code>connect</code>、<code>status</code>、<code>goal</code>、<code>agent</code>、<code>squad</code>、<code>schedule</code>、<code>domain</code>、<code>skill</code>、<code>blueprint</code>、<code>stats</code>、<code>subgoal</code>、<code>change</code>、<code>env-change</code>、<code>create</code>、<code>issue</code>、<code>version</code>、<code>paths</code>。其中 <code>create</code> 支持七类对象（goal/agent/squad/domain/schedule/team/blueprint），走 <code>/intake/dispatch</code> 的对话式登记；<code>goal</code> 子命令覆盖 list/status/assign/cancel/reopen/submit-review/authorize/delete/create/comment/comments/wait。<code>goal authorize</code> 是 F1 人工授权闸门：批准只代表「继续」，不代表合并。</p>
+
+<p><b>认证只有两层</b>：跨机控制面的 <code>worker_token</code>，以及 run 内部的 per-run token；Web 自身不保存业务凭据，依赖同源反代与 daemon 的鉴权。跨机部署的最小安全组合是「TLS 反代 + worker_token + 每域 webhook secret」，三者缺一都不应暴露到公网。</p>
+
+<div class="callout amber">
+  <span class="t">MCP 的现状</span>
+  agent 的 <code>mcp_servers</code> 会作为额外 MCP server 在建立 ACP 会话时传入，agent 可以自带 MCP 工具。但平台<b>没有</b> workspace MCP server（无 <code>/mcp/{runID}</code> 路由）：协作工具面是注入 <code>PATH</code> 的 <code>ouroflow</code> CLI → <code>/rpc</code>。DESIGN.md 4-13/5-2 的「MCP 替代 CLI」属于设计目标，未落地，写集成时不要假设存在平台 MCP 工具。
+</div>
+
+<h2 id="ch10"><span class="no">10</span>Web UI</h2>
+
+<p>Web 控制台是 daemon 的纯客户端（Next.js App Router，端口 47814）：所有数据经 <code>/backend</code> 反代取 HTTP，实时更新走全局 <code>/ws</code>；没有自己的业务库。根路径重定向到 <code>/goals</code>，所以「打开就有任务看板」。</p>
+
+<table>
+  <thead><tr><th>导航组</th><th>页面</th><th>职责</th></tr></thead>
+  <tbody>
+    <tr><td>开始</td><td><code>/goals/new</code>、<code>/chat</code></td><td>对话式创建（任务/项目/团队/智能体/蓝本）；多智能体共享上下文的聊天工作台。</td></tr>
+    <tr><td>工作台</td><td><code>/goals</code>、<code>/blueprints</code>、<code>/training</code>、<code>/schedules</code></td><td>任务看板与详情；蓝图版本/提案；RSI 训练分析；定时任务。</td></tr>
+    <tr><td>组织</td><td><code>/domains</code>、<code>/squads</code>、<code>/agents</code>、<code>/im</code></td><td>项目与验收级别；小队/角色；智能体与运行时绑定；飞书连接。</td></tr>
+    <tr><td>运行环境</td><td><code>/runtimes</code>、<code>/machines</code></td><td>探测到的 agent CLI 规格；已 connect 的机器与在线状态。</td></tr>
+    <tr><td>资源</td><td><code>/templates</code>、<code>/skills</code>、<code>/hooks</code></td><td>模板仓库与一键 apply；技能包；事件钩子。</td></tr>
+    <tr><td>系统</td><td><code>/logs</code>、<code>/settings</code></td><td>daemon 日志与级别；仅浏览器主题/本地缓存设置。</td></tr>
+  </tbody>
+</table>
+
+<p><b>任务看板与详情</b>：按 goal 状态分列；详情页把 run、sub-goal、change、评论、时间线、蓝图执行图、计划对齐、环境变更、hooks 放在同一工作区，review 卡点直接给出 approve / reject / redirect。所有写操作走后端事务，前端以服务端返回为准刷新。</p>
+
+<p><b>对话式创建</b>：选择类型并说一句话，管家（steward）通过 <code>ouroflow create</code> 落库；没有在线机器时同一页可退回手动表单。会话状态放在模块级 store，切页不丢现场。<b>聊天工作台</b>可 @ 多个智能体共享上下文；未 @ 时由管家回应。</p>
+
+<p><b>RSI / 训练</b>：<code>/training</code> 列表按状态与 7/30 天筛选，<code>/training/{id}</code> 看单次会话、发现与轮次；没有独立的 <code>/rsi</code> 页面。<b>设置</b>：平台参数不在全局设置页，而在 IM / 项目等对应页面；<code>/settings</code> 只管浏览器主题（Studio Paper / Terminal Studio）与本机缓存。</p>
+
+<div class="callout">
+  <span class="t">实时性与边界</span>
+  Web 只通过同源 <code>/ws</code> 订阅事件（断线自动重连），不轮询核心状态；跨机部署时需要前置反代把 <code>/backend</code>、<code>/ws</code>、<code>/webhooks</code> 转到 daemon。Web 不是权限边界——它的所有请求最终由 daemon 鉴权（见第 11 章）。<b>Phase E</b> 的评测集/AB 采纳界面尚未实现，<code>/training</code> 只呈现已产生的 RSI 数据。
+</div>
+
+<h2 id="ch11"><span class="no">11</span>权限、安全与隔离</h2>
+
+<p>威胁模型先钉死：<b>单用户、单机、可信本机</b>。OuroFlow 不是多租户系统，也不假设 agent 是恶意的；它防的是「agent 手滑」「误触发」「外部 webhook 伪造」「把控制面裸奔到公网」。部署者的第一原则：<b>不要在没有 token 与 TLS 的情况下把 daemon 暴露到非 loopback</b>。</p>
+
+<table>
+  <thead><tr><th>控制</th><th>机制</th><th>边界</th></tr></thead>
+  <tbody>
+    <tr><td>控制面鉴权</td><td>loopback 放行；非 loopback 必须 <code>platform.worker_token</code>（Bearer 或 <code>?token=</code>，每请求现读，fail-closed）。启动时缺 token 直接拒绝监听。</td><td><code>/rpc</code> 与 OPTIONS 豁免；<code>/connect</code> 不豁免。</td></tr>
+    <tr><td>per-run 执行凭据</td><td>Claim 时签发 run token；<code>/rpc</code> 用 token 解析 goal/agent/role/run，忽略 agent 自报 ID；旧 token 上报被丢弃。</td><td>只对当前 run 有效。</td></tr>
+    <tr><td>worktree 隔离</td><td>每 run 独立 workspace；repo 型项目每 run 独立 worktree；owner 分支承载检查点；consult/verify/review 不获得写权限。</td><td>同一 agent 的多个 run 仍由 semaphore 控制并发。</td></tr>
+    <tr><td>consult 只读</td><td><code>role=consult</code> 在 ACP 权限层拒绝 edit/delete/move/execute/fetch；read/search/think 放行。</td><td>是工具层强制，不是 OS 沙箱；恶意 CLI 仍可能绕过 ACP。</td></tr>
+    <tr><td>协作权限矩阵</td><td>human 全可；owner 可 handoff / 建 sub-goal；assignee 只能干自己的；guest 只能评论；review/verify 只评论；squad leader 代表小队。</td><td>不可递归由 schema + 参数 + 权限三重保险。</td></tr>
+    <tr><td>人工闸门</td><td>HITL review、<code>goal authorize</code>（F1 授权继续）、gate 节点、危险操作二次确认。</td><td>agent 无权请求审批，只能把决定权交回人。</td></tr>
+    <tr><td>webhook 验签</td><td>每个 connection / domain 独立 secret；每次投递（含拒绝）落库；<code>source_ref</code> 去重。</td><td>伪造请求不能创建 goal。</td></tr>
+  </tbody>
+</table>
+
+<p><b>危险操作</b>：取消 goal 会级联停 sub-goal 与 queued run，但保留 Change/Verification 历史；agent/squad 有活跃工作时删除被守卫拒绝，goal 删除则是物理级联（run、评论、子目标、Change/Verification 一并清理，不可恢复）；<code>stop run</code> 不消耗 attempt、不改 goal 状态，后续由人决定 continue 或放弃；分支清理只发生在成功/已合并/取消/删除，失败保留证据。域 git 凭据、webhook secret、平台 token 由 daemon 本地保管，安全等级取决于主机与 <code>OUROFLOW_HOME</code> 的文件权限——部署时应限制目录权限并备份加密。</p>
+
+<div class="callout red">
+  <span class="t">不要把「单用户」误解成「无边界」</span>
+  单用户是产品定位，不是可以省掉鉴权的理由：一旦 <code>-addr</code> 改成 <code>0.0.0.0</code>，worker_token 就是唯一的门；Web 反代也必须加认证与 TLS。agent 的执行隔离是「工作副本隔离 + 协议层权限」，不是容器/虚拟机级沙箱；需要强隔离时把 <code>connect</code> 跑在独立机器或沙箱里。
+</div>
+
+<h2 id="ch12"><span class="no">12</span>运维与文档地图</h2>
+
+<p>运维的第一原则：<b><code>bin/</code> 与 <code>web/</code> 是无状态制品，可以整体替换；<code>OUROFLOW_HOME</code> 是状态，必须独立持久化。</b>升级只做「停 → 备份 → 换制品 → 起 → 校验」，绝不 <code>deploy</code> / <code>delete</code> 数据目录。完整脚本化流程见 <code>docs/UPGRADE.md</code>（含 JEM 的 <code>scripts/jem-swap-release.sh</code>）。</p>
+
+<div class="flow">
+  <div class="step"><b>① stop</b><small>停 daemon，轮询确认</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>② backup</b><small>DB + WAL/SHM + integrity_check + runs/skills</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>③ swap</b><small>只换 bin/ 与 web/，保留 previous-*</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>④ start</b><small>起服务并轮询健康</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑤ verify</b><small>版本 / HTTP / DB 计数</small></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>⑥ rollback</b><small>失败只回滚制品，不回滚 DB</small></div>
+</div>
+
+<table>
+  <thead><tr><th>操作</th><th>命令 / 入口</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>看数据布局</td><td><code>ouroflow-daemon paths</code>、<code>ouroflow paths</code></td><td>daemon 与机器侧分别输出 JSON；升级前先确认 home 与 db。</td></tr>
+    <tr><td>备份</td><td><code>ouroflow-daemon backup -out DIR [-db PATH] [-with-files]</code></td><td>VACUUM INTO 一致快照，运行中可用；<code>-with-files</code> 打 runs/skills + agents.yaml。</td></tr>
+    <tr><td>健康检查</td><td><code>GET /healthz?verbose=1</code></td><td>返回 home / db 路径；发布脚本用它发现真实数据根。</td></tr>
+    <tr><td>日志</td><td><code>GET /logs</code>、<code>PUT /logs/level</code>、<code>$OUROFLOW_HOME/daemon.log</code></td><td>10MB × 3 压缩轮转；级别持久在 <code>app_settings</code>。</td></tr>
+    <tr><td>卡点统计</td><td><code>GET /gate-decisions/stats</code></td><td>按 <code>gate_rule</code> / 决策统计评审耗时与通过率。</td></tr>
+    <tr><td>版本</td><td><code>ouroflow-daemon version</code>、<code>ouroflow version</code></td><td>两个二进制必须同版本戳；connect 注册时不一致会告警。</td></tr>
+  </tbody>
+</table>
+
+<p><b>故障排查入口</b>：先看 <code>GET /healthz</code> 与 <code>daemon.log</code>，再看 goal 详情的活动时间线与 run 终态；「agent 全空」通常是 <code>OUROFLOW_HOME</code> 指错，「database is locked」多半是旧进程或 WAL 未清，「502」先查 Web 反代是否指向旧 daemon 端口。恢复数据库时先停服务、删 <code>-wal</code>/<code>-shm</code>、再放回快照。</p>
+
+<table>
+  <thead><tr><th>文档</th><th>角色</th><th>关系</th></tr></thead>
+  <tbody>
+    <tr><td><code>docs/OUROFLOW-SPEC.html</code>（本文）</td><td>全项目详细说明总入口</td><td>产品、架构、运行、接口、运维的第一入口；蓝图与 RSI 在第 13–24 章。</td></tr>
+    <tr><td><code>docs/design/DESIGN.md</code></td><td>产品与架构决策基线</td><td>代码注释里的 <code>DESIGN.md §N</code> 指向它；本文第 1–12 章把它的决策转述为当前实现。</td></tr>
+    <tr><td><code>docs/design/Collaboration.v2.md</code></td><td>协作模型终稿（Approved）</td><td>协作原语、Change/Integration、16 条 runtime invariants 的权威来源。</td></tr>
+    <tr><td><code>docs/BLUEPRINT-PROPOSAL.md</code></td><td>蓝图设计依据（Phase A–D + §14 已落地）</td><td>schema、节点契约、编译两拍、里程碑与决策记录；Phase E 仍为立项态。</td></tr>
+    <tr><td><code>docs/PATHS.md</code></td><td>数据布局专题</td><td>每类目录的保留/可清规则与迁移优先级。</td></tr>
+    <tr><td><code>docs/UPGRADE.md</code></td><td>升级与回滚专题</td><td>systemd / JEM 两套脚本化流程与故障表。</td></tr>
+    <tr><td><code>docs/TEMPLATES.md</code></td><td>模板生态专题</td><td>模板仓库、apply/export、密钥注意事项。</td></tr>
+    <tr><td><code>docs/RSI.md</code></td><td>RSI 操作专题</td><td>训练会话、发现处置、轮次与采纳的日常操作。</td></tr>
+  </tbody>
+</table>
+
+<div class="callout emerald">
+  <span class="t">维护约定</span>
+  本文档是 OuroFlow 整个项目的详细说明总入口：<b>任何影响行为、架构、流程、接口、配置或运维方式的改动，都必须在同一个 PR 内同步到本文件对应章节</b>。新增章节请沿用第 1–12 章的结构（产品 → 运行 → 领域 → 协作 → 交付 → 数据 → 接口 → UI → 安全 → 运维），并在 <code>docs/README.md</code> 索引中登记；只改代码不改这里，视为文档债。设计决策仍以 DESIGN.md / Collaboration.v2.md 为准，本文负责解释「当前实现长什么样、为什么这样、边界在哪」。
+</div>
+<div class="part-label">第二篇 · 蓝图与 RSI 规范：从管家编排到图驱动自迭代</div>
+
+<!-- ============ 13 导读 ============ -->
+<h2 id="ch13"><span class="no">13</span>导读：三分钟看懂这一代改了什么</h2>
 
 <div class="callout">
   <span class="t">一句话药方</span>
@@ -184,7 +747,7 @@
         <td>蓝本 JSON 定义规范图，激活时<b>编译</b>成带依赖的子任务；<b>finalization guard</b> 计数未 settle 的节点——漏跑成为结构性阻断</td></tr>
     <tr><td><b>管家篡夺 agent 身份代为执行</b></td>
         <td>owner（管家/队长）的 worktree 真实可写，契约只靠一句「请委派不要亲自干」；没有任何结构性闸门阻止它把活揽下来</td>
-        <td>结构拒绝 + 契约换岗 + 守卫计数（<a href="#s4">第 4 章</a>四道闸门）</td></tr>
+        <td>结构拒绝 + 契约换岗 + 守卫计数（<a href="#ch17">第 17 章</a>四道闸门）</td></tr>
     <tr><td><b>用 system prompt 定工作流</b></td>
         <td>提示词是概率性指令：复杂 JSON schema 下 LLM 的 prompting 遵从率实测可低于 40%<sup class="nref"><a href="#n1">1</a></sup>（OpenAI Structured Outputs 官方数据），长上下文中部指令还会衰减<sup class="nref"><a href="#n2">2</a></sup>（Lost in the Middle）</td>
         <td>工作流=结构化数据（蓝本版本），提示词退回它擅长的位置：节点内的任务简报</td></tr>
@@ -220,18 +783,18 @@
     <tr><td>rsi.max_auto_rounds</td><td>自动迭代轮次上限（默认 10，0=关，只封机器不封人）</td></tr>
   </tbody>
 </table>
-<p style="color:var(--muted);font-size:13px;margin:8px 0 0">这只是速查版；<b>完整的名词与指标字典</b>（含口径、代码锚点、阈值表、读数演算）见 <a href="#s11">§11 名词与指标字典</a>，会随对话持续增补。</p>
+<p style="color:var(--muted);font-size:13px;margin:8px 0 0">这只是速查版；<b>完整的名词与指标字典</b>（含口径、代码锚点、阈值表、读数演算）见 <a href="#ch24">第 24 章 名词与指标字典</a>，会随对话持续增补。</p>
 </details>
 
-<!-- ============ 1 总纲 ============ -->
-<h2 id="s1"><span class="no">1</span>结构化总纲：三层串联与双簿记</h2>
+<!-- ============ 14 结构化总纲 ============ -->
+<h2 id="ch14"><span class="no">14</span>结构化总纲：三层串联与双簿记</h2>
 
-<h3>1.1 项目 – 小队 – 蓝本：三层各归其位</h3>
+<h3>14.1 项目 – 小队 – 蓝本：三层各归其位</h3>
 <p>用户的核心设计诉求是「把项目、小队、蓝本三个概念串起来，训练后的蓝图就是真实的工作流」。落地为一张三层分工表——注意它们是<b>软关联</b>，goal 是唯一的汇合点，不构成硬层级：</p>
 <table>
   <thead><tr><th>层</th><th>回答的问题</th><th>结构化载体</th><th>与其它层的连接</th></tr></thead>
   <tbody>
-    <tr><td><b>项目（domain）</b></td><td>任务属于哪条业务线、按什么策略验收</td><td>domain 表 + 冻结的验收策略 Checks</td><td>goal.domain_id；评测集（Phase E）将挂在这一层</td></tr>
+    <tr><td><b>项目（domain）</b></td><td>任务属于哪条业务线、按什么策略验收</td><td>domain 表 + 验收级别（hitl / hootl）</td><td>goal.domain_id；评测集（Phase E）将挂在这一层</td></tr>
     <tr><td><b>小队（squad）</b></td><td>有哪些岗位、谁能干什么活</td><td>squad_role 注册表（角色词+岗位说明书）+ 成员名册</td><td>蓝本节点写 <code>capability:角色词</code> 引用它；goal.assignee_type='squad'</td></tr>
     <tr><td><b>蓝本（blueprint）</b></td><td>按什么顺序、什么分支、什么人工卡点去执行</td><td>blueprint_version（JSON 规范图，版本不可变）</td><td>goal.blueprint_version_id 钉住某个已发布版本</td></tr>
   </tbody>
@@ -241,7 +804,7 @@
   「修复流程」可以跨项目复用——蓝本刻意只引用<b>能力</b>（capability），不引用<b>归属</b>（domain）。绑定发生在 goal 上：一个 goal 同时声明「属于哪个项目（domain_id）」和「按哪个蓝本跑（blueprint_version_id）」。
 </div>
 
-<h3>1.2 双簿记：菜谱与做菜日志永不合并</h3>
+<h3>14.2 双簿记：菜谱与做菜日志永不合并</h3>
 <div class="dual">
   <div class="col spec">
     <h4>📘 规范图（计划）</h4>
@@ -265,10 +828,10 @@
   「训练后的蓝本就是真实工作流」这句话如果理解成「把计划与记录合二为一」，会同时毁掉四样东西：<b>A/B 复测</b>（没有不可变的 v1 就没有控制变量）、<b>回滚</b>（goal 钉旧版本即回滚）、<b>审计</b>（谁改过图说不清）、<b>守卫</b>（全节点终态判据要求图先于执行存在）。正确姿势：蓝本版本=菜谱，执行图=做菜日志，<b>训练是两者之间的桥</b><sup class="nref"><a href="#n7">7</a></sup>。
 </div>
 
-<!-- ============ 2 图的结构化 ============ -->
-<h2 id="s2"><span class="no">2</span>图的结构化：蓝本（Blueprint）</h2>
+<!-- ============ 15 图的结构化 ============ -->
+<h2 id="ch15"><span class="no">15</span>图的结构化：蓝本（Blueprint）</h2>
 
-<h3>2.1 一个蓝本长什么样</h3>
+<h3>15.1 一个蓝本长什么样</h3>
 <p>蓝本内容是一份 JSON 规范图。下面这个节选（删减自内置模板「人工门审批」）展示了全部核心要素——节点、类型专属字段、边与分支端口：</p>
 <pre><code>{
   "name": "发布前人工审批流",
@@ -295,7 +858,7 @@
 }</code></pre>
 <p>读图规则一句话：<b>分支不藏在 if-else 文字里，编码在边的 <code>source_handle</code> 端口上</b><sup class="nref"><a href="#n12">12</a></sup><sup class="nref"><a href="#n17">17</a></sup>。gate 走了 approve 端口，就只有 t_ship 这条分支会被释放，其余分支连同后代一起剪除。</p>
 
-<h3>2.2 六类节点全景</h3>
+<h3>15.2 六类节点全景</h3>
 <table>
   <thead><tr><th style="width:14%">类型</th><th style="width:24%">语义</th><th>编译产物与运行方式</th><th style="width:22%">专属字段</th></tr></thead>
   <tbody>
@@ -330,7 +893,7 @@
   弹性被装进三个受控口袋，而不是散落在提示词里：<b>router</b>（选择自由、选项封闭）、<b>spawn</b>（拆解自由、契约封闭、产物必过校验）、<b>节点内 brief</b>（表达自由、结构封闭）。第四个口袋是整个 infer 模式：goal 不绑蓝本时，一切照旧由 owner 动态拆解——两种模式共存，互不强制<sup class="nref"><a href="#n4">4</a></sup><sup class="nref"><a href="#n9">9</a></sup><sup class="nref"><a href="#n11">11</a></sup>。
 </div>
 
-<h3>2.3 发布前的六道校验（V1–V6）</h3>
+<h3>15.3 发布前的六道校验（V1–V6）</h3>
 <table>
   <thead><tr><th style="width:10%">校验</th><th>校验什么（发布门全部 fail-closed：不过不许发布）</th></tr></thead>
   <tbody>
@@ -343,24 +906,24 @@
   </tbody>
 </table>
 
-<h3>2.4 版本模型与编译</h3>
+<h3>15.4 版本模型与编译</h3>
 <ul>
   <li><b>版本三态</b>：draft（可编辑）→ published（<b>不可变</b>，goal 只能钉 published）→ 改进永远走 NewDraft 开 vN+1 继承内容。发布版本=天然的 A/B 控制变量与回滚锚点<sup class="nref"><a href="#n13">13</a></sup><sup class="nref"><a href="#n14">14</a></sup>。</li>
   <li><b>两拍编译</b>（goal 激活时，单事务）：<b>拍 1 建结构</b>——condition 求值剪枝、全部可执行节点编译成 sub_goal（带 depends_on 门控，挂起的子任务不产生 run）、capability 解析成具体 agent、spawn/router 准备好各自的输出契约；<b>拍 2 填参数</b>——每个子任务被依赖释放时，把 brief 里的 <code>{{node.X.output}}</code> 解析成上游的 result_summary 快照。<b>计划先于执行存在</b>，这正是守卫能数「还差谁没跑」的前提。</li>
   <li><b>Squad 节点的编译</b>：写 <code>squad:xx</code> 的节点编译到该队<b>队长</b>——认领机制要求真实 agent，把活派给一个"队"只会造成永无人认领的死锁（Phase B 修掉的真实 bug）<sup class="nref"><a href="#n28">28</a></sup>。</li>
 </ul>
 
-<!-- ============ 3 小队结构化 ============ -->
-<h2 id="s3"><span class="no">3</span>Agent 小队的结构化：从「自然语言派工」到「角色词汇表」</h2>
+<!-- ============ 16 小队结构化 ============ -->
+<h2 id="ch16"><span class="no">16</span>Agent 小队的结构化：从「自然语言派工」到「角色词汇表」</h2>
 
-<h3>3.1 旧病灶 → 新结构</h3>
+<h3>16.1 旧病灶 → 新结构</h3>
 <div class="badge-contrast">
   <div class="card old"><h4>❌ 旧：自由文本角色</h4><p>squad_member.role 是任意字符串，playbook 用自然语言写「让擅长修复的人去修」——解析靠 LLM 猜，同一个人这轮叫"开发"下轮叫"工程师"。</p></div>
   <div class="card new"><h4>✅ 新：角色词汇表（squad_role）</h4><p>小队注册封闭词汇表：每个角色词 = <code>^[a-z][a-z0-9_-]*$</code> 的 slug + <b>岗位说明书</b>（description，喂给 spawn 规划者做派工依据）。蓝本节点写 <code>capability:implementer</code> 引用岗位而不是具体人。</p></div>
   <div class="card"><h4>🔒 词表门（fail-closed）</h4><p>注册过词汇表的小队，添加成员时角色<b>必须</b>来自词表（或保留词 reviewer / member），否则拒绝；角色有人携带时该词不可删除。没注册的小队保持自由文本兼容——存量团队零破坏。</p></div>
 </div>
 
-<h3>3.2 capability 的确定性解析规则</h3>
+<h3>16.2 capability 的确定性解析规则</h3>
 <p>编译期（不是运行时、不是 LLM）把 <code>capability:implementer</code> 解析成具体 agent，规则全透明：</p>
 <table>
   <thead><tr><th>步骤</th><th>规则</th></tr></thead>
@@ -379,7 +942,7 @@
   曾有设想：A、B 角色相同但各挂不同 skill，调度按 <code>capability:implementer + skill:某技能</code> 双轴交集选人。<b>被否决</b>，理由有二：① 双轴会产生"半命中态"（能力命中技能不命中），错误信息说不清缺哪根轴；② skill 是动态配置、role 是静态声明，两轴天然漂移，会腐蚀 resolved_config 的 A/B 控制变量。定稿：<b>技能差异=岗位差异</b>——<code>design-implementer</code> 与 <code>proprietary-implementer</code> 是两个岗位，词汇表单轴封闭的立论得以保持。选错人不会干错事：走 verify 失败 → 有界重试 → 失败的安全路径，浪费的只是几轮重试。
 </div>
 
-<h3>3.3 spawn：队内扇出的结构化通道</h3>
+<h3>16.3 spawn：队内扇出的结构化通道</h3>
 <p>旧模式里「队长拿到任务再临时拆给队员」是漏跑/乱序的重灾区。spawn 节点把这个弹性装进契约：</p>
 <ol>
   <li>编译期 spawn 变成一个「规划者 sub_goal」，brief 附带<b>输出契约</b>：围栏 JSON 清单 <code>[{title, brief, assignee}]</code>，明确「按角色词派工、分给擅长的人而不是空闲的人、名册里的技能注在括号里」；</li>
@@ -387,8 +950,8 @@
   <li><b>违规即拒</b>：派给名册外成员、超出 max_children（上限 8）、输出不成契约 → 违规计数 +1 并重试（≤3 次），耗尽则失败并级联——契约保证拆解产物一定合法；空清单合法（这活确实不用拆）。</li>
 </ol>
 
-<!-- ============ 4 篡位 ============ -->
-<h2 id="s4"><span class="no">4</span>篡位残留怎么治：四道结构性闸门</h2>
+<!-- ============ 17 四道结构性闸门 ============ -->
+<h2 id="ch17"><span class="no">17</span>篡位残留怎么治：四道结构性闸门</h2>
 <p>「管家篡位」的本质：owner 拥有真实可写的 worktree 和自由工具面，唯一的防线是提示词里那句「请委派」<sup class="nref"><a href="#n5">5</a></sup>。Phase A/B 给它上了四道<b>结构</b>闸门——不是更严厉的措辞，而是绕不过去的代码：</p>
 
 <table>
@@ -406,8 +969,8 @@
   infer 模式（goal 不绑蓝本）保留全部动态拆解弹性，照抄 Magentic-One 的四件约束：双账本（任务账本+进展账本）、轮数上限（10）、停滞检测（3 次无进展即重规划）、重置上限（2）<sup class="nref"><a href="#n9">9</a></sup><sup class="nref"><a href="#n10">10</a></sup>——弹性不等于失控。
 </div>
 
-<!-- ============ 5 管家更新 ============ -->
-<h2 id="s5"><span class="no">5</span>管家角色的更新：从「大管家」到三个各司其职的身份</h2>
+<!-- ============ 18 管家三角色 ============ -->
+<h2 id="ch18"><span class="no">18</span>管家角色的更新：从「大管家」到三个各司其职的身份</h2>
 
 <p>历史锚点——旧管家提示词（agent.go:23）只有一句话的职责面：</p>
 <pre><code>StewardSystemPrompt = "你是一位严谨周到的管家。职责：接收主人指令、拆解并委派给合适的执行者、
@@ -428,10 +991,10 @@
   不是消灭提示词，是让它退回<b>擅长表达的东西</b>：节点内的任务简报（brief——对「这步干什么」的语义描述）、给规划者的拆解指令、给人看的决策 prompt、汇报文风。被移走的只有一样：<b>执行顺序与完成判据的权威</b><sup class="nref"><a href="#n6">6</a></sup>。从此顺序写在边上、判据写在守卫里、角色写在词汇表里——全部是数据，全部可校验。
 </div>
 
-<!-- ============ 6 优化闭环 ============ -->
-<h2 id="s6"><span class="no">6</span>自迭代的完整流程：优化闭环怎么做</h2>
+<!-- ============ 19 自迭代闭环 ============ -->
+<h2 id="ch19"><span class="no">19</span>自迭代的完整流程：优化闭环怎么做</h2>
 
-<h3>6.1 主循环：七步一闭环</h3>
+<h3>19.1 主循环：七步一闭环</h3>
 <div class="fig">
 <div class="flow">
   <div class="step"><b>① 执行</b><small>goal 钉蓝本版本跑，产出执行图（只读事实）</small></div><div class="arrow">→</div>
@@ -445,7 +1008,7 @@
 <div class="backnote">⑦ 之后回到 ①，下一轮迭代开始 —— 每一轮的产物都是不可变版本链上的一环，可回滚可审计</div>
 </div>
 
-<h3>6.2 每一步的关键机制</h3>
+<h3>19.2 每一步的关键机制</h3>
 <ul>
   <li><b>提案是结构化补丁，不是自然语言建议</b>。五种操作符：<code>add_node / update_node / delete_node / add_edge / delete_edge</code><sup class="nref"><a href="#n21">21</a></sup><sup class="nref"><a href="#n22">22</a></sup>。创建提案时立即把补丁应用到基准版本上跑全部 V1–V6 校验——<b>不合法的提案根本进不了列表</b>；批准时再校验一次（防库被旁路改动后漂移）。批准的语义=以假设（hypothesis）为 changelog 开新草稿，<b>不自动发布</b>；重复批准/拒绝已被决策的提案 → 结构化冲突拒绝。</li>
   <li><b>diff 是三色的、可读的</b>：改动前后两张规范图并排渲染 + 节点增删改/边增删清单（+绿 −红 ±黄），人不用读 JSON<sup class="nref"><a href="#n26">26</a></sup>。</li>
@@ -453,7 +1016,7 @@
   <li><b>同题 A/B</b>：没有评测集之前，复测=人挑两个可比的 goal 分别钉 v1/v2 跑同类任务，A/B 卡并排七项指标 + Δ。采纳标准不是"全面变好"而是<b>效率指标改善且质量指标不掉</b>。</li>
 </ul>
 
-<h3>6.3 入口坡道：涌现固化（infer → blueprint 的收敛通道）</h3>
+<h3>19.3 入口坡道：涌现固化（infer → blueprint 的收敛通道）</h3>
 <div class="flow">
   <div class="step"><b>infer 执行</b><small>goal 不绑蓝本，owner 动态拆解（弹性全保留）</small></div><div class="arrow">→</div>
   <div class="step"><b>签名记录</b><small>每次 done 都记形状签名进 infer_shape（L1 精确 + L0 骨架）</small></div><div class="arrow">→</div>
@@ -467,8 +1030,8 @@
   <b>批准提案</b>（机器只许起草）· <b>发布版本</b>（草稿永远不生效）· <b>采纳结论</b>（A/B 只呈现证据，不替人拍板）· <b>gate 拍板</b>（超时有兜底分支，但默认等人）。自动化的上限被明确设计在这里：<b>平台永远不机器自批机器提案</b><sup class="nref"><a href="#n20">20</a></sup><sup class="nref"><a href="#n25">25</a></sup>。
 </div>
 
-<!-- ============ 7 指标 ============ -->
-<h2 id="s7"><span class="no">7</span>指标考核：四层金字塔与诚实边界</h2>
+<!-- ============ 20 指标金字塔 ============ -->
+<h2 id="ch20"><span class="no">20</span>指标考核：四层金字塔与诚实边界</h2>
 
 <table>
   <thead><tr><th style="width:16%">层</th><th style="width:34%">内容</th><th>作用</th></tr></thead>
@@ -485,10 +1048,10 @@
   <li><b>从"事后测量"到"结构性不可能"的降维</b>：蓝图模式下，unexecuted_node（漏跑）/ order_violation（乱序）/ scope_creep（越权）三个断言不再需要事后检测<sup class="nref"><a href="#n8">8</a></sup>——guard、depends_on、结构拒绝让它们<b>发生不了</b>。度量留给真正需要测的东西：耗时、并行度、质量。</li>
 </ul>
 
-<!-- ============ 8 收敛 ============ -->
-<h2 id="s8"><span class="no">8</span>收敛条件怎么定义</h2>
+<!-- ============ 21 收敛条件 ============ -->
+<h2 id="ch21"><span class="no">21</span>收敛条件怎么定义</h2>
 
-<h3>8.1 涌现固化的收敛：双层签名（§14.1）</h3>
+<h3>21.1 涌现固化的收敛：双层签名（§14.1）</h3>
 <p>收敛判定不引入任何 LLM 判断，两层都是确定性多重集哈希，可解释可复现：</p>
 <table>
   <thead><tr><th>镜头</th><th>看什么</th><th>收敛条件</th><th>触发动作</th></tr></thead>
@@ -503,22 +1066,22 @@
   <li>诚实标注：多重集签名是便宜的滤网，不是图 canonization——它做的是"够用的收敛检测"，不是"形状等价判定"。</li>
 </ul>
 
-<h3>8.2 迭代轮次上限：rsi.max_auto_rounds（§14.2）</h3>
+<h3>21.2 迭代轮次上限：rsi.max_auto_rounds（§14.2）</h3>
 <ul>
   <li>配置在 <code>app_settings</code> 表，<b>默认 10</b>；<code>0</code>=关闭自动产出；改完即生效，无需重启。</li>
   <li>只封<b>机器的自动工件</b>：涌现固化按域计（infer_shape.drafted 行数）、翻译器按 distinct blueprint 计（pending/approved 的 rsi-translator 提案）。</li>
   <li><b>分析永不被封</b>（可见性不倒退：finding、报告、metrics 照常产出）；<b>人工动作永不在内</b>（人批多少提案、发多少版本都不限）——上限防的是"机器自己刷自己"，到上限只记日志跳过，不报错不断流。</li>
 </ul>
 
-<h3>8.3 采纳的收敛与未来条件（Phase E 立项）</h3>
+<h3>21.3 采纳的收敛与未来条件（Phase E 立项）</h3>
 <ul>
   <li><b>现在</b>：采纳=同题 A/B 七项指标支持假设（效率改善且质量不掉）+ 人拍板发布。</li>
   <li><b>Phase E 评测集</b>（§14.3）：domain 声明 eval_goals 题库，<code>mode=eval</code> 对每道题两版本<b>各真实跑一次</b>，聚合从单对 delta 升级为集合均值 + 符号显著性检验（min_pairs=5 才有结论）<sup class="nref"><a href="#n27">27</a></sup>，达标才允许采纳建议。成本诚实说明：复测=真实执行=花钱花时间，这正是它没有被塞进本轮的原因。</li>
   <li><b>Phase E best checkpoint</b>（§14.4）：版本链已经是全量 checkpoint，缺的只是"哪个最好"的标注——补 <code>blueprint.best_version_id</code> 人工列、A/B 卡「设为最佳」、列表徽章、绑定默认选中。语义边界：<b>标注不是开关</b>，不自动切流量。AFlow 调研的教训：checkpoint 的价值在检索与复用，不在存储<sup class="nref"><a href="#n18">18</a></sup><sup class="nref"><a href="#n19">19</a></sup>。</li>
 </ul>
 
-<!-- ============ 9 命名 ============ -->
-<h2 id="s9"><span class="no">9</span>命名建议：体现 RSI / RPA</h2>
+<!-- ============ 22 命名建议 ============ -->
+<h2 id="ch22"><span class="no">22</span>命名建议：体现 RSI / RPA</h2>
 <p>改名诉求的语义拆解：RPA 侧=「流程的结构化自动化」，RSI 侧=「流程对自身的递归改进」。三个候选，按推荐序：</p>
 <table>
   <thead><tr><th style="width:22%">候选</th><th>语义构成</th><th style="width:34%">评价</th></tr></thead>
@@ -533,8 +1096,8 @@
   代码/包名/仓库名/表名<b>全部不动</b>，本轮只做品牌层建议。若采纳「GraphForge / 图锻」：对外的 README、HTML 文档标题、发布包名用新名；对内的 module path、CLI 名（ouroflow）、数据库 schema 维持现状，避免一次全局 rename 的迁移风险。
 </div>
 
-<!-- ============ 10 实践案例 ============ -->
-<h2 id="s10"><span class="no">10</span>终章：一个完整迭代的实践案例</h2>
+<!-- ============ 23 实践案例 ============ -->
+<h2 id="ch23"><span class="no">23</span>终章：一个完整迭代的实践案例</h2>
 <p>以下用一个虚构但机制严格对齐的 Go 服务维护团队（域 <code>go-service</code>，小队 <code>go-dev-squad</code>：队长 go-owner、两名 implementer、一名 reviewer），把前面所有章节串成一条时间线。<b>数字为演示数据</b>，每一幕都标注了它演示的机制。</p>
 
 <div class="case">
@@ -553,13 +1116,13 @@
 描述：自动起草（近似固化）：同域连续 3 个 infer 执行图骨架同构（细节有差异），
       由平台确定性翻译生成（§14.1 L0 骨架收敛）。请审查后发布；发布前不影响任何任务。
 结构：t_repro(复现) → t_fix(修复) → t_verify(验证) → end_ok</code></pre>
-    <p>机器不做的事，人做：go-owner 审查这份草稿，补上它看得到而签名看不到的东西——给三个 task 都加上 <code>verify.mode=machine</code>（域里冻结的 Checks：跑测试、查竞态），给 t_verify 配 <code>verifier=reviewer</code>（Player-Referee：修复者不能自己验自己），t_fix 的 brief 写上 <code>{{node.t_repro.output}}</code>（修复必须引用复现结论）。逐项校验通过 → <b>发布 v1</b>。</p>
+    <p>机器不做的事，人做：go-owner 审查这份草稿，补上它看得到而签名看不到的东西——给 t_verify 配 <code>verifier=reviewer</code>（Player-Referee：修复者不能自己验自己），并把「跑哪些测试、查哪些竞态」写进 t_fix 与 t_verify 的 brief——<b>当前平台不代跑域 Checks</b>，machine 档只记录完成结论，真实质量门要靠 verifier 执行并给证据。t_fix 的 brief 还要写上 <code>{{node.t_repro.output}}</code>（修复必须引用复现结论）。逐项校验通过 → <b>发布 v1</b>。</p>
     <p>从这一刻起，go-service 的新任务有了一种新选择：不绑蓝本=继续自由拆解（第 0 幕模式）；绑 v1=享受确定性保证。</p>
   </div>
 </div>
 
 <div class="case">
-  <div class="head">第 2 幕 · 图说了算：一次被守卫护航的执行<small>演示机制：两拍编译 · guard · 结构拒绝 · 死分支剪除（→ 第 2.4、4 章）</small></div>
+  <div class="head">第 2 幕 · 图说了算：一次被守卫护航的执行<small>演示机制：两拍编译 · guard · 结构拒绝 · 死分支剪除（→ 第 15.4、17 章）</small></div>
   <div class="body">
     <p>bug #131 进来，goal 绑 v1 激活。<b>编译拍 1</b>：3 个 sub_goal 一次全部建出（t_repro 立即开跑，t_fix/t_verify 按 depends_on 挂起）；<b>拍 2</b>：t_repro verified、t_fix 被释放的瞬间，brief 里的 <code>{{node.t_repro.output}}</code> 解析成复现结论的快照。</p>
     <p>中途 owner 试图 <code>subgoal create</code> 加一个「顺手写个补丁说明」的子项——被<b>结构拒绝</b>挡回：<code>"goal is blueprint-driven: sub-goals are compiled from the blueprint, not created ad hoc"</code>。它改用在目标下评论转达想法（契约允许的汇报通道）。</p>
@@ -568,7 +1131,7 @@
 </div>
 
 <div class="case">
-  <div class="head">第 3 幕 · 发现与提案：机器的安全边界 + 人的翻译<small>演示机制：RSI serial_chain · 翻译器数据流守卫 · 人工结构化补丁 · 三色 diff（→ 第 6.2 节）</small></div>
+  <div class="head">第 3 幕 · 发现与提案：机器的安全边界 + 人的翻译<small>演示机制：RSI serial_chain · 翻译器数据流守卫 · 人工结构化补丁 · 三色 diff（→ 第 19.2 节）</small></div>
   <div class="body">
     <p>训练分析对 #131 的执行图跑 RSI：关键路径 6 个节点（3 task + 3 verify）≥ 阈值 4 → 产出 <code>serial_chain</code> finding：「复现→修复→验证被人为串行化」。</p>
     <p><b>Phase D 翻译器先试</b>：把链上的 task 映射回 spec 节点 → 数据流检查发现 t_fix 的 brief 含 <code>{{node.t_repro.output}}</code>——<b>存在真实数据依赖，翻译器正确地放弃自动提案</b>（数据流守卫生效，宁可不提也不提错）。机器知道自己的边界。</p>
@@ -613,15 +1176,15 @@ patches：
 </div>
 
 
-<!-- ============ 11 名词与指标字典（对话增补） ============ -->
-<h2 id="s11"><span class="no">11</span>名词与指标字典（对话增补 · 持续更新）</h2>
+<!-- ============ 24 名词与指标字典 ============ -->
+<h2 id="ch24"><span class="no">24</span>名词与指标字典（对话增补 · 持续更新）</h2>
 
 <div class="callout">
   <span class="t">本节怎么用</span>
   这里是正文各章用到的<b>名词、字段、指标</b>的集中定义，口径一律以代码为准（每条标注可核对的文件与行号）。<b>增补约定</b>：对话里每出现一个需要对齐的名词或指标，就补进对应分组，并在文末「增补记录」里记一行（日期 + 新增词条）；只追加、不删改——口径若变，标注「旧口径 → 新口径」。示例数字凡未注明「实测」，一律视为<b>示意量级</b>，不对应某一次真实运行。
 </div>
 
-<h3>11.1 实体与文书</h3>
+<h3>24.1 实体与文书</h3>
 
 <table>
   <thead><tr><th style="width:15%">词</th><th style="width:40%">是什么</th><th>关键约束 / 字段</th></tr></thead>
@@ -637,7 +1200,7 @@ patches：
     <tr><td><b>钉版 pin</b></td><td>goal 指向某个 published 版本的 <code>blueprint_version_id</code></td><td>钉 draft 会被拒（“only a published version can be pinned”）；编译时校验 <code>content_hash</code>，不一致报 <code>refusing to compile a drifted spec</code></td></tr>
     <tr><td><b>子目标 sub_goal</b></td><td>编译产物：每个 task/spawn/gate/… 节点落一条，带 <code>assignee</code>、<code>depends_on</code>、<code>verifier_id</code></td><td><code>depends_on</code> 是可执行 DAG 的边；<code>verifier_id=''</code> 表示机器校验</td></tr>
     <tr><td><b>brief</b></td><td><b>spec 的 task 节点里必填的自然语言指令</b>，编译时经 <code>{{goal.*}}</code> 插值后成为 <code>sub_goal.description</code>，就是执行 agent 拿到的任务说明</td><td>不是标题、不是产出物名；可含 <code>{{node.X.output}}</code>（仅 task 节点）——<b>一旦跨成员引用，chain→fork 自动提案整链放弃</b></td></tr>
-    <tr><td><b>verify</b></td><td>每个 task 可声明 <code>verify.mode</code> 的校验方式</td><td><code>domain_default</code>（跟项目验收级别）| <code>machine</code>（跑命令）| <code>agent</code>（结构化裁决，需 <code>verifier</code>，且 verifier ≠ assignee）</td></tr>
+    <tr><td><b>verify</b></td><td>每个 task 可声明 <code>verify.mode</code> 的校验方式</td><td><code>domain_default</code>（跟项目验收级别）| <code>machine</code>（schema 接受；当前只记录完成结论，不代跑域命令）| <code>agent</code>（结构化裁决，需 <code>verifier</code>，且 verifier ≠ assignee）</td></tr>
     <tr><td><b>gate</b></td><td>人工检查点节点：持有一个决策卡，永不入队执行</td><td>必填 <code>prompt</code>、<code>actions[]</code>、<code>timeout{after,action}</code>；<code>after</code> 用 Go <code>ParseDuration</code>（<code>24h</code> 合法、<code>1d</code> 非法）</td></tr>
     <tr><td><b>spawn</b></td><td>队内扇出节点：由执行者按契约产出子计划，物化成子目标</td><td>必填 <code>assignee</code>、<code>brief</code>、<code>child_type=task</code>、<code>max_children</code> 1–8；子节点 key 形如 <code>&lt;spawn_key&gt;#1</code></td></tr>
     <tr><td><b>finding</b></td><td>RSI 规则产出的诊断行（只读，不碰版本）</td><td><code>rsi_finding</code>：category / severity / confidence(L1–L3) / title / explanation / suggestion / evidence / score / status</td></tr>
@@ -647,7 +1210,7 @@ patches：
   </tbody>
 </table>
 
-<h3>11.2 两种「节点」别混：图纸 vs 施工记录</h3>
+<h3>24.2 两种「节点」别混：图纸 vs 施工记录</h3>
 
 <table>
   <thead><tr><th style="width:18%"></th><th style="width:41%">spec 节点（图纸）</th><th>执行节点（施工记录）</th></tr></thead>
@@ -665,7 +1228,7 @@ patches：
   关键路径 DP 会把 <b>0 时长的机器校验节点</b>（<code>v:&lt;sg&gt;</code>，机器校验也写 <code>verification_result</code> 行、<code>verifier_run_id=''</code>）串进路径。所以场景 A 的 4 个 task 串行链，<code>depth</code> 显示为 <b>8</b>（4 task ＋ 4 verify），而不是 4。规则阈值（<code>depth ≥ 4</code>）看的是这个节点数；Phase D 翻译器随后用 <code>criticalTaskChain</code> 滤出<b>连续 agent 段</b>（4 个 task）才动手。<b>旧说法「depth=4」已作废</b>。
 </div>
 
-<h3>11.3 版本与提案链路（谁改什么）</h3>
+<h3>24.3 版本与提案链路（谁改什么）</h3>
 
 <table>
   <thead><tr><th style="width:16%">阶段</th><th style="width:22%">执行者</th><th style="width:32%">写入什么</th><th>是否动版本</th></tr></thead>
@@ -686,7 +1249,7 @@ patches：
   <li>无自动回滚：<code>status</code> 里虽有 <code>retired</code>，但全仓库没有代码写它——跑差了就开新 draft（版本号继续涨，历史不覆盖）。</li>
 </ul>
 
-<h3>11.4 时间四件套（含「墙钟」）</h3>
+<h3>24.4 时间四件套（含「墙钟」）</h3>
 
 <table>
   <thead><tr><th style="width:17%">指标</th><th style="width:21%">公式</th><th>定义与读法</th></tr></thead>
@@ -699,7 +1262,7 @@ patches：
   </tbody>
 </table>
 
-<h3>11.5 并行与派发指标</h3>
+<h3>24.5 并行与派发指标</h3>
 
 <table>
   <thead><tr><th style="width:20%">指标</th><th style="width:26%">公式 / 数据源</th><th>定义与读法</th></tr></thead>
@@ -714,7 +1277,7 @@ patches：
   </tbody>
 </table>
 
-<h3>11.6 等待拆分与质量指标</h3>
+<h3>24.6 等待拆分与质量指标</h3>
 
 <table>
   <thead><tr><th style="width:22%">指标</th><th style="width:30%">算法</th><th>读到它大意味着什么</th></tr></thead>
@@ -732,7 +1295,7 @@ patches：
   </tbody>
 </table>
 
-<h3>11.7 规则阈值（硬编码常量）</h3>
+<h3>24.7 规则阈值（硬编码常量）</h3>
 
 <table>
   <thead><tr><th style="width:26%">常量</th><th style="width:12%">值</th><th>含义</th></tr></thead>
@@ -749,7 +1312,7 @@ patches：
 </table>
 <p style="color:var(--muted);font-size:13px;margin-top:6px">全部定义在 <code>internal/service/rsi_analyze.go:33-44</code>；改阈值是改代码常量，不是配 <code>app_settings</code>。</p>
 
-<h3>11.8 拿到指标怎么分析（五步法）</h3>
+<h3>24.8 拿到指标怎么分析（五步法）</h3>
 
 <ol>
   <li><b>先看三个数</b>：<code>work_sum</code>、<code>wall</code>、<code>critical_path</code> → 手算 <code>gain = work/cp</code>（上限）、<code>speedup = work/wall</code>（实际）、<code>loss = wall−cp</code>（浪费）。</li>
@@ -771,7 +1334,7 @@ patches：
 
 <p><b>分档参考</b>：<code>loss/wall &lt;5%</code> 几乎无等待（要提速只能减 cp）；<code>5%–30%</code> 有真实空档（查拆项）；<code>&gt;30%</code> 调度/依赖问题压过执行问题（先修结构再加人）。<b>speedup 分档</b>：&lt;1 墙钟里全是空档；1–1.5 全串行；1.5–2.5 双车道；&gt;3 良好并行。</p>
 
-<h3>11.9 场景 A 读数演算（示意数字）</h3>
+<h3>24.9 场景 A 读数演算（示意数字）</h3>
 
 <p><b>v1（四个审计串行、机器校验）：</b></p>
 <pre><code>work_sum = 180s   wall = 182s   critical_path = 180s
@@ -792,7 +1355,7 @@ rsi_round: round_no=2  delta: wall_ms −74.2%  parallel_speedup +286.9%</code><
 lane_count = 1 → lane_imbalance = 1.00（永远不触发）</code></pre>
 <p>此时派发堆积<b>不会</b>显示为 lane 失衡，而是表现为 <code>width_peak</code> 不上去、<code>speedup</code> 不涨——这就是 11.5 末尾「三指标一起看」的原因。</p>
 
-<h3>11.10 口径与坑（速查）</h3>
+<h3>24.10 口径与坑（速查）</h3>
 
 <ul>
   <li><b>review 不参与</b> <code>work_sum</code>、<code>critical_path</code>、<code>lane</code>、<code>wall</code> 的端点——否则一次长评审会污染全部指标；它只进 <code>review_busy_ms</code> / <code>review_overhead_ratio</code>。</li>
@@ -805,7 +1368,7 @@ lane_count = 1 → lane_imbalance = 1.00（永远不触发）</code></pre>
   <li><b>baseline 与 delta 不是一回事</b>：baseline = 同 domain 最近 20 个 ready 会话中位数（样本&lt;5 为空）；delta = 与同 domain <b>上一条 rsi_round</b> 比。A/B 结论只认 delta。</li>
 </ul>
 
-<h3>11.11 增补记录</h3>
+<h3>24.11 增补记录</h3>
 
 <table>
   <thead><tr><th style="width:12%">日期</th><th style="width:30%">新增分组 / 词条</th><th>来源</th></tr></thead>
@@ -820,7 +1383,9 @@ lane_count = 1 → lane_imbalance = 1.00（永远不触发）</code></pre>
 
 <hr class="hr-dot">
 
-<!-- ============ 注解与出处 ============ -->
+<div class="part-label">第三篇 · 附录：注解、出处与核对方法</div>
+
+<!-- ============ 25 注解与出处 ============ -->
 <h2 id="notes"><span class="no">▤</span>注解与出处：每个结论从哪来</h2>
 <p>正文里凡带 <sup class="nref"><a href="#n1">n</a></sup> 上标的地方，对应下面这条注解。分四组：<b>① 为什么顺序不能靠提示词</b>、<b>② 业界把顺序收回代码的实证</b>、<b>③ 图 / 版本 / 分析的产品形态</b>、<b>④ 自迭代的学术谱系</b>，末尾附<b>本仓库依据</b>（所有机制描述都能在提案与代码里逐一核对）。只标一手出处；<span class="pill p-info">灵感来源 ≠ 照搬</span>——多数条目是「同一个问题别人怎么解」，借鉴的是思路与约束，不是代码。</p>
 
@@ -956,17 +1521,72 @@ lane_count = 1 → lane_imbalance = 1.00（永远不触发）</code></pre>
 <h4>⑤ 本仓库依据（机制描述的可核对来源）</h4>
 <ol class="notes">
 <li id="n28"><i class="n0">28</i><b class="src">提案 + 实现 + 代码锚点</b> —— 设计决策：<code>docs/BLUEPRINT-PROPOSAL.md</code> §4（图模型 / 六类节点 / V1–V6）、§11（三层串联 / 双簿记 / capability 解析 / spawn 契约 / §11.8 角色词汇表）、§14（L0/L1 收敛与 <code>rsi.max_auto_rounds</code>）。实现锚点：<code>internal/service/blueprint.go</code>（校验器、两拍编译器、翻译器与 spawn 物化）、<code>internal/service/subgoal.go</code>（<code>depends_on</code> 门控与 wake、Player-Referee <code>verifier ≠ assignee</code>）、<code>internal/service/goal.go</code>（finalization guard、Activate 内单事务编译）、<code>internal/daemon/team_context.go</code>（roleContract 换岗）、<code>internal/store/schema.sql</code>（<code>squad_role</code> / <code>blueprint_node</code> / <code>infer_shape</code> / <code>app_settings</code>）。
-<span class="use">用法：本文任何一句「机制是 X」，都可以在上述文件的对应函数里找到判据；案例数字（第 10 章）为演示数据，非实测。
+<span class="use">用法：本文任何一句「机制是 X」，都可以在上述文件的对应函数里找到判据；案例数字（第 23 章）为演示数据，非实测。
 <a href="BLUEPRINT-PROPOSAL.md">docs/BLUEPRINT-PROPOSAL.md</a></span></li>
 </ol>
 
-<p style="color:var(--muted);font-size:13px;margin-top:18px">注：外部链接为写作时可达的一手页面（论文走 arXiv、产品走官方文档）；若某条链接日后失效，用标题 + 年份在 arXiv / 官方 docs 里检索即可定位。<b>本文只引用来源，不替来源背书</b>——取舍理由是第 1–8 章讲的工程约束。</p>
+<p style="color:var(--muted);font-size:13px;margin-top:18px">注：外部链接为写作时可达的一手页面（论文走 arXiv、产品走官方文档）；若某条链接日后失效，用标题 + 年份在 arXiv / 官方 docs 里检索即可定位。<b>本文只引用来源，不替来源背书</b>——取舍理由是正文第 1–24 章讲的工程约束。</p>
 
 <footer>
-  ouroflow 新一代工作流规范 · Phase A–D + §14 全量落地版 · 2026-11-19<br>
-  配套文档：docs/BLUEPRINT-PROPOSAL.md（设计提案 §1–§14，含全部 schema 与决策记录）· 本文档所有代码语义以提案与实现为准；案例数字为演示数据。
+  OuroFlow 项目规范与详细说明 · Phase A–D + §14 全量落地版 · 更新于 2026-11-23<br>
+  维护约定：任何行为/架构/流程/接口/配置/运维变更，必须在同一 PR 同步更新本文档对应章节。文档地图与分工见 <a href="#ch12">第 12 章</a>；蓝图设计依据见 <code>BLUEPRINT-PROPOSAL.md</code>（§1–§14，含全部 schema 与决策记录）。案例数字为演示数据，非实测。
 </footer>
 
-</div>
+</div><!-- /.wrap -->
+</div><!-- /.shell -->
+
+<script>
+(() => {
+  const body = document.body;
+  const nav = document.getElementById('sidenav');
+  const toggle = document.getElementById('navtoggle');
+  const scrim = document.getElementById('navscrim');
+  const bar = document.getElementById('progressbar');
+  const links = Array.from(nav.querySelectorAll('a[href^="#"]'));
+  const byId = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const heads = Array.from(document.querySelectorAll('h2[id]'));
+
+  const closeNav = () => {
+    body.classList.remove('nav-open');
+    toggle.setAttribute('aria-expanded', 'false');
+  };
+  toggle.addEventListener('click', () => {
+    const open = body.classList.toggle('nav-open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+  scrim.addEventListener('click', closeNav);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNav(); });
+  links.forEach(a => a.addEventListener('click', closeNav));
+
+  let ticking = false;
+  const update = () => {
+    ticking = false;
+    const doc = document.documentElement;
+    const max = doc.scrollHeight - window.innerHeight;
+    bar.style.width = (max > 0 ? Math.min(100, Math.max(0, window.scrollY / max * 100)) : 0) + '%';
+
+    let current = heads[0];
+    for (const h of heads) {
+      if (h.getBoundingClientRect().top <= 120) current = h; else break;
+    }
+    links.forEach(a => a.classList.toggle('active', a === byId.get(current.id)));
+    const active = current && byId.get(current.id);
+    if (active) {
+      const r = active.getBoundingClientRect();
+      const nr = nav.getBoundingClientRect();
+      if (r.top < nr.top + 24 || r.bottom > nr.bottom - 24) active.scrollIntoView({block:'nearest'});
+    }
+  };
+  const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } };
+  window.addEventListener('scroll', onScroll, {passive:true});
+  window.addEventListener('resize', onScroll);
+  window.addEventListener('hashchange', update);
+  update();
+
+  // 文档结构自检：目录/侧栏里的锚点必须都存在
+  const broken = links.filter(a => !document.getElementById(a.getAttribute('href').slice(1)));
+  if (broken.length) console.warn('[SPEC] broken chapter anchors:', broken.map(a => a.getAttribute('href')));
+})();
+</script>
 </body>
 </html>

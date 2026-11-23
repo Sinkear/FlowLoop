@@ -1,6 +1,10 @@
 # OuroFlow Collaboration Mechanism
 # 协作机制优化与修复设计文档
 
+> **⚠ 已被取代（2026-11 归档）：本文件是 2026-08 的 v1 设计史，不再是协作模型的规范。**
+> 现行终稿见 [Collaboration.v2.md](../design/Collaboration.v2.md)；其中仍具教学价值的三种协作流、Agent 决策速查、UI/时间线与反模式已改写并入 v2 附录 A–D。
+> v1 正文中 §46–§49 的 child goal 结论、§27 的旧工具清单、§33–§38 的实施计划均已失效，**不要照此实现**。
+
 - Status: **Adopted（2026-08-13 全盘采纳）**，冻结决策记录在 DESIGN.md 决策 5-1 ~ 5-10
 - Version: 1.0
 - Scope: OuroFlow Collaboration / Goal / Run / Comment / Multi-Agent
