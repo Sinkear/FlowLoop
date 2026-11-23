@@ -74,6 +74,14 @@ const (
 
 	// daemon → machine (Phase 4)
 	MethodConfigPush = "config.push" // request, ack
+
+	// daemon → machine: force a fresh model detection for one CLI,
+	// bypassing the machine's in-memory models cache (the runtimes page's
+	// manual refresh). The machine re-runs the same probe used at
+	// registration and returns the authoritative list; an empty list means
+	// the CLI genuinely advertised none, and the daemon overwrites the
+	// persisted list rather than keeping stale ids.
+	MethodModelsRefresh = "machine.models_refresh" // request, ack
 )
 
 // Error codes — the standard JSON-RPC set plus link-specific codes.
@@ -533,6 +541,20 @@ type ConfigPushParams struct {
 type ConfigPushResult struct {
 	Written []string `json:"written"`
 	Errors  []string `json:"errors,omitempty"`
+}
+
+// ModelsRefreshParams asks the machine to re-detect one CLI's models. CLI is
+// the runtime name's segment before '@' ("hermes" for "hermes@host1").
+type ModelsRefreshParams struct {
+	CLI string `json:"cli"`
+}
+
+// ModelsRefreshResult is the machine's answer: the freshly detected list
+// ([] = the CLI currently advertises no models — cached empty results are
+// valid) and when the machine ran the detection.
+type ModelsRefreshResult struct {
+	Models     []ModelInfo `json:"models"`
+	DetectedAt string      `json:"detected_at,omitempty"`
 }
 
 // RunFinishedParams is the run.finished request (machine → daemon): the

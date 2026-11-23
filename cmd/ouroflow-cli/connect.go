@@ -273,6 +273,44 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 		}
 		return res, nil
 	})
+	// models refresh (runtime detail 「刷新检测」): force a fresh model probe
+	// for one CLI, bypassing the 30-minute models cache. The probe may spawn
+	// the agent over ACP, so it is slow by nature — the daemon call that
+	// drives it carries its own 30s timeout. An empty list is a VALID answer
+	// (the CLI is installed but currently exposes no usable models): the
+	// daemon persists it authoritatively, clearing stale ids.
+	peer.Handle(link.MethodModelsRefresh, func(ctx context.Context, raw json.RawMessage) (any, *link.RPCError) {
+		var p link.ModelsRefreshParams
+		if err := json.Unmarshal(raw, &p); err != nil || strings.TrimSpace(p.CLI) == "" {
+			return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "cli is required"}
+		}
+		// Re-read the agents config first: a newly added custom CLI must be
+		// refreshable without waiting for the next probe tick.
+		if err := setMergedProbeTable(agentsCfgPath); err != nil {
+			cliLogf("models refresh: agents config reload failed (using last table): %v", err)
+		}
+		var entry probeEntry
+		found := false
+		for _, e := range activeProbeTable() {
+			if e.Name == p.CLI {
+				entry, found = e, true
+				break
+			}
+		}
+		if !found {
+			return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: fmt.Sprintf("unknown CLI %q on this machine", p.CLI)}
+		}
+		spawn, extraPath, ok := probeCLISpawn(ctx, entry, scanDirs)
+		if !ok {
+			return nil, &link.RPCError{Code: link.CodeInternal, Message: fmt.Sprintf("CLI %q is not installed on this machine", p.CLI)}
+		}
+		models := refreshCLIModels(ctx, entry, spawn, extraPath)
+		cliLogf("models refresh: %s → %d model(s)", p.CLI, len(models))
+		return link.ModelsRefreshResult{
+			Models:     models,
+			DetectedAt: time.Now().UTC().Format(time.RFC3339),
+		}, nil
+	})
 	// Every handler is registered — StartReadLoop must run BEFORE the first
 	// call (register) so the response can be routed back.
 	peer.StartReadLoop()

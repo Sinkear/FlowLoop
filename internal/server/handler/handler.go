@@ -79,6 +79,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /runtimes", h.createRuntime)
 	mux.HandleFunc("GET /runtimes/{id}", h.getRuntime)
 	mux.HandleFunc("GET /runtimes/{id}/models", h.getRuntimeModels)
+	mux.HandleFunc("POST /runtimes/{id}/models/refresh", h.refreshRuntimeModels)
 	mux.HandleFunc("DELETE /runtimes/{id}", h.deleteRuntime)
 
 	mux.HandleFunc("GET /agents", h.listAgents)
@@ -291,6 +292,39 @@ func (h *Handlers) deleteRuntime(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) getRuntimeModels(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Runtime.Models(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+// refreshRuntimeModels forces a fresh model detection on the runtime's
+// machine (POST /runtimes/{id}/models/refresh), bypassing the machine's
+// 30-minute cache, and persists the authoritative result. Status mapping:
+// 404 unknown runtime, 409 offline / local runtime, 502 probe failure.
+func (h *Handlers) refreshRuntimeModels(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	cur, err := h.Runtime.Models(ctx, id)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if h.Daemon == nil || cur.MachineID == "" {
+		writeErr(w, http.StatusConflict, fmt.Errorf("runtime %q has no machine to probe — models can only be refreshed for a machine-backed runtime", cur.Name))
+		return
+	}
+	res, err := h.Daemon.RefreshRuntimeModels(ctx, cur.MachineID, cur.CLI)
+	if err != nil {
+		if errors.Is(err, daemon.ErrMachineOffline) {
+			writeErr(w, http.StatusConflict, err)
+		} else {
+			writeErr(w, http.StatusBadGateway, err)
+		}
+		return
+	}
+	// The machine clock may differ from the daemon's; the persisted
+	// detected_at is the daemon's write time (the same clock GET already
+	// exposes), so the UI never sees a future/past skew.
+	detectedAt := time.Now().UTC().Format(time.RFC3339)
+	out, err := h.Runtime.SetModels(ctx, id, res.Models, detectedAt)
 	writeJSON(w, out, err)
 }
 

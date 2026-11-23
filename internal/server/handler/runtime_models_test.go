@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sinkear/ouroflow/internal/daemon"
 	"github.com/Sinkear/ouroflow/internal/service"
 	"github.com/Sinkear/ouroflow/internal/store"
 )
@@ -29,9 +30,55 @@ type serviceModel struct {
 	Description string `json:"description"`
 }
 
-// TestGetRuntimeModelsHandler: the models endpoint returns the runtime's
-// persisted model list with its identity fields, and unknown runtimes 404
-// like GET /runtimes/{id}.
+// TestRefreshRuntimeModelsHandler covers the failure paths of
+// POST /runtimes/{id}/models/refresh without a live machine: a handler with
+// no daemon (or a daemon with no peers) answers 409, not 500/502, and the
+// runtime's persisted list stays untouched. Unknown runtimes 404 like GET.
+func TestRefreshRuntimeModelsHandler(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	rtSvc := service.NewRuntimeService(st)
+	rt, err := rtSvc.Create(ctx, service.Runtime{Name: "hermes@dev", MachineID: "m1"})
+	if err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	if _, err := st.DB().ExecContext(ctx, `UPDATE runtime SET models='[{"id":"stale"}]', models_at='2026-01-01T00:00:00Z' WHERE id=?`, rt.ID); err != nil {
+		t.Fatalf("seed models: %v", err)
+	}
+	refresh := func(h *Handlers, id string) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		h.Mount(mux)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/runtimes/"+id+"/models/refresh", nil))
+		return rec
+	}
+
+	// Daemon nil = no machine link component at all → 409.
+	if rec := refresh(&Handlers{Runtime: rtSvc}, rt.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("daemon-less refresh: expected 409, got %d (body %s)", rec.Code, rec.Body.String())
+	}
+	// Daemon present but this machine has no live peer → 409 (offline), and
+	// the stale list must NOT be cleared by a failed refresh.
+	if rec := refresh(&Handlers{Runtime: rtSvc, Daemon: &daemon.Daemon{}}, rt.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("offline refresh: expected 409, got %d (body %s)", rec.Code, rec.Body.String())
+	}
+	models, err := rtSvc.Models(ctx, rt.ID)
+	if err != nil {
+		t.Fatalf("models after failed refresh: %v", err)
+	}
+	if len(models.Models) != 1 || models.Models[0].ID != "stale" || models.DetectedAt != "2026-01-01T00:00:00Z" {
+		t.Fatalf("failed refresh must leave persisted models untouched, got %+v", models)
+	}
+	// Unknown runtime → 404 with the standard error body.
+	rec := refresh(&Handlers{Runtime: rtSvc, Daemon: &daemon.Daemon{}}, "nope")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown runtime refresh: expected 404, got %d (body %s)", rec.Code, rec.Body.String())
+	}
+}
 func TestGetRuntimeModelsHandler(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

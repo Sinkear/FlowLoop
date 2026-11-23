@@ -17,6 +17,7 @@ import {
   createRuntime,
   deleteRuntime,
   getRuntimeModels,
+  refreshRuntimeModels,
   listMachines,
   listSkills,
   createSkill,
@@ -229,6 +230,21 @@ export function useRuntimeModels(id: string) {
     queryFn: () => getRuntimeModels(id),
     enabled: !!id,
     staleTime: 60000,
+  });
+}
+// Manual re-detection from the model dialog. The response IS the fresh
+// catalog, so write it straight into useRuntimeModels' cache (the dialog
+// re-renders without waiting for a GET) and refresh the runtime list, whose
+// rows show the model count from runtime.models. Mutation data is the new
+// RuntimeModels, so callers can also read detected_at from it.
+export function useRefreshRuntimeModels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runtimeId: string) => refreshRuntimeModels(runtimeId),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.runtimeModels(data.runtime_id), data);
+      qc.invalidateQueries({ queryKey: qk.runtimes });
+    },
   });
 }
 export function useMachines() {

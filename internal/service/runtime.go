@@ -166,6 +166,30 @@ func (s *RuntimeService) Models(ctx context.Context, id string) (*RuntimeModels,
 	return &out, nil
 }
 
+// SetModels overwrites a runtime's persisted model list — the authoritative
+// write behind POST /runtimes/{id}/models/refresh (the machine re-detected
+// the list, so an empty result must clear stale ids rather than be ignored
+// like the probe-report path's empty-means-unavailable semantics). Returns
+// the fresh RuntimeModels in the same shape as Models.
+func (s *RuntimeService) SetModels(ctx context.Context, id string, models []link.ModelInfo, detectedAt string) (*RuntimeModels, error) {
+	if models == nil {
+		models = []link.ModelInfo{}
+	}
+	modelsJSON, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("marshal models: %w", err)
+	}
+	res, err := s.st.DB().ExecContext(ctx,
+		`UPDATE runtime SET models=?, models_at=? WHERE id=?`, string(modelsJSON), detectedAt, id)
+	if err != nil {
+		return nil, fmt.Errorf("update runtime models: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Models(ctx, id)
+}
+
 func (s *RuntimeService) Delete(ctx context.Context, id string) error {
 	// Refuse if agents still reference this runtime. Cascading would silently
 	// orphan agents; the caller should delete its agents first.

@@ -100,6 +100,36 @@ func (d *Daemon) MachinePeer(machineID string) *link.Peer {
 	return d.machinePeers[machineID]
 }
 
+// ErrMachineOffline is the refresh path's "the machine is not connected"
+// error — the HTTP layer maps it to 409 so the UI can say "offline" instead
+// of a generic probe failure.
+var ErrMachineOffline = errors.New("machine offline — the machine must run `ouroflow connect`")
+
+// refreshModelsTimeout bounds one machine-side model re-detection. The
+// machine's own ACP probe has a 15s budget (modelsTimeout); the extra time
+// covers link latency and one queued probe tick.
+const refreshModelsTimeout = 30 * time.Second
+
+// RefreshRuntimeModels forces the machine to re-detect one CLI's models
+// (bypassing its 30-minute cache) and returns the authoritative list. The
+// caller (HTTP refresh handler) persists the result on the runtime row.
+func (d *Daemon) RefreshRuntimeModels(ctx context.Context, machineID, cli string) (*link.ModelsRefreshResult, error) {
+	peer := d.MachinePeer(machineID)
+	if peer == nil {
+		return nil, ErrMachineOffline
+	}
+	callCtx, cancel := context.WithTimeout(ctx, refreshModelsTimeout)
+	defer cancel()
+	var res link.ModelsRefreshResult
+	if err := peer.Call(callCtx, link.MethodModelsRefresh, link.ModelsRefreshParams{CLI: cli}, &res); err != nil {
+		return nil, fmt.Errorf("machine models refresh: %w", err)
+	}
+	if res.Models == nil {
+		res.Models = []link.ModelInfo{}
+	}
+	return &res, nil
+}
+
 // pendingRun is one dispatch queued for a machine's poll.
 type pendingRun struct {
 	runID  string

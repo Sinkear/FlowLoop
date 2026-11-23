@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
 )
 
@@ -134,17 +134,24 @@ var builtinProbeTable = []probeEntry{
 // once at connect startup by setMergedProbeTable. nil = no config loaded →
 // activeProbeTable falls back to the builtin table (so tests and a missing
 // config file still probe the builtins).
-var mergedProbeTable []probeEntry
+var (
+	probeTableMu     sync.RWMutex
+	mergedProbeTable []probeEntry
+)
 
 // activeProbeTable returns the merged probe table when a config has been
 // loaded, else the builtin table. Both probeCLIs and projectSkillsDirs
 // consume this so a custom entry's ProjectSkillsDir lands in the git-exclude
-// set and its CLI gets probed.
+// set and its CLI gets probed. Returns a copy: the probe tick hot-reloads the
+// table while an RPC handler may be reading it (the refresh path), so callers
+// must not observe a half-swapped slice.
 func activeProbeTable() []probeEntry {
+	probeTableMu.RLock()
+	defer probeTableMu.RUnlock()
 	if mergedProbeTable != nil {
-		return mergedProbeTable
+		return append([]probeEntry(nil), mergedProbeTable...)
 	}
-	return builtinProbeTable
+	return append([]probeEntry(nil), builtinProbeTable...)
 }
 
 // mergeProbeTables merges custom (agents.yaml) entries into the builtin
@@ -222,6 +229,8 @@ func loadAgentsConfig(path string) ([]probeEntry, error) {
 // (hot-reload: edits to ~/.ouroflow/agents.yaml take effect within a minute).
 func setMergedProbeTable(path string) error {
 	custom, err := loadAgentsConfig(path)
+	probeTableMu.Lock()
+	defer probeTableMu.Unlock()
 	if os.IsNotExist(err) {
 		mergedProbeTable = nil // file removed → restore builtin fallback
 		return nil
@@ -252,6 +261,29 @@ func projectSkillsDirs() []string {
 	return out
 }
 
+// probeCLISpawn resolves one probe entry to a runnable ACP spawn: PATH
+// first, then each --scan directory. Returns ok=false when the CLI is not
+// installed. When a scan dir resolved it, the spawn carries the ABSOLUTE
+// executable and extraPath is that directory (prepended to PATH for
+// models_cmd / version probes).
+func probeCLISpawn(ctx context.Context, e probeEntry, scanDirs []string) (spawn []string, extraPath string, ok bool) {
+	if probeRuns(ctx, e.ProbeCmd, "") {
+		return e.ACPSpawn, "", true
+	}
+	for _, pattern := range scanDirs {
+		for _, d := range scanDirsFor(pattern) {
+			if abs, err := filepath.Abs(d); err == nil {
+				d = abs
+			}
+			if !probeRuns(ctx, e.ProbeCmd, d) {
+				continue
+			}
+			return append([]string{filepath.Join(d, e.Name)}, e.ACPSpawn[1:]...), d, true
+		}
+	}
+	return nil, "", false
+}
+
 // probeCLIs scans the environment for the probe-table CLIs: PATH first,
 // then each --scan directory (a CLI installed outside PATH — the common
 // case for absolute-path installs). When a scan dir resolves the CLI, the
@@ -267,30 +299,9 @@ func probeCLIs(ctx context.Context, scanDirs []string) []link.ProbeCLI {
 	}
 	found := []foundCLI{}
 	for _, e := range activeProbeTable() {
-		spawn := e.ACPSpawn
-		extraPath := "" // scan dir that resolved the CLI (empty = found on PATH)
-		if !probeRuns(ctx, e.ProbeCmd, "") {
-			for _, pattern := range scanDirs {
-				for _, d := range scanDirsFor(pattern) {
-					if abs, err := filepath.Abs(d); err == nil {
-						d = abs
-					}
-					if !probeRuns(ctx, e.ProbeCmd, d) {
-						continue
-					}
-					extraPath = d
-					break
-				}
-				if extraPath != "" {
-					break
-				}
-			}
-			if extraPath == "" {
-				continue
-			}
-		}
-		if extraPath != "" {
-			spawn = append([]string{filepath.Join(extraPath, e.Name)}, e.ACPSpawn[1:]...)
+		spawn, extraPath, ok := probeCLISpawn(ctx, e, scanDirs)
+		if !ok {
+			continue
 		}
 		found = append(found, foundCLI{
 			probe: link.ProbeCLI{
@@ -331,6 +342,23 @@ func detectCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPat
 	if models, ok := cachedModels(e.Name); ok {
 		return models
 	}
+	models := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+	storeModels(e.Name, models)
+	return models
+}
+
+// detectCLIModelsUncached performs the detection and caches the result. The
+// manual refresh path (machine.models_refresh) must bypass the 30-minute
+// cache — a user clicking refresh expects the CLI to be probed NOW.
+func refreshCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
+	models := detectCLIModelsUncached(ctx, e, spawn, extraPath)
+	storeModels(e.Name, models)
+	return models
+}
+
+// detectCLIModelsUncached is the detection strategy itself, without the
+// read-side cache. Returns never-nil.
+func detectCLIModelsUncached(ctx context.Context, e probeEntry, spawn []string, extraPath string) []link.ModelInfo {
 	// Prefer the ACP handshake when the CLI is spawnable: its session/new
 	// model selector lists the models the CLI will actually accept (opencode
 	// advertises configOptions and rejects registry-only ids). The `models`
@@ -345,7 +373,6 @@ func detectCLIModels(ctx context.Context, e probeEntry, spawn []string, extraPat
 	if models == nil {
 		models = []link.ModelInfo{}
 	}
-	storeModels(e.Name, models)
 	return models
 }
 
@@ -560,11 +587,15 @@ func mergeModelInfos(dst, in []link.ModelInfo) []link.ModelInfo {
 }
 
 // parseACPModels extracts the model list from an ACP session/new RESULT
-// payload. Accepted shapes (deduplicated, in order): result.models.
-// availableModels, result.models as an array, top-level availableModels,
-// and result.configOptions entries for the model selector (the shape
-// opencode's `opencode acp` returns; hermes-acp and other ACP-only agents
-// are covered by the same parse).
+// payload. The sources are NOT unioned: an explicit model list (result.models
+// object's availableModels, result.models as an array, or top-level
+// availableModels) is the CLI's authoritative selector; only when it is
+// absent/empty does the parser fall back to configOptions' model selector.
+//
+// Unioning the two inflates the list with a registry catalog the CLI does not
+// currently offer (the refresh path used to report every model a provider
+// knows about, including ones the user has no key/entitlement for). One
+// source, first present, wins; ids are deduplicated within that source.
 func parseACPModels(result json.RawMessage) []link.ModelInfo {
 	out := []link.ModelInfo{}
 	if len(result) == 0 {
@@ -595,7 +626,97 @@ func parseACPModels(result json.RawMessage) []link.ModelInfo {
 		}
 	}
 	out = mergeModelInfos(out, acpModelsToInfos(top.AvailableModels))
+	if len(out) > 0 {
+		// Explicit selector wins outright — configOptions is the agent's
+		// full registry and may contain providers/models this CLI cannot
+		// actually run right now.
+		return out
+	}
 	out = mergeModelInfos(out, acpConfigOptionModels(top.ConfigOptions))
+	return out
+}
+
+// acpAuthConfigured reports whether an initialize reply's authMethods show a
+// usable (non-terminal) credential path. Hermes' ACP adapter, for example,
+// advertises the provider auth method only when a provider API key actually
+// resolves; with no key it advertises ONLY the terminal `--setup` method and
+// session/new fails anyway. Treating terminal-only as "not configured" stops
+// an agent that merely knows a public catalog from reporting models the user
+// cannot run. An absent/empty authMethods list means "not advertised" — the
+// CLI may authenticate out of band, so it is NOT treated as unconfigured.
+func acpAuthConfigured(initResult json.RawMessage) bool {
+	var v struct {
+		AuthMethods []struct {
+			Type string `json:"type"`
+		} `json:"authMethods"`
+	}
+	if len(initResult) == 0 || json.Unmarshal(initResult, &v) != nil || len(v.AuthMethods) == 0 {
+		return true
+	}
+	for _, m := range v.AuthMethods {
+		if !strings.EqualFold(strings.TrimSpace(m.Type), "terminal") {
+			return true
+		}
+	}
+	return false
+}
+
+// filterModelsByAuth keeps only models whose provider-namespaced id
+// ("<provider>:<model>", the shape hermes-acp advertises) belongs to a
+// provider whose auth method initialize actually advertises — i.e. one the
+// CLI holds a credential for. Models a configured CLI lists for providers the
+// user never set up are exactly the "no key, but still shown" entries.
+//
+// Conservative on purpose: it filters ONLY when at least one model prefix
+// matches an advertised auth id. CLIs whose auth ids don't line up with their
+// model namespaces (or model ids without a colon, e.g. opencode's
+// "deepseek/deepseek-v4") are returned untouched — this can never empty a
+// valid catalog.
+func filterModelsByAuth(models []link.ModelInfo, initResult json.RawMessage) []link.ModelInfo {
+	if len(models) == 0 || len(initResult) == 0 {
+		return models
+	}
+	var v struct {
+		AuthMethods []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"authMethods"`
+	}
+	if json.Unmarshal(initResult, &v) != nil {
+		return models
+	}
+	authed := map[string]bool{}
+	for _, m := range v.AuthMethods {
+		id := strings.ToLower(strings.TrimSpace(m.ID))
+		if id != "" && !strings.EqualFold(strings.TrimSpace(m.Type), "terminal") {
+			authed[id] = true
+		}
+	}
+	if len(authed) == 0 {
+		return models
+	}
+	prefix := func(id string) string {
+		i := strings.IndexByte(id, ':')
+		if i <= 0 {
+			return ""
+		}
+		return strings.ToLower(id[:i])
+	}
+	matches := 0
+	for _, m := range models {
+		if authed[prefix(m.ID)] {
+			matches++
+		}
+	}
+	if matches == 0 {
+		return models // auth ids don't describe this catalog's namespaces
+	}
+	out := make([]link.ModelInfo, 0, len(models))
+	for _, m := range models {
+		if p := prefix(m.ID); p != "" && authed[p] {
+			out = append(out, m)
+		}
+	}
 	return out
 }
 
@@ -692,10 +813,16 @@ func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
 			}
 		}
 	}
-	if _, ok := call(1, "initialize", map[string]any{
+	initResult, ok := call(1, "initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
-	}); !ok {
+	})
+	if !ok {
+		return nil
+	}
+	if !acpAuthConfigured(initResult) {
+		// Terminal-only auth = the CLI has not been set up with a provider
+		// credential; any catalog it advertises is not actually usable.
 		return nil
 	}
 	result, ok := call(2, "session/new", map[string]any{
@@ -705,7 +832,7 @@ func probeModelsViaACP(ctx context.Context, spawn []string) []link.ModelInfo {
 	if !ok {
 		return nil
 	}
-	models := parseACPModels(result)
+	models := filterModelsByAuth(parseACPModels(result), initResult)
 	if len(models) == 0 {
 		return nil
 	}
