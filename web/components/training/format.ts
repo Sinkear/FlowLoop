@@ -296,8 +296,11 @@ export const DELTA_LABELS: Record<string, string> = {
 };
 
 // 越低越好的指标；parallel_speedup 越高越好，其余全部是成本/损耗类。
+// wall_ms（墙钟时间）不在 DELTA_METRIC_KEYS 里，但同题 A/B 用它判断 Δ 语义色，
+// 漏了它会让「墙钟变慢」被标成「改善」，必须显式列入成本类。
 const LOWER_IS_BETTER = new Set([
   "critical_path_ms",
+  "wall_ms",
   "serialization_loss_ms",
   "verify_overhead_ratio",
   "rework_ratio",
