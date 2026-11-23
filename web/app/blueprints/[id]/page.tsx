@@ -57,6 +57,7 @@ import {
   fmtDeltaPct,
   fmtDeltaValue,
   fmtInt,
+  fmtMs,
   fmtRatio,
   nodeKindMeta,
   type DeltaTone,
@@ -223,6 +224,11 @@ function fmtDeltaAbs(metric: string, d: number): string {
   if (!Number.isFinite(d)) return DASH;
   if (metric.endsWith("_ratio") || metric.endsWith("_rate")) {
     return `${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d * 100).toFixed(1)}pp`;
+  }
+  // fmtMs 把负值当成「未测量」返回「—」；Δ 是正负对称的差值，先取绝对值格式化
+  // 再补符号，否则 ms 指标改善（差值为负）时 Δ 绝对值只剩一个破折号。
+  if (metric.endsWith("_ms")) {
+    return `${d > 0 ? "+" : d < 0 ? "−" : ""}${fmtMs(Math.abs(d))}`;
   }
   return fmtABValue(metric, d);
 }
