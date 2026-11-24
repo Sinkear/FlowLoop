@@ -94,8 +94,10 @@ func TestBuildGoalWorkflowQueueAndHumanWaitSplit(t *testing.T) {
 	if got := mi(gf.Metrics, "dispatch_wait_ms"); got != 60*60*1000 {
 		t.Fatalf("dispatch_wait_ms = %d, want 3600000", got)
 	}
-	if got := mi(gf.Metrics, "queue_wait_ms"); got != 80*60*1000 {
-		t.Fatalf("queue_wait_ms = %d, want 4800000", got)
+	// queue_wait_ms is the dispatch-delay alias: it must NOT include the 20m
+	// dependency gate (that is reported separately above).
+	if got := mi(gf.Metrics, "queue_wait_ms"); got != 60*60*1000 {
+		t.Fatalf("queue_wait_ms = %d, want 3600000 (dispatch only)", got)
 	}
 	// wall = 90m, human wait = 60m → share = 60/(90+60) = 0.4.
 	if got := mf(gf.Metrics, "human_wait_share"); got < 0.399 || got > 0.401 {

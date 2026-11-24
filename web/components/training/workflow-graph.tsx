@@ -404,6 +404,16 @@ export function WorkflowMetricsRow({
   const speedup = metricNum(m, "parallel_speedup");
   const rework = metricNum(m, "rework_ratio");
   const imbalance = metricNum(m, "lane_imbalance");
+  // #11：派发等待是累计口径，并行 lane 同时空转时可超过编排跨度——
+  // 后端按 wall_span_ms 封顶，超出量另记 queue_wait_overlap_ms；
+  // 未开始执行的子目标（unrun_sub_goals）不贡献等待，hint 里点明。
+  const unrun = metricNum(m, "unrun_sub_goals") ?? 0;
+  const capped = m["queue_wait_capped"] === true;
+  const overlap = metricNum(m, "queue_wait_overlap_ms");
+  const dispatchHint =
+    "派发延迟：工序就绪 → 实际开跑的调度延迟（累计口径，按编排跨度封顶）" +
+    (unrun > 0 ? `（${unrun} 个未开始执行的子目标不计入）` : "") +
+    (capped ? `（并行重叠已收敛到编排跨度，超出 ${fmtMs(overlap)} 记入 queue_wait_overlap_ms）` : "");
   // 验证开销（issue #13）：机器验证轮在 daemon 内完成、与执行 run 共用时间窗，
   // 账面上没有可分离的计时。此时「0%」是「没量到」，不是「验证不花钱」——
   // 覆盖率不足就把数值位直接换成「未度量」，覆盖率在 hint 里说清楚。
@@ -455,16 +465,17 @@ export function WorkflowMetricsRow({
     },
     { label: "咨询次数", value: fmtInt(metricNum(m, "consult_count")), hint: "小队内跨 agent 咨询" },
     // 旧「排队等待」一栏把两段等待混在一起（依赖门控 ≠ 派发延迟），
-    // 分开读才知道该催哪一环。
+    // 分开读才知道该催哪一环。后端 queue_wait_ms 仅是 dispatch_wait_ms 的
+    // 兼容别名（#11），面板不再单独展示它。
     {
       label: "依赖等待",
       value: fmtMs(metricNum(m, "dependency_wait_ms")),
-      hint: "依赖门控：工序创建 → 上游全部完成",
+      hint: "依赖门控：工序创建 → 上游全部完成（累计口径，可超过墙钟）",
     },
     {
       label: "派发等待",
       value: fmtMs(metricNum(m, "dispatch_wait_ms")),
-      hint: "工序就绪 → 实际开跑的调度延迟",
+      hint: dispatchHint,
     },
     {
       label: "分派失衡",

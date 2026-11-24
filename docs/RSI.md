@@ -42,7 +42,8 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 - `metrics_schema_version`：口径版本（当前 `2`）。v2（issue #13）把 `serialization_loss_ms` 更名 `idle_gap_ms`，并让关键路径穿过无窗节点；v1 与 v2 的 `critical_path_ms / depth / idle_gap_ms` **不可直接比较**，趋势对比必须按版本分段。
 - `node_count / edge_count / depth`：节点数、边数、关键路径上的**工序数**（`depth = len(critical_path)`）。0 busy 贡献的节点（`goal` 根、从未执行的子目标、无计时的机器验证轮）可被链穿过但不出现在路径里——把「没花的墙钟」算成一个工序会让 depth 虚高。
 - `work_sum_ms`：agent + verify + consult + integrate 节点的 busy 时长之和；**不含 review**。
-- `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。
+- `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。只统计已有结束时间的节点，**仍在运行的 run 不计入**（所以运行中的编排 `wall_ms` 可能为 0）。
+- `wall_span_ms`：编排跨度 = 最早就绪时刻（`sub_goal.created_at`，被依赖结束推后）→ 最后一个 sub_goal run 结束；仍有 run 在飞时右端取 `now`。它是排队等待的收敛上限——`wall_ms` 只含已结束节点，不能当上限（#11）。
 - `critical_path_ms`：只沿 explicit/结构边（`created` / `depends_on` / `verified_by` / `consult` / `integrated`）做最长链 DP，并要求前驱结束 ≤ 后继开始；**排除 `source=inferred` 的 `seq` 边**，review 节点也不入链。它是「依赖约束下的最短墙钟」，不是速度指标。DP 按 explicit 边的**拓扑序** relax（时间序只做 tie-break），因此无窗节点（从未执行的子目标、`duration_ms=0` 的审计工序）以 0 贡献**穿链**、不会把上游工序甩出路径；也不为无窗节点造估算窗口。
 - `idle_gap_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的**空闲间隙**（派发/门控/抖动）。它**不是串行损失**——依赖内必需的串行是必需劳动，不是损失（issue #13, D1）。
 - `serialization_loss_ms`：**deprecated 别名**，与 `idle_gap_ms` 同值，仅为旧读者（`rsi.go` 的 `SerializationLossMS`、`ABMetricKeys`、round delta 键）保留；新代码与新文档一律用 `idle_gap_ms`。
@@ -59,9 +60,12 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 - `rework_ratio = rejected verify 轮数 / verify_rounds`（分母是验证轮数，不是任务数）。
 - `consult_count`：consult 节点数。
 - `lane_count / lane_imbalance`：按 assignee 分桶的 busy 负载；只统计工作节点（不含 review）；imbalance = 最忙 lane ÷ 各 lane 均值。
-- `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的累计等待，衡量依赖门控。
-- `dispatch_wait_ms`：ready → 首个 sub_goal run 开始的累计等待，衡量派发链路。
-- `queue_wait_ms`：**legacy 兼容别名** = `dependency_wait_ms + dispatch_wait_ms`；新代码与新文档以拆分字段为准。
+- `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的**累计**等待，衡量依赖门控；累计口径，可超过墙钟。
+- `dispatch_wait_ms`：ready → 首个 sub_goal run 开始的**累计**等待，衡量派发链路；累计口径，超过 `wall_span_ms` 的部分会被收敛（见下）。
+- `queue_wait_ms`：`dispatch_wait_ms` 的 **legacy 兼容别名**（两者相等）。v2 之前的旧报表把它定义为 `dependency_wait_ms + dispatch_wait_ms`，该口径已 **breaking**：不再含依赖门控等待，新代码与新文档只看拆分字段。
+- `queue_wait_capped`：`true` = 累计派发等待超过 `wall_span_ms`，已收敛到编排跨度（只在超限时出现）。
+- `queue_wait_overlap_ms`：收敛掉的超出部分（累计值 − `wall_span_ms`），只在 `queue_wait_capped=true` 时出现。
+- `unrun_sub_goals`：无任何 run 窗口、且未终态（非 `verified`/`cancelled`/`failed`）的子目标数。blueprint gate holder 恒不计——gate 由人工/自动决策 settle，构造上就没有 run；verified 节点也不计，避免把已决策节点标成「未执行」。
 - `human_wait_ms`：`Σ gate_decision.review_duration × 1000`；`human_wait_share = human_wait_ms / (wall_ms + human_wait_ms)`（0..1，分母含人工等待，因此不会超过 100%）。
 - `retry_amplification`：agent 节点中的**最大** Attempt（float；无 agent 节点为 0），不是平均重试次数。
 - `lanes`：上述分桶明细（内部展示用）。
