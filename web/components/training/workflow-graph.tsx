@@ -399,6 +399,12 @@ export function WorkflowMetricsRow({
   const speedup = metricNum(m, "parallel_speedup");
   const rework = metricNum(m, "rework_ratio");
   const imbalance = metricNum(m, "lane_imbalance");
+  const unrun = metricNum(m, "unrun_sub_goals") ?? 0;
+  const capped = m["queue_wait_capped"] === true;
+  const queueHint =
+    "派发延迟：开始执行 − 就绪时间" +
+    (unrun > 0 ? `（${unrun} 个未执行子目标不计入）` : "") +
+    (capped ? "（并行重叠已按墙钟上限收敛）" : "");
   const items: { label: string; value: string; tone?: "accent" | "warn"; hint?: string }[] = [
     {
       label: "并行加速",
@@ -416,12 +422,17 @@ export function WorkflowMetricsRow({
       hint: "返工次数 / 任务数",
     },
     { label: "咨询次数", value: fmtInt(metricNum(m, "consult_count")), hint: "小队内跨 agent 咨询" },
-    { label: "排队等待", value: fmtMs(metricNum(m, "queue_wait_ms")), hint: "依赖门控 + 派发延迟" },
+    { label: "排队等待", value: fmtMs(metricNum(m, "queue_wait_ms")), hint: queueHint },
     {
       label: "分派失衡",
       value: fmtLaneImbalance(imbalance),
       tone: imbalance !== null && imbalance > 1.3 ? "warn" : undefined,
       hint: "最忙 lane / 平均 lane",
+    },
+    {
+      label: "依赖门控",
+      value: fmtMs(metricNum(m, "dependency_wait_ms")),
+      hint: "等待前置依赖完成（基线与口径修正见 #13）",
     },
   ];
 

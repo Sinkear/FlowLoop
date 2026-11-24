@@ -400,18 +400,39 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	computeWorkflowMetrics(graph)
+	wall := mi(graph.Metrics, "wall_ms")
+
+	// "排队等待" measures DISPATCH delay only: started_at − ready_at, where
+	// ready_at = max(created_at, latest dependency finish). Dependency gating
+	// is reported separately as dependency_wait_ms and must never be folded
+	// back in, otherwise a serial chain accumulates waits beyond the wall.
+	if wall > 0 && dispatchWait > wall {
+		graph.Metrics["queue_wait_overlap_ms"] = dispatchWait - wall
+		graph.Metrics["queue_wait_capped"] = true
+		dispatchWait = wall
+	}
 	graph.Metrics["dependency_wait_ms"] = depWait
 	graph.Metrics["dispatch_wait_ms"] = dispatchWait
-	// queue_wait_ms kept as a compatibility alias; new readers should use the
-	// split fields so dependency gating is not mistaken for dispatch delay.
-	graph.Metrics["queue_wait_ms"] = depWait + dispatchWait
+	// queue_wait_ms is a compatibility alias for dispatch_wait_ms.
+	graph.Metrics["queue_wait_ms"] = dispatchWait
+
+	// Sub-goals with no run of their own were never dispatched (for example
+	// folded into the owner run) — count them so the panel can say so instead
+	// of silently showing a zero wait.
+	unrun := int64(0)
+	for _, id := range sgOrder {
+		if wins[id] == nil {
+			unrun++
+		}
+	}
+	graph.Metrics["unrun_sub_goals"] = unrun
+
 	// Human gate wait is entity-level (gate_decision), not derivable from run
 	// windows. The share uses wall+wait so "占比" can never exceed 100%.
 	var humanWaitMS int64
 	_ = s.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(review_duration),0)*1000 FROM gate_decision WHERE goal_id=?`, goalID).Scan(&humanWaitMS)
 	graph.Metrics["human_wait_ms"] = humanWaitMS
-	wall := mi(graph.Metrics, "wall_ms")
 	share := 0.0
 	if denom := wall + humanWaitMS; denom > 0 {
 		share = float64(humanWaitMS) / float64(denom)
