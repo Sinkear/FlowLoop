@@ -401,10 +401,11 @@ export function WorkflowMetricsRow({
   const imbalance = metricNum(m, "lane_imbalance");
   const unrun = metricNum(m, "unrun_sub_goals") ?? 0;
   const capped = m["queue_wait_capped"] === true;
+  const overlap = metricNum(m, "queue_wait_overlap_ms");
   const queueHint =
-    "派发延迟：开始执行 − 就绪时间" +
-    (unrun > 0 ? `（${unrun} 个未执行子目标不计入）` : "") +
-    (capped ? "（并行重叠已按墙钟上限收敛）" : "");
+    "派发延迟：开始执行 − 就绪时间（累计口径，按编排跨度封顶）" +
+    (unrun > 0 ? `（${unrun} 个未开始执行的子目标不计入）` : "") +
+    (capped ? `（并行重叠已收敛到编排跨度，超出 ${fmtMs(overlap)} 记入 queue_wait_overlap_ms）` : "");
   const items: { label: string; value: string; tone?: "accent" | "warn"; hint?: string }[] = [
     {
       label: "并行加速",
@@ -432,7 +433,7 @@ export function WorkflowMetricsRow({
     {
       label: "依赖门控",
       value: fmtMs(metricNum(m, "dependency_wait_ms")),
-      hint: "等待前置依赖完成（基线与口径修正见 #13）",
+      hint: "等待前置依赖完成（累计口径，可超过墙钟；基线与口径修正见 #13）",
     },
   ];
 
