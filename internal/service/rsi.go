@@ -902,10 +902,15 @@ var ABMetricKeys = []string{
 	"critical_path_ms",
 	"wall_ms",
 	"parallel_speedup",
+	"serialization_loss_share",
 	"rework_ratio",
 	"verify_pass_rate",
 	"verify_overhead_ratio",
 	"human_wait_ms",
+	"human_wait_share",
+	"gate_wait_ms",
+	"lane_imbalance",
+	"agent_busy_ms",
 }
 
 // ABGoalFace is one side of the comparison.
@@ -919,10 +924,10 @@ type ABGoalFace struct {
 
 // ABCompareResult carries both faces + deltas (b - a, computed where numeric).
 type ABCompareResult struct {
-	GoalA   ABGoalFace `json:"goal_a"`
-	GoalB   ABGoalFace `json:"goal_b"`
-	Deltas  map[string]any `json:"deltas"`
-	Notes   []string   `json:"notes,omitempty"`
+	GoalA  ABGoalFace     `json:"goal_a"`
+	GoalB  ABGoalFace     `json:"goal_b"`
+	Deltas map[string]any `json:"deltas"`
+	Notes  []string       `json:"notes,omitempty"`
 }
 
 func abGoalFace(ctx context.Context, s *RSIService, goalID string) (ABGoalFace, error) {

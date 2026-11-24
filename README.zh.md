@@ -44,7 +44,7 @@
 | 02 | **执行** | agent 在隔离 worktree 里按图干活 | agent |
 | 03 | **留痕** | 真实节点、边、等待、重试、咨询、人工门写成执行图 | 平台 |
 | 04 | **诊断** | RSI 计算关键路径、并行加速、返工、重试放大、人工等待占比和九类 finding | RSI |
-| 05 | **补丁** | finding 转成图 diff（`add_node`、`update_node`、`delete_node`、`add_edge`、`delete_edge`）；Phase D 只自动翻译 `serial_chain` | 机器 |
+| 05 | **补丁** | finding 转成图 diff（`add_node`、`update_node`、`delete_node`、`add_edge`、`delete_edge`）；Phase D 的确定性翻译器覆盖 11 类 finding（串行链/并行化/拆分/合并/人工等待/改派/brief 加固/重试放大/咨询/乒乓/计划偏离），仍由人批准后才发布 | 机器 |
 | 06 | **签字发布** | 你批准，V1–V6 复跑，**你发布** vN+1；下一个 goal 钉住它 | **你** |
 
 版本链就是审计轨迹：`v1 → v2 → v3` 可 diff、不可变、可回滚。七个指标做 A/B——关键路径、墙钟时间、并行加速、返工率、验证通过率、验证开销、人工等待——判断新图是不是真的更好。

@@ -40,26 +40,29 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 指标由 `internal/service/workflow.go` 的 `computeWorkflowMetrics` 在读取时从节点/边计算；JSON 键名与单位以 API 返回为准（时间为毫秒）。
 
 - `node_count / edge_count / depth`：节点数、边数、explicit 关键路径节点数。
-- `work_sum_ms`：agent + verify + consult + integrate 节点的 busy 时长之和；**不含 review**。
+- `work_sum_ms`：agent + verify + consult + integrate 节点的 busy 时长之和；**不含 review 与 blueprint gate 决策持有者**（gate 等待单列，见 `gate_wait_ms`）。
 - `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。
 - `critical_path_ms`：只沿 explicit/结构边（`created` / `depends_on` / `verified_by` / `consult` / `integrated`）做最长链 DP，并要求前驱结束 ≤ 后继开始；**排除 `source=inferred` 的 `seq` 边**，review 节点也不入链。它是「依赖约束下的最短墙钟」，不是速度指标。
-- `serialization_loss_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的等待（排队/派发/抖动）。
+- `serialization_loss_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的等待（排队/派发/抖动）；`serialization_loss_share = serialization_loss_ms / wall_ms`。
 - `parallel_speedup = work_sum_ms / wall_ms`（`wall_ms=0` 时为 0）：**实际吞吐加速比**，串行 = 1.0；两个 30min 独立任务并行，wall=30、work=60 → 2.0。旧公式 `work_sum / critical_path` 已废弃，不再作为速度展示。
 - `parallel_width_peak`：工作节点区间扫描的并发峰值（不含 review）。
 - `verify_overhead_ratio = verify busy / work_sum_ms`；`review_busy_ms` 与 `review_overhead_ratio = review busy / work_sum_ms` 单独统计（验证与评审分开，评审不再混入验证开销）。
 - `verify_rounds`：verify 节点 attempt 之和；`rework_ratio = rejected verify 轮数 / verify_rounds`。
 - `consult_count`：consult 节点数。
-- `lane_count / lane_imbalance`：按 assignee 分桶的 busy 负载；只统计工作节点（不含 review）；imbalance = 最忙 lane ÷ 各 lane 均值。
+- `agent_busy_ms / agent_busy_share`：只统计 **agent** 节点的 busy（verify/consult/integrate 不计）；share = agent busy ÷ `work_sum_ms`。
+- `verify_busy_ms / consult_busy_ms`：验证者与咨询 guest 的 busy，单独统计，不进 lane。
+- `lane_count / lane_imbalance`：按 assignee 分桶的 **agent** 负载；桶来自 squad 名册（leader + `squad_member` 的 agent；agent 型 goal 就是该 agent）并**零填充**，未执行任何工作的 agent 也在桶里且计 0；imbalance = 最忙 lane ÷ 名册均值。
 - `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的累计等待，衡量依赖门控。
 - `dispatch_wait_ms`：ready → 首个 sub_goal run 开始的累计等待，衡量派发链路。
 - `queue_wait_ms`：**legacy 兼容别名** = `dependency_wait_ms + dispatch_wait_ms`；新代码与新文档以拆分字段为准。
-- `human_wait_ms`：`Σ gate_decision.review_duration × 1000`；`human_wait_share = human_wait_ms / (wall_ms + human_wait_ms)`（0..1，分母含人工等待，因此不会超过 100%）。
+- `human_wait_ms`：`Σ gate_decision.review_duration × 1000`（最终交付 review）**加上** blueprint gate 决策持有者 sub_goal 的 run busy（`gate_wait_ms`，gate 决策不写 gate_decision）；`human_wait_share = human_wait_ms / (wall_ms + human_wait_ms)`（0..1，分母含人工等待，因此不会超过 100%）。
 - `retry_amplification`：agent 节点中的**最大** Attempt（float；无 agent 节点为 0），不是平均重试次数。
-- `lanes`：上述分桶明细（内部展示用）。
+- `squad_size`：名册 agent 数（squad 取 leader + agent 成员；否则 1）。
+- `lanes`：上述分桶明细（内部展示用；已包含 0 值名册项）。
 
 基线与 delta：
 
-- baseline = **同 domain** 最近 20 个 `ready` 会话 metrics 的中位数，键覆盖 `critical_path_ms / parallel_speedup / serialization_loss_ms / dependency_wait_ms / dispatch_wait_ms / verify_overhead_ratio / review_overhead_ratio / rework_ratio / consult_count / human_wait_ms / retry_amplification`；样本 < 5 时 baseline 为空，某键覆盖不足半数时该键不进 baseline。
+- baseline = **同 domain** 最近 20 个 `ready` 会话 metrics 的中位数，键覆盖 `critical_path_ms / parallel_speedup / serialization_loss_share / dependency_wait_ms / dispatch_wait_ms / verify_overhead_ratio / review_overhead_ratio / rework_ratio / consult_count / human_wait_ms / human_wait_share / gate_wait_ms / agent_busy_ms / lane_imbalance / retry_amplification`；样本 < 5 时 baseline 为空，某键覆盖不足半数时该键不进 baseline。
 - delta = 当前分析 vs **同 domain 上一条 `rsi_round`**（跨 session，不要求同一会话）；`round_no` 按 domain 递增，会话首次分析 `trigger=terminal`，其后 `manual_retry`；首轮无上一条时 `delta={}`。结构为 `{key: {from, to, pct}}`（`from=0` 时省略 `pct`）。
 - 「样本 <5 不给 delta」不成立：delta 只依赖上一条账本；<5 只约束 baseline。跨轮历史累计的 L2 升级当前未实现，finding 默认 L1，仅 `retry_amplification` 在超出同 domain baseline 时标 L2。
 
@@ -69,18 +72,22 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 
 | 类别 | 层 | 触发条件 |
 | --- | --- | --- |
-| `serial_chain` | 结构 | explicit 关键路径节点数 ≥ 4 |
-| `split_candidate` | 结构 | explicit 关键路径上 agent 节点时长 ÷ `critical_path_ms` ≥ 45%，且 ≥ 2 个此类节点（`cp=0` 时回退 `wall_ms` 作分母） |
-| `lost_parallelism` | 结构 | 潜在加速 `gain = work_sum / critical_path ≥ 2.0`，且实际加速 `actual = work_sum / wall < gain × 0.7` |
-| `merge_candidate` | 结构 | ≥ 3 个无出边的 **agent** 叶节点，结束时间散布 ≤ 最大单节点时长 × 0.6 |
-| `wrong_assignee` | 分派 | lane_imbalance ≥ 2 且 lane_count ≥ 2 |
-| `retry_amplification` | 分派 | agent 节点最大 Attempt ≥ 2（高于同 domain baseline 时升 L2） |
-| `ping_pong` | 信息流 | 同一对 requester→target 咨询 ≥ 3 次 |
-| `brief_quality` | 信息流 | rework_ratio ≥ 0.5 且存在 verify 轮数 ≥ 2 |
-| `consult_repeat` | 信息流 | 执行中途（requester run 有 sub_goal）咨询 ≥ 3 次 |
-| `human_wait` | 观测 | `human_wait_share ≥ 0.30` |
+| `serial_chain` | 结构 | explicit 关键路径上的 **agent** 节点数 ≥ 4（verify/review 跳点不计），且该链占 `wall_ms` ≥ 60% |
+| `split_candidate` | 结构 | 关键路径上某 **agent** 节点 busy ÷ `agent_busy_ms` ≥ 50%（≥1 个即可） |
+| `lost_parallelism` | 结构 | `gain = work_sum / critical_path ≥ 2.0`，且 `serialization_loss_share > 0.30`，且 `agent_busy_share ≥ 0.50` |
+| `merge_candidate` | 结构 | ≥ 3 个无出边的 **agent** 叶节点、结束散布 ≤ 最长叶 × 0.6、同一 assignee 与 verifier；被合并叶时长之和 ≤ min(5min, 10% × wall) |
+| `wrong_assignee` | 分派 | 名册 ≥ 2、最忙 lane busy ≥ 5min，且（其余 lane 中位数为 0 ／ 最忙 ≥ 2× 中位数 ／ 最忙占比 ≥ 60% 且名册 ≥ 3） |
+| `retry_amplification` | 分派 | agent 节点最大 Attempt ≥ 3（= 2 次重试；高于同 domain baseline 时升 L2） |
+| `ping_pong` | 信息流 | 同一对 requester↔target **双向**各 ≥ 2 次（合计 ≥ 4） |
+| `brief_quality` | 信息流 | rework_ratio ≥ 0.5，且（受影响 sub_goal ≥ 2 且被拒轮次 ≥ 3 ／ 单任务被拒 ≥ 2） |
+| `consult_repeat` | 信息流 | 同一 sub_goal 执行中途咨询 ≥ 2 次 |
+| `human_wait` | 观测 | `human_wait_share ≥ 0.30` 且 `human_wait_ms ≥ 10min`（含 blueprint gate 等待） |
 
 发现默认 L1（人工复核）；`retry_amplification` 超出同 domain baseline 时标 L2。当前**没有**「同类历史 ≥ 2 次自动升 L2」的跨轮累计逻辑。产出=**只读提案 + 复测计划**，不自动执行。
+
+评分统一到 0–100 的可比刻度：`score = severity 基数（critical 90 / warn 60 / info 30）+ 10 × clamp01((观测值 − 阈值) / 阈值)`。旧的按规则乘积打分（human_wait 用秒、plan_deviation 固定 80）会让排序与 `top_category` 失真；severity 词表统一为 `critical / warn / info`（旧 `high/medium` 仅在 Web 侧做兼容映射）。
+
+`plan_deviation` 保持「有偏离即报」的不变量语义（score 用同一归一化刻度，severity high→critical、medium→warn）。
 
 ## API
 

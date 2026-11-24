@@ -101,9 +101,10 @@ func addBusy(n *WorkflowNode, start, finish string) {
 
 // BuildGoalWorkflow assembles the orchestration graph for one goal.
 func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*WorkflowGraph, error) {
-	var gTitle, gStatus string
+	var gTitle, gStatus, gAssigneeType, gAssigneeID string
 	if err := s.st.DB().QueryRowContext(ctx,
-		`SELECT status,title FROM goal WHERE id=?`, goalID).Scan(&gStatus, &gTitle); err != nil {
+		`SELECT status,title,COALESCE(assignee_type,''),COALESCE(assignee_id,'') FROM goal WHERE id=?`,
+		goalID).Scan(&gStatus, &gTitle, &gAssigneeType, &gAssigneeID); err != nil {
 		return nil, err
 	}
 
@@ -194,9 +195,69 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		depsMap[id] = deps
 	}
 
-	var depWait, dispatchWait int64
+	// Blueprint gates are human decisions, not agent work: their holder
+	// sub-goals must not count as execution lanes or critical-path work. The
+	// holder run's window is exactly the wait, so it is accumulated here and
+	// added to the entity-level gate_decision wait below.
+	gateHolders := map[string]bool{}
+	if grows, err := s.st.DB().QueryContext(ctx,
+		`SELECT sub_goal_id FROM blueprint_node WHERE goal_id=? AND node_type='gate' AND COALESCE(sub_goal_id,'')!=''`, goalID); err == nil {
+		for grows.Next() {
+			var sgid string
+			if err := grows.Scan(&sgid); err != nil {
+				break
+			}
+			gateHolders[sgid] = true
+		}
+		grows.Close()
+	}
+
+	// Lane roster: every agent that was eligible to take work. Lanes are
+	// zero-filled over the roster so an idle teammate is visible; the old
+	// map only held agents with busy time, which made "one lane idle" —
+	// precisely the imbalance worth fixing — invisible to the rule.
+	roster := []string{}
+	addRoster := func(a string) {
+		if a == "" {
+			return
+		}
+		for _, x := range roster {
+			if x == a {
+				return
+			}
+		}
+		roster = append(roster, a)
+	}
+	if gAssigneeType == "squad" && gAssigneeID != "" {
+		var leader string
+		_ = s.st.DB().QueryRowContext(ctx, `SELECT COALESCE(leader_id,'') FROM squad WHERE id=?`, gAssigneeID).Scan(&leader)
+		addRoster(leader)
+		if mrows, err := s.st.DB().QueryContext(ctx,
+			`SELECT member_id FROM squad_member WHERE squad_id=? AND member_type='agent'`, gAssigneeID); err == nil {
+			for mrows.Next() {
+				var m string
+				if err := mrows.Scan(&m); err != nil {
+					break
+				}
+				addRoster(m)
+			}
+			mrows.Close()
+		}
+	} else if gAssigneeType == "agent" {
+		addRoster(gAssigneeID)
+	}
+	graph.Metrics["squad_size"] = len(roster)
+	graph.Metrics["squad_agents"] = roster
+
+	var depWait, dispatchWait, gateWait int64
 	for _, id := range sgOrder {
 		r := sgRows[id]
+		if gateHolders[id] {
+			if w := wins[id]; w != nil {
+				gateWait += w.busy
+			}
+			continue
+		}
 		n := WorkflowNode{Key: "sg:" + id, Kind: "agent", Label: r.title, AssigneeID: r.assignee,
 			SubGoalID: id, Status: r.status, Attempt: 1, Reworks: r.qualityIter}
 		if w := wins[id]; w != nil {
@@ -234,6 +295,9 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			continue
 		}
 		for _, d := range deps {
+			if gateHolders[d] {
+				continue
+			}
 			if _, ok := sgRows[d]; ok {
 				graph.Edges = append(graph.Edges, WorkflowEdge{From: "sg:" + d, To: "sg:" + id, Kind: "depends_on", Source: "explicit"})
 			}
@@ -251,12 +315,15 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		return false
 	}
 	for _, a := range sgOrder {
+		if gateHolders[a] {
+			continue
+		}
 		wa := wins[a]
 		if wa == nil || wa.end == 0 {
 			continue
 		}
 		for _, b := range sgOrder {
-			if a == b {
+			if a == b || gateHolders[b] {
 				continue
 			}
 			wb := wins[b]
@@ -286,6 +353,9 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		if err := vrows.Scan(&sgid, &status, &vrun); err != nil {
 			vrows.Close()
 			return nil, err
+		}
+		if gateHolders[sgid] {
+			continue
 		}
 		v, ok := vmap[sgid]
 		if !ok {
@@ -367,7 +437,7 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		var sgid string
 		if err := s.st.DB().QueryRowContext(ctx,
 			`SELECT sub_goal_id FROM run WHERE id=?`, reqID).Scan(&sgid); err == nil && sgid != "" {
-			if _, ok := sgRows[sgid]; ok {
+			if _, ok := sgRows[sgid]; ok && !gateHolders[sgid] {
 				from = "sg:" + sgid
 			}
 		}
@@ -390,6 +460,9 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			chrows.Close()
 			return nil, err
 		}
+		if gateHolders[sgid] {
+			continue
+		}
 		n := WorkflowNode{Key: "chg:" + id, Kind: "integrate", Label: "集成", SubGoalID: sgid, Status: status}
 		graph.Nodes = append(graph.Nodes, n)
 		graph.Edges = append(graph.Edges, WorkflowEdge{From: "sg:" + sgid, To: n.Key, Kind: "integrated", Source: "explicit"})
@@ -405,11 +478,15 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	// queue_wait_ms kept as a compatibility alias; new readers should use the
 	// split fields so dependency gating is not mistaken for dispatch delay.
 	graph.Metrics["queue_wait_ms"] = depWait + dispatchWait
-	// Human gate wait is entity-level (gate_decision), not derivable from run
-	// windows. The share uses wall+wait so "占比" can never exceed 100%.
-	var humanWaitMS int64
+	// Human wait has two sources: final delivery reviews (gate_decision, outside
+	// the execution span) and blueprint gate decisions (holder run windows,
+	// inside the span). Both are human wall-clock, so they are summed; the
+	// share uses wall+wait so it can never exceed 100%.
+	var reviewWaitMS int64
 	_ = s.st.DB().QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(review_duration),0)*1000 FROM gate_decision WHERE goal_id=?`, goalID).Scan(&humanWaitMS)
+		`SELECT COALESCE(SUM(review_duration),0)*1000 FROM gate_decision WHERE goal_id=?`, goalID).Scan(&reviewWaitMS)
+	humanWaitMS := reviewWaitMS + gateWait
+	graph.Metrics["gate_wait_ms"] = gateWait
 	graph.Metrics["human_wait_ms"] = humanWaitMS
 	wall := mi(graph.Metrics, "wall_ms")
 	share := 0.0
@@ -532,26 +609,38 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	// edge, so they are reported separately instead of inflating work_sum /
 	// speedup / lane imbalance (a review node with no incoming edge would
 	// otherwise become its own critical path and inflate speedup).
-	var workSum, maxNode, wallStart, wallEnd, verifyBusy, reviewBusy int64
+	var workSum, maxNode, wallStart, wallEnd int64
+	var agentBusy, verifyBusy, consultBusy, reviewBusy int64
 	lane := map[string]int64{}
+	// Zero-fill over the roster so an idle agent is a visible lane. Without a
+	// goal assignee (old goals / tests) fall back to busy agents only.
+	if roster, ok := g.Metrics["squad_agents"].([]string); ok {
+		for _, a := range roster {
+			lane[a] = 0
+		}
+	}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		if n.DurationMS <= 0 {
 			continue
 		}
-		if n.Kind == "review" {
+		switch n.Kind {
+		case "review":
 			reviewBusy += n.DurationMS
 			continue
+		case "verify":
+			verifyBusy += n.DurationMS
+		case "consult":
+			consultBusy += n.DurationMS
+		case "agent":
+			agentBusy += n.DurationMS
+			if n.AssigneeID != "" {
+				lane[n.AssigneeID] += n.DurationMS
+			}
 		}
 		workSum += n.DurationMS
 		if n.DurationMS > maxNode {
 			maxNode = n.DurationMS
-		}
-		if n.Kind == "verify" {
-			verifyBusy += n.DurationMS
-		}
-		if n.AssigneeID != "" {
-			lane[n.AssigneeID] += n.DurationMS
 		}
 		if n.StartedAtMS > 0 && (wallStart == 0 || n.StartedAtMS < wallStart) {
 			wallStart = n.StartedAtMS
@@ -619,6 +708,14 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	if serLoss < 0 {
 		serLoss = 0
 	}
+	serLossShare := 0.0
+	if wall > 0 {
+		serLossShare = float64(serLoss) / float64(wall)
+	}
+	agentBusyShare := 0.0
+	if workSum > 0 {
+		agentBusyShare = float64(agentBusy) / float64(workSum)
+	}
 	// parallel_speedup is actual throughput vs. one-lane execution:
 	// work_sum/wall. 1.0 = fully serial, 2.0 = two lanes' worth of work in
 	// the same wall. The old work/cp ratio was an average parallelism along
@@ -669,6 +766,7 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m["critical_path_ms"] = cpMS
 	m["parallel_speedup"] = speedup
 	m["serialization_loss_ms"] = serLoss
+	m["serialization_loss_share"] = serLossShare
 	m["parallel_width_peak"] = peak
 	m["verify_overhead_ratio"] = verifyOverhead
 	m["review_busy_ms"] = reviewBusy
@@ -678,6 +776,11 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m["rework_ratio"] = rework
 	m["verify_pass_rate"] = verifyPass
 	m["consult_count"] = consultCount
+	m["agent_busy_ms"] = agentBusy
+	m["agent_busy_share"] = agentBusyShare
+	m["verify_busy_ms"] = verifyBusy
+	m["consult_busy_ms"] = consultBusy
+	m["squad_size"] = len(lane)
 	m["lane_count"] = len(lane)
 	m["lane_imbalance"] = laneImbalance
 	m["lanes"] = lane

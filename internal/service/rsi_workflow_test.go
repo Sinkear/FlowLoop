@@ -75,7 +75,23 @@ func rsiWorkflowFixture(t *testing.T, st *store.Store, svc *GoalService, bus *ev
 		t.Fatalf("consult_request: %v", err)
 	}
 
-	// Verification on B: one rejection (rework), then a pass.
+	// Verification is rework-heavy on both tasks (>=2 affected sub_goals and
+	// >=3 rejected rounds are the calibrated brief_quality signal).
+	_, err = st.DB().Exec(`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,created_at)
+	 VALUES ('vr-a1',?,'sg-a','run-a1','rejected','边界情况未覆盖',?)`, goalID, base.Add(21*time.Minute))
+	if err != nil {
+		t.Fatalf("verification a1: %v", err)
+	}
+	_, err = st.DB().Exec(`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,created_at)
+	 VALUES ('vr-a2',?,'sg-a','run-a1','passed','ok',?)`, goalID, base.Add(22*time.Minute))
+	if err != nil {
+		t.Fatalf("verification a2: %v", err)
+	}
+	_, err = st.DB().Exec(`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,created_at)
+	 VALUES ('vr-b0',?,'sg-b','run-b1','rejected','缺少边界情况',?)`, goalID, base.Add(52*time.Minute))
+	if err != nil {
+		t.Fatalf("verification b0: %v", err)
+	}
 	_, err = st.DB().Exec(`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,created_at)
 	 VALUES ('vr-b1',?,'sg-b','run-b1','rejected','缺少边界情况',?)`, goalID, base.Add(55*time.Minute))
 	if err != nil {

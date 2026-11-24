@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
 )
 
 // Structure analysis (W-RSI). Input: the assembled WorkflowGraph + entity
@@ -30,19 +29,54 @@ import (
 //	            consult_repeat (mid-execution clarification)
 //	node-level: retry_amplification, human_wait (entity-level, not spans)
 const (
-	ruleSerialChainThreshold = 4    // ≥4-node chain on the critical path
-	ruleLostParallelGain     = 2.0  // achievable speedup ≥2×
-	ruleSplitCount           = 2    // ≥2 heavy nodes on the critical path
-	ruleSplitShare           = 0.45 // heavy node ≥45% of critical path
-	ruleMergeWall            = 3    // ≥3 leaf nodes ending within the window
-	ruleMergeSpread          = 0.60 // their end spread ≤60% of the max node duration
-	ruleLaneImbalance        = 2.0  // busiest lane ≥2× lane average
-	rulePingPongPairs        = 3    // ≥3 consults between the same pair
-	ruleReworkRatio          = 0.5  // ≥50% verification rounds rejected
-	ruleConsultRepeat        = 3    // ≥3 mid-execution consults
-	ruleRetryAmplification   = 2.0  // attempts ≥2× node count
-	ruleHumanWaitShare       = 0.30 // gate wait ≥30% of wall clock
+	ruleSerialChainThreshold = 4    // ≥4 agent nodes on the critical path (verify/review hops excluded)
+	ruleSerialChainWallShare = 0.60 // chain holds ≥60% of the wall clock
+	ruleSplitCount           = 1    // ≥1 heavy node — every heavy node is a split candidate
+	ruleSplitShare           = 0.50 // node busy ≥50% of agent_busy_ms (not critical path)
+	ruleLostParallelGain     = 2.0  // theoretical speedup ≥2×
+	ruleLostSerialShare      = 0.30 // realized serialization loss >30% of wall
+	ruleLostAgentBusyShare   = 0.50 // agent work dominates total work (a dispatch problem, not just serialization)
+	ruleMergeWall            = 3    // ≥3 mergeable leaves
+	ruleMergeSpread          = 0.60 // end spread ≤60% of the longest leaf (the leaves overlap in time)
+	ruleMergeAddedWallMS     = 300000
+	ruleMergeAddedWallShare  = 0.10
+	ruleLaneImbalance        = 2.0    // busiest lane ≥2× the median of the other lanes
+	ruleLaneMinBusyMS        = 300000 // ignore tiny imbalances below 5 min
+	rulePingPongPairs        = 2      // ≥2 turnarounds in EACH direction (total ≥4)
+	ruleReworkRatio          = 0.5
+	ruleReworkMinSubGoals    = 2 // at least 2 affected sub-goals
+	ruleReworkMinRejects     = 3 // and at least 3 rejected rounds
+	ruleConsultRepeat        = 2 // ≥2 mid-execution consults for the same sub-goal
+	ruleRetryAmplification   = 3.0
+	ruleHumanWaitShare       = 0.30
+	ruleHumanWaitFloorMS     = 600000 // wait must also exceed 10 min
 )
+
+// Finding scores share one scale so the "top finding" ordering means
+// something: severity tier + a bounded magnitude bonus (0..10). The old
+// per-rule products ranged into the thousands and let human_wait (seconds)
+// and plan_deviation (fixed 80) permanently dominate the ranking.
+const (
+	scoreBaseCritical = 90.0
+	scoreBaseWarn     = 60.0
+	scoreBaseInfo     = 30.0
+)
+
+// ruleScore = severity base + 10 × clamp01((observed−threshold)/threshold).
+// At the threshold the bonus is 0; at 2× the threshold it saturates at 10.
+func ruleScore(base, observed, threshold float64) float64 {
+	if threshold <= 0 {
+		return base
+	}
+	r := (observed - threshold) / threshold
+	if r < 0 {
+		r = 0
+	}
+	if r > 1 {
+		r = 1
+	}
+	return base + 10*r
+}
 
 // Analyze is idempotent: it deletes the previous report+findings for the
 // session and rebuilds them, so Retry always converges.
@@ -120,9 +154,9 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	}
 	speedup, _ := metrics["parallel_speedup"].(float64)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE training_session SET status='ready', finished_at=?, error='',
-		 node_count=?, critical_path_ms=?, parallel_speedup=?, finding_count=? WHERE id=?`,
-		now(), len(graph.Nodes), cpMS, speedup, len(findings), sessionID); err != nil {
+		`UPDATE training_session SET node_count=?, critical_path_ms=?, parallel_speedup=?, finding_count=?
+		 WHERE id=?`,
+		len(graph.Nodes), cpMS, speedup, len(findings), sessionID); err != nil {
 		return err
 	}
 
@@ -178,306 +212,29 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	// Phase D (proposal §13): deterministic finding→proposal translation.
+	// LLM+P split — every RSI rule (deterministic) may emit a finding; the
+	// translator (rsi_translate.go, also deterministic) turns each category
+	// into a concrete spec patch; humans stay the gate (the proposal stays
+	// pending until approved). Failures never break the analysis itself.
+	//
+	// Run BEFORE the rsi:ready event: the event is the "analysis (including
+	// deterministic translation) is complete" signal, so a client that reacts
+	// to it must not find an empty proposal list (the blank-proposal race
+	// reported in the 2026-11-21 blueprint-self-iteration use case).
+	s.draftAutoProposals(ctx, goalID, graph, findings)
+	// 'ready' means the whole analysis pipeline settled — findings persisted
+	// AND deterministic proposals drafted. It is set after the tx (so a crash
+	// leaves the session retryable) and before the event below, so readers of
+	// training_session.status never observe a half-done analysis.
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE training_session SET status='ready', finished_at=?, error='' WHERE id=?`, now(), sessionID); err != nil {
+		return err
+	}
 	s.bus.Publish(ctx, events.Event{Topic: "rsi:ready", Payload: map[string]any{
 		"session_id": sessionID, "goal_id": goalID, "findings": len(findings), "round_no": roundNo,
 	}})
-	// Phase D (proposal §13): deterministic finding→proposal translation.
-	// LLM+P split — the RSI rule (deterministic) identified a serial_chain;
-	// the translator below (also deterministic) drafts the structural patch;
-	// humans stay the gate (proposal stays pending until approved). Failures
-	// must never break the analysis itself — log-and-continue.
-	s.draftAutoProposals(ctx, goalID, graph, findings)
 	return nil
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Phase D (proposal §13): 确定性 finding→补丁翻译器.
-//
-// Only serial_chain findings are translated in Phase D, and only the
-// canonical chain→fork transform: a pure task chain t1→t2→…→tk→end means
-// every step waited for its predecessor with no data flowing between them
-// (checked below via {{node.*}} brief references). The transform deletes
-// the k−1 chain edges and wires every step straight to the shared end
-// node, turning the chain into a fork. Deleting only ONE chain edge would
-// orphan the upstream half from the end (V2 rejects it), so the transform
-// is all-or-nothing per chain.
-//
-// Safety rails (all deterministic, no LLM anywhere):
-//   - goal must be blueprint-pinned (infer goals have no spec to patch);
-//   - every chain member's brief must reference NO other member's output
-//     (both directions checked) — a single {{node.X.output}} cross-ref
-//     aborts the whole chain, because the fork would break the reference;
-//   - the drafted proposal still passes the full V1–V6 validator inside
-//     CreateProposal (fail-closed) and stays PENDING until a human
-//     approves it — the translator never publishes, never bypasses the
-//     gate (proposal §12.1);
-//   - dedup by exact title so re-analyzing the same session (or a retry
-//     round) cannot stack duplicate proposals.
-// ═══════════════════════════════════════════════════════════════════════
-
-func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *WorkflowGraph, findings []RsiFinding) {
-	var versionID string
-	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&versionID)
-	if err != nil {
-		logging.Warnf("[rsi] auto-proposal: load blueprint pin for goal %s: %v", goalID, err)
-		return
-	}
-	if versionID == "" {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: no pinned blueprint version (infer mode)", goalID)
-		return // infer goal — no spec to patch
-	}
-	if s.blueprintSvc == nil {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: blueprint service not wired", goalID)
-		return // not wired in main — nothing to translate through
-	}
-	// Direct observable signal for BUG-3: a pinned goal whose spec graph was
-	// never compiled has an empty blueprint_node map, so the translator cannot
-	// map execution nodes back to spec keys and the auto-iteration chain
-	// dead-ends silently. That is exactly the "创建即 active 绕过 Activate"
-	// shape — make it loud instead of a no-op.
-	var nodeCount int
-	if err := s.st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM blueprint_node WHERE goal_id=?`, goalID).Scan(&nodeCount); err != nil {
-		logging.Warnf("[rsi] auto-proposal: count blueprint_node for goal %s: %v", goalID, err)
-	} else if nodeCount == 0 {
-		logging.Warnf("[rsi] goal %s 绑定蓝本 %s 但未编译（blueprint_node=0）——自动提案跳过", goalID, versionID)
-		return
-	}
-	// Auto-iteration round cap (§14.2): analysis is never capped — only the
-	// automatic PRODUCTION of optimization artifacts is. Translator
-	// proposals are counted per blueprint via created_by_id='rsi-translator';
-	// human proposals/approvals/publishes are never subject to the cap.
-	if cap := s.autoRoundsCap(ctx); cap >= 0 {
-		// The cap is PER BLUEPRINT (rsi.max_auto_rounds), not per platform:
-		// COUNT(DISTINCT blueprint_id) previously let a busy blueprint consume
-		// every other blueprint's budget (BUG-4 P2, findings §三.11).
-		var bpID string
-		if err := s.st.DB().QueryRowContext(ctx,
-			`SELECT COALESCE(blueprint_id,'') FROM blueprint_version WHERE id=?`, versionID).Scan(&bpID); err != nil {
-			// Without the blueprint id the per-blueprint counter would be
-			// computed on '' (every blueprint shares it) — skip drafting rather
-			// than let one broken lookup silently disable the cap.
-			logging.Warnf("[rsi] auto-proposal cap: load blueprint for version %s: %v", versionID, err)
-			return
-		}
-		var n int
-		if err := s.st.DB().QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM blueprint_proposal WHERE blueprint_id=? AND created_by_id='rsi-translator' AND status IN ('pending','approved')`,
-			bpID,
-		).Scan(&n); err != nil {
-			logging.Warnf("[rsi] auto-proposal cap check failed for goal %s: %v", goalID, err)
-		} else if n >= cap {
-			logging.Infof("[rsi] auto-iteration cap %d reached — translator proposal skipped for goal %s (rsi.max_auto_rounds)", cap, goalID)
-			return
-		}
-	}
-	for _, f := range findings {
-		if f.Category != "serial_chain" {
-			continue // Phase D translates exactly one finding category
-		}
-		if err := s.proposeForkForChain(ctx, goalID, versionID, g, f); err != nil {
-			logging.Errorf("[rsi] auto-proposal for goal %s: %v", goalID, err)
-			continue
-		}
-		// One chain-fork proposal per analysis: overlapping serial_chain
-		// findings describe the same chain shape; further passes would only
-		// produce duplicate titles (the dedup check would skip them anyway —
-		// but not racing this analysis' own earlier insert).
-		break
-	}
-}
-
-// proposeForkForChain extracts the maximal pure task chain from the
-// execution graph's critical path, verifies it maps 1:1 onto spec task
-// nodes ending directly at one end node, and drafts the chain→fork patch.
-func (s *RSIService) proposeForkForChain(ctx context.Context, goalID, versionID string, g *WorkflowGraph, f RsiFinding) error {
-	// 1. Execution-graph side: walk the critical path, keep the maximal
-	//    run of consecutive agent nodes linked by explicit depends_on edges.
-	chain := criticalTaskChain(g)
-	if len(chain) < 2 {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: critical task chain len=%d (<2) — nothing to fork", goalID, len(chain))
-		return nil // single-task chain: nothing to parallelize
-	}
-
-	// 2. Map execution nodes (sg:<id>) to spec node keys via blueprint_node.
-	keyBySG := map[string]string{}
-	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT sub_goal_id, node_key FROM blueprint_node WHERE goal_id=? AND COALESCE(sub_goal_id,'')!=''`, goalID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var sgID, nodeKey string
-		if err := rows.Scan(&sgID, &nodeKey); err != nil {
-			rows.Close()
-			return err
-		}
-		keyBySG[sgID] = nodeKey
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	specKeys := make([]string, 0, len(chain))
-	for _, nodeKey := range chain {
-		sk, ok := keyBySG[strings.TrimPrefix(nodeKey, "sg:")]
-		if !ok {
-			logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain node %q not mapped to a spec node (chain mapped=%d/%d, blueprint_node mapped=%d)",
-				goalID, nodeKey, len(specKeys), len(chain), len(keyBySG))
-			return nil // chain member not spec-mapped (spawn child etc.) — bail out
-		}
-		specKeys = append(specKeys, sk)
-	}
-
-	// 3. Load the pinned spec and check the chain is a pure task chain whose
-	//    last member flows directly into ONE shared end node.
-	version, err := s.blueprintSvc.getVersion(ctx, versionID)
-	if err != nil {
-		return fmt.Errorf("load pinned version: %w", err)
-	}
-	spec, err := parseSpecContent(version)
-	if err != nil {
-		return fmt.Errorf("parse pinned version: %w", err)
-	}
-	byID := map[string]*SpecNode{}
-	for i := range spec.Nodes {
-		byID[spec.Nodes[i].ID] = &spec.Nodes[i]
-	}
-	endKey := ""
-	for _, sk := range specKeys {
-		n := byID[sk]
-		if n == nil || n.Type != "task" {
-			logging.Debugf("[rsi] auto-proposal skipped for goal %s: spec node %q is not a task (only pure task chains are translated)", goalID, sk)
-			return nil // only pure task chains are translated
-		}
-	}
-	// The last chain member's sole outbound must be a done-edge into an end node.
-	for _, e := range spec.Edges {
-		if e.Source == specKeys[len(specKeys)-1] && e.SourceHandle == "done" {
-			if t := byID[e.Target]; t != nil && t.Type == "end" {
-				if endKey != "" && endKey != e.Target {
-					logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain forks into multiple end nodes (%q vs %q)", goalID, endKey, e.Target)
-					return nil // forked into multiple ends — not the canonical shape
-				}
-				endKey = e.Target
-			}
-		}
-	}
-	if endKey == "" {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain does not end directly at an end node", goalID)
-		return nil // chain does not end directly at an end node
-	}
-
-	// 4. Data-flow check: no chain member's brief may reference another
-	//    member's output. One cross-reference aborts the whole transform —
-	//    the fork would silently break the reference (拍2 resolves only
-	//    from ancestors).
-	for _, a := range specKeys {
-		nA := byID[a]
-		for _, b := range specKeys {
-			if a == b {
-				continue
-			}
-			if strings.Contains(nA.Task.Brief, "{{node."+b+".") {
-				logging.Debugf("[rsi] auto-proposal skipped for goal %s: chain member %q references %q output — fork would break the data flow", goalID, a, b)
-				return nil
-			}
-		}
-	}
-
-	// 5. Verify each adjacent pair really is a done→depends chain edge in
-	//    the spec (the execution graph said depends_on; the spec is truth).
-	for i := 0; i+1 < len(specKeys); i++ {
-		found := false
-		for _, e := range spec.Edges {
-			if e.Source == specKeys[i] && e.SourceHandle == "done" && e.Target == specKeys[i+1] {
-				found = true
-				break
-			}
-		}
-		if !found {
-			logging.Debugf("[rsi] auto-proposal skipped for goal %s: spec edge %q→%q missing — spec shape diverged from execution", goalID, specKeys[i], specKeys[i+1])
-			return nil // spec shape diverged from execution — refuse to guess
-		}
-	}
-
-	// 6. Compose the chain→fork patches: delete the k−1 chain edges, wire
-	//    every member straight to the shared end.
-	patches := make([]BlueprintPatch, 0, 2*len(specKeys))
-	for i := 0; i+1 < len(specKeys); i++ {
-		patches = append(patches, BlueprintPatch{Op: "delete_edge", Edge: &SpecEdge{
-			Source: specKeys[i], SourceHandle: "done", Target: specKeys[i+1]}})
-		patches = append(patches, BlueprintPatch{Op: "add_edge", Edge: &SpecEdge{
-			Source: specKeys[i], SourceHandle: "done", Target: endKey}})
-	}
-
-	// 7. Dedup by exact title, then draft through the gated pipeline.
-	title := fmt.Sprintf("自动提案：并行化串行链（%s）", strings.Join(specKeys, "‖"))
-	var existing int
-	if err := s.st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
-		 WHERE v.blueprint_id=? AND p.title=?`, version.BlueprintID, title).Scan(&existing); err != nil {
-		return err
-	}
-	if existing > 0 {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: proposal %q already exists (dedup)", goalID, title)
-		return nil
-	}
-	hypothesis := fmt.Sprintf("串行链 %s 共 %d 步全部经依赖边顺序执行，但 brief 之间没有任何数据引用——"+
-		"fork 后所有步骤可并行，关键路径与 wall 时间应显著下降。本提案由 serial_chain finding 确定性翻译生成（无 LLM），"+
-		"请审查后批准。", strings.Join(specKeys, "→"), len(specKeys))
-	if _, err := s.blueprintSvc.CreateProposal(ctx, version.BlueprintID, versionID, title, hypothesis,
-		"wall_ms", "down", patches, f.ID, "agent", "rsi-translator"); err != nil {
-		// A validation refusal means the transform shape is not acceptable
-		// to the spec rules — that is a legitimate silent skip, not an error
-		// worth failing the analysis for. Real I/O errors still surface.
-		if errors.Is(err, ErrValidation) {
-			logging.Warnf("[rsi] auto-proposal draft rejected by validator (goal %s): %v", goalID, err)
-			return nil
-		}
-		return fmt.Errorf("create auto-proposal: %w", err)
-	}
-	logging.Infof("[rsi] auto-proposal drafted for goal %s: %s", goalID, title)
-	return nil
-}
-
-// criticalTaskChain filters the critical path to agent (task) nodes, then
-// returns the maximal run of consecutive agent nodes linked by explicit
-// depends_on edges. Verify/consult nodes interleaved on the raw path are
-// skipped first — a blueprint chain A→B stays a chain even when the path
-// renders as A,v:A,B.
-func criticalTaskChain(g *WorkflowGraph) []string {
-	adj := map[string]bool{}
-	for _, e := range g.Edges {
-		if e.Kind == "depends_on" && e.Source == "explicit" {
-			adj[e.From+"→"+e.To] = true
-		}
-	}
-	kindOf := map[string]string{}
-	for i := range g.Nodes {
-		kindOf[g.Nodes[i].Key] = g.Nodes[i].Kind
-	}
-	agents := make([]string, 0, len(g.Critical))
-	for _, key := range g.Critical {
-		if kindOf[key] == "agent" {
-			agents = append(agents, key)
-		}
-	}
-	var best, cur []string
-	for _, key := range agents {
-		if len(cur) > 0 && !adj[cur[len(cur)-1]+"→"+key] {
-			if len(cur) > len(best) {
-				best = cur
-			}
-			cur = nil
-		}
-		cur = append(cur, key)
-	}
-	if len(cur) > len(best) {
-		best = cur
-	}
-	return best
 }
 
 // computeRoundDelta compares the insight-panel headline metrics between two
@@ -531,6 +288,54 @@ func agentNodes(g *WorkflowGraph) []WorkflowNode {
 	return out
 }
 
+func nodeByKey(g *WorkflowGraph, key string) *WorkflowNode {
+	for i := range g.Nodes {
+		if g.Nodes[i].Key == key {
+			return &g.Nodes[i]
+		}
+	}
+	return nil
+}
+
+// metricLanes decodes the lanes metric. Live graphs carry map[string]int64;
+// after a JSON round-trip through rsi_report it is map[string]any.
+func metricLanes(m map[string]any) map[string]int64 {
+	out := map[string]int64{}
+	switch v := m["lanes"].(type) {
+	case map[string]int64:
+		for k, n := range v {
+			out[k] = n
+		}
+	case map[string]any:
+		for k, x := range v {
+			if n, ok := num(x); ok {
+				out[k] = int64(n)
+			}
+		}
+	}
+	return out
+}
+
+// sameExecPair reports whether every leaf is executed by the same agent and
+// verified by the same verifier — a merge across different executors would
+// silently move one person's work onto another.
+func sameExecPair(g *WorkflowGraph, leaves []WorkflowNode) bool {
+	verifier := map[string]string{}
+	for _, n := range g.Nodes {
+		if n.Kind == "verify" && n.SubGoalID != "" {
+			verifier[n.SubGoalID] = n.AssigneeID
+		}
+	}
+	firstAssignee := leaves[0].AssigneeID
+	firstVerifier := verifier[leaves[0].SubGoalID]
+	for _, n := range leaves[1:] {
+		if n.AssigneeID != firstAssignee || verifier[n.SubGoalID] != firstVerifier {
+			return false
+		}
+	}
+	return true
+}
+
 // ── T1 structure rules ──────────────────────────────────────────────────
 
 func (s *RSIService) structureFindings(ctx context.Context, goalID string, g *WorkflowGraph) []RsiFinding {
@@ -538,65 +343,112 @@ func (s *RSIService) structureFindings(ctx context.Context, goalID string, g *Wo
 	m := g.Metrics
 	cp := mi(m, "critical_path_ms")
 	work := mi(m, "work_sum_ms")
-	speedup := mf(m, "parallel_speedup")
+	wallMS := mi(m, "wall_ms")
+	agentBusy := mi(m, "agent_busy_ms")
+	if agentBusy <= 0 {
+		agentBusy = work
+	}
 
-	// serial_chain: a long forced chain — was this parallelism necessary?
-	if depth := len(g.Critical); depth >= ruleSerialChainThreshold {
+	// serial_chain: a long forced chain of EXECUTION nodes. Verification hops
+	// are structural, not serialization: counting them let two 30-min tasks
+	// plus their verifications pass as a "4-node chain".
+	agentChain := 0
+	chainKeys := []string{}
+	for _, k := range g.Critical {
+		n := nodeByKey(g, k)
+		if n != nil && n.Kind == "agent" {
+			agentChain++
+			chainKeys = append(chainKeys, k)
+		}
+	}
+	cpShare := 0.0
+	if wallMS > 0 {
+		cpShare = float64(cp) / float64(wallMS)
+	}
+	if agentChain >= ruleSerialChainThreshold && cpShare >= ruleSerialChainWallShare {
 		out = append(out, RsiFinding{
 			Category: "serial_chain", Severity: "warn", Confidence: "L1",
-			Title: fmt.Sprintf("关键路径为 %d 节点串行链", depth),
-			Explanation: fmt.Sprintf("关键路径时长 %s（占墙钟 %.0f%%），整图 work/critical = %.2f×。若链上存在人为引入的依赖（本应并行），这是最大的提速杠杆。",
-				humanMS(cp), pct(cp, mi(m, "wall_ms")), speedup),
+			Title: fmt.Sprintf("关键路径为 %d 个执行节点串行链", agentChain),
+			Explanation: fmt.Sprintf("关键路径含 %d 个执行节点（另有验证/咨询跳数），链长 %s，占墙钟 %.0f%%。若链上存在人为引入的依赖（本应并行），这是最大的提速杠杆。",
+				agentChain, humanMS(cp), 100*cpShare),
 			Suggestion: "逐边检查链上的 depends_on/seq：拆掉仅因「先做完再做」习惯而引入的依赖，把无数据依赖的节点改为并行派发。",
-			Evidence:   []string{fmt.Sprintf("critical_path=%s", strings.Join(g.Critical, " → "))},
-			Score:      float64(depth) * 10,
+			Evidence: []string{fmt.Sprintf("agent_chain=%d critical_path=%s", agentChain, strings.Join(chainKeys, " → ")),
+				fmt.Sprintf("critical_path_ms=%d wall_ms=%d cp_share=%.2f", cp, wallMS, cpShare)},
+			Score: ruleScore(scoreBaseWarn, cpShare, ruleSerialChainWallShare),
 		})
 	}
 
-	// split_candidate: heavy nodes dominate the path.
+	// split_candidate: one node carries a large share of agent busy time. The
+	// denominator is agent_busy_ms so verification/consult/integration time no
+	// longer crowds the candidate out of the old 45%-of-critical-path window.
 	heavy := []WorkflowNode{}
+	heaviest := 0.0
 	for _, k := range g.Critical {
-		for _, n := range g.Nodes {
-			if n.Key == k && n.Kind == "agent" && cp > 0 && float64(n.DurationMS)/float64(cp) >= ruleSplitShare {
-				heavy = append(heavy, n)
+		n := nodeByKey(g, k)
+		if n == nil || n.Kind != "agent" || agentBusy <= 0 {
+			continue
+		}
+		share := float64(n.DurationMS) / float64(agentBusy)
+		if share >= ruleSplitShare {
+			heavy = append(heavy, *n)
+			if share > heaviest {
+				heaviest = share
 			}
 		}
 	}
 	if len(heavy) >= ruleSplitCount {
-		names := make([]string, 0, len(heavy))
-		ev := make([]string, 0, len(heavy))
+		names, ev := []string{}, []string{}
 		for _, n := range heavy {
+			share := float64(n.DurationMS) / float64(agentBusy)
 			names = append(names, n.Label)
-			ev = append(ev, fmt.Sprintf("%s: %s（占关键路径 %.0f%%）", n.Label, humanMS(n.DurationMS), 100*float64(n.DurationMS)/float64(cp)))
+			ev = append(ev, fmt.Sprintf("%s: %s（占 agent busy %.0f%%）", n.Label, humanMS(n.DurationMS), 100*share))
 		}
 		out = append(out, RsiFinding{
 			Category: "split_candidate", Severity: "warn", Confidence: "L1",
-			Title: fmt.Sprintf("%d 个重型节点占据关键路径，可拆分并行", len(heavy)),
-			Explanation: fmt.Sprintf("节点 [%s] 各自占关键路径 ≥%d%%。若其内部是「多个独立子项顺序处理」，拆成并行子节点可把该段时长从求和降为取最大。",
+			Title: fmt.Sprintf("%d 个重型节点占执行时长 ≥%d%%，可拆分并行", len(heavy), int(ruleSplitShare*100)),
+			Explanation: fmt.Sprintf("节点 [%s] 各自占 agent busy ≥%d%%。若其内部是「多个独立子项顺序处理」，拆成并行子节点可把该段时长从求和降为取最大。",
 				strings.Join(names, "、"), int(ruleSplitShare*100)),
 			Suggestion: "把这些节点的产出物按数据依赖拆分：每份独立子项开一个 sub_goal（声明 depends_on 只指向真正的前置），由同一 squad 并行认领。",
 			Evidence:   ev,
-			Score:      float64(len(heavy)) * 25,
+			Score:      ruleScore(scoreBaseWarn, heaviest, ruleSplitShare),
 		})
 	}
 
-	// lost_parallelism: achievable speedup is large but unrealized.
+	// lost_parallelism: the realized serialization/queue loss is large AND the
+	// work is mostly agent execution, so the remedy is dispatch/dependency
+	// shaping rather than "the machine was slow".
 	if cp > 0 && work > 0 {
 		gain := float64(work) / float64(cp)
-		if gain >= ruleLostParallelGain && speedup < gain*0.7 {
+		lossShare := mf(m, "serialization_loss_share")
+		agentShare := 0.0
+		if work > 0 {
+			agentShare = float64(agentBusy) / float64(work)
+		}
+		if gain >= ruleLostParallelGain && lossShare > ruleLostSerialShare && agentShare >= ruleLostAgentBusyShare {
+			sugg := "对照 seq 边（虚线）复核：时间先后 ≠ 数据依赖。把不共享读写对象的相邻节点改为可并行。"
+			if laneCount := mi(m, "lane_count"); laneCount <= 1 {
+				sugg = "只有 1 条执行通道：先增加可并行认领的执行者/通道，再拆依赖；否则拆出的节点仍会排队。"
+			}
 			out = append(out, RsiFinding{
 				Category: "lost_parallelism", Severity: "info", Confidence: "L1",
-				Title: fmt.Sprintf("理论并行收益 %.1f×，实际仅 %.1f×", gain, speedup),
-				Explanation: fmt.Sprintf("总工作量 %s，墙钟 %s。大部分时间节点在排队而非工作 —— 收益差距来自串行化（依赖声明过强或派发过晚）。",
-					humanMS(work), humanMS(mi(m, "wall_ms"))),
-				Suggestion: "对照 seq 边（虚线）复核：时间先后 ≠ 数据依赖。把不共享读写对象的相邻节点改为可并行。",
-				Evidence:   []string{fmt.Sprintf("work_sum_ms=%d wall_ms=%d critical_path_ms=%d", work, mi(m, "wall_ms"), cp)},
-				Score:      gain * 15,
+				Title: fmt.Sprintf("理论并行收益 %.1f×，并行收益损失 %.0f%%", gain, 100*lossShare),
+				Explanation: fmt.Sprintf("总工作量 %s，墙钟 %s，其中串行化损失 %s（%.0f%% 墙钟）；执行型工作占 %.0f%%。收益差距主要来自依赖声明过强或派发过晚，而不是机器本身慢。",
+					humanMS(work), humanMS(wallMS), humanMS(mi(m, "serialization_loss_ms")), 100*lossShare, 100*agentShare),
+				Suggestion: sugg,
+				Evidence: []string{
+					fmt.Sprintf("gain=%.2f loss_share=%.2f agent_busy_share=%.2f", gain, lossShare, agentShare),
+					fmt.Sprintf("dependency_wait_ms=%d dispatch_wait_ms=%d lane_count=%d", mi(m, "dependency_wait_ms"), mi(m, "dispatch_wait_ms"), mi(m, "lane_count")),
+				},
+				Score: ruleScore(scoreBaseInfo, lossShare, ruleLostSerialShare),
 			})
 		}
 	}
 
-	// merge_candidate: several small siblings finish together — merge overhead.
+	// merge_candidate: several leaves overlap in time and are executed AND
+	// verified by the same pair. Merging the cheapest ones must only add a
+	// bounded serialization increment (5 min or 10% of wall) — the old rule
+	// capped leaf DURATION, which excluded the small-but-serial leaves that
+	// are exactly the ones worth merging.
 	leaves := endingLeaves(g)
 	if len(leaves) >= ruleMergeWall {
 		sort.Slice(leaves, func(i, j int) bool { return leaves[i].EndedAtMS < leaves[j].EndedAtMS })
@@ -607,16 +459,41 @@ func (s *RSIService) structureFindings(ctx context.Context, goalID string, g *Wo
 				maxDur = n.DurationMS
 			}
 		}
-		if maxDur > 0 && float64(spread)/float64(maxDur) <= ruleMergeSpread {
-			out = append(out, RsiFinding{
-				Category: "merge_candidate", Severity: "info", Confidence: "L1",
-				Title: fmt.Sprintf("%d 个末梢节点几乎同时结束，合并可省派发开销", len(leaves)),
-				Explanation: fmt.Sprintf("节点 [%s] 在 %s 窗口内先后结束，且单个节点都很小（max %s）。每个 sub_goal 都有固定的认领/验证/集成开销。",
-					shortNames(leaves), humanMS(spread), humanMS(maxDur)),
-				Suggestion: "若这些节点由同一执行者完成且共享上下文，合并为一个 sub_goal 的多产出物；仅当需要不同执行者并行时才保留拆分。",
-				Evidence:   []string{fmt.Sprintf("leaves=%d end_spread_ms=%d", len(leaves), spread)},
-				Score:      float64(len(leaves)) * 8,
+		if maxDur > 0 && float64(spread)/float64(maxDur) <= ruleMergeSpread && sameExecPair(g, leaves) {
+			budget := int64(ruleMergeAddedWallMS)
+			if shareBudget := int64(ruleMergeAddedWallShare * float64(wallMS)); shareBudget < budget {
+				budget = shareBudget
+			}
+			asc := append([]WorkflowNode(nil), leaves...)
+			sort.SliceStable(asc, func(i, j int) bool {
+				if asc[i].DurationMS != asc[j].DurationMS {
+					return asc[i].DurationMS < asc[j].DurationMS
+				}
+				return asc[i].Key < asc[j].Key
 			})
+			var added int64
+			victims := []string{}
+			for _, n := range asc {
+				if len(victims) >= 2 || added+n.DurationMS > budget {
+					continue
+				}
+				added += n.DurationMS
+				victims = append(victims, n.Label)
+			}
+			if len(victims) > 0 {
+				out = append(out, RsiFinding{
+					Category: "merge_candidate", Severity: "info", Confidence: "L1",
+					Title: fmt.Sprintf("末梢节点可合并：%d 个几乎同时收尾，合并省派发开销", len(leaves)),
+					Explanation: fmt.Sprintf("节点 [%s] 在 %s 窗口内先后结束（最长 %s），且由同一执行者/验证者完成。合并最便宜的 %d 个后墙钟只增加 %s（预算 %s）。",
+						shortNames(leaves), humanMS(spread), humanMS(maxDur), len(victims), humanMS(added), humanMS(budget)),
+					Suggestion: "若这些节点共享上下文，合并为一个 sub_goal 的多产出物；仅当需要不同执行者并行时才保留拆分。",
+					Evidence: []string{
+						fmt.Sprintf("leaves=%d end_spread_ms=%d added_ms=%d budget_ms=%d", len(leaves), spread, added, budget),
+						fmt.Sprintf("merge_candidates=%s", strings.Join(victims, "、")),
+					},
+					Score: ruleScore(scoreBaseInfo, float64(added), float64(budget)),
+				})
+			}
 		}
 	}
 	return out
@@ -627,17 +504,58 @@ func (s *RSIService) structureFindings(ctx context.Context, goalID string, g *Wo
 func (s *RSIService) dispatchFindings(ctx context.Context, goalID string, g *WorkflowGraph) []RsiFinding {
 	out := []RsiFinding{}
 	m := g.Metrics
-	if imb := mf(m, "lane_imbalance"); imb >= ruleLaneImbalance && mi(m, "lane_count") >= 2 {
-		out = append(out, RsiFinding{
-			Category: "wrong_assignee", Severity: "warn", Confidence: "L1",
-			Title: fmt.Sprintf("负载不均：最忙通道是均值的 %.1f 倍", imb),
-			Explanation: fmt.Sprintf("%d 条执行通道（%s）。最忙通道决定墙钟下限 —— 关键路径大概率压在同一个执行者身上。",
-				mi(m, "lane_count"), laneDump(m)),
-			Suggestion: "把最忙通道上可独立的 sub_goal 重新分派给空闲成员（squad 页编排图可直观看通道分布）；或在派发时按 in-flight 数选人。",
-			Evidence:   []string{fmt.Sprintf("lane_imbalance=%.2f lanes=%d", imb, mi(m, "lane_count"))},
-			Score:      imb * 20,
-		})
+	lanes := metricLanes(m)
+	if len(lanes) < 2 {
+		return out
 	}
+	busiest, busyMS := "", int64(0)
+	for a, v := range lanes {
+		if v > busyMS || (v == busyMS && (busiest == "" || a < busiest)) {
+			busiest, busyMS = a, v
+		}
+	}
+	if busyMS < ruleLaneMinBusyMS {
+		return out
+	}
+	others := []int64{}
+	for a, v := range lanes {
+		if a != busiest {
+			others = append(others, v)
+		}
+	}
+	sort.Slice(others, func(i, j int) bool { return others[i] < others[j] })
+	med := others[len(others)/2]
+	share := 0.0
+	if total := mi(m, "agent_busy_ms"); total > 0 {
+		share = float64(busyMS) / float64(total)
+	}
+	fired := false
+	score := scoreBaseWarn
+	if med == 0 {
+		fired = true
+		score = ruleScore(scoreBaseWarn, share, 0.60)
+	} else if float64(busyMS) >= ruleLaneImbalance*float64(med) {
+		fired = true
+		score = ruleScore(scoreBaseWarn, float64(busyMS), ruleLaneImbalance*float64(med))
+	} else if share >= 0.60 && len(lanes) >= 3 {
+		fired = true
+		score = ruleScore(scoreBaseWarn, share, 0.60)
+	}
+	if !fired {
+		return out
+	}
+	out = append(out, RsiFinding{
+		Category: "wrong_assignee", Severity: "warn", Confidence: "L1",
+		Title: fmt.Sprintf("负载不均：%s 占用 %.0f%% 的执行时长", busiest, 100*share),
+		Explanation: fmt.Sprintf("%d 条执行通道（含 0 负载的空闲成员）：最忙通道 %s 执行 %s，占 agent busy %.0f%%，其余通道中位数 %s。关键路径大概率压在同一个执行者身上。",
+			len(lanes), busiest, humanMS(busyMS), 100*share, humanMS(med)),
+		Suggestion: "把最忙通道上可独立的 sub_goal 分派给空闲成员（squad 页编排图可直观看通道分布）；或在派发时按 in-flight 数选人。",
+		Evidence: []string{
+			fmt.Sprintf("busiest=%s busiest_ms=%d median_others_ms=%d share=%.2f lanes=%d", busiest, busyMS, med, share, len(lanes)),
+			laneDump(m),
+		},
+		Score: score,
+	})
 	return out
 }
 
@@ -645,14 +563,11 @@ func (s *RSIService) dispatchFindings(ctx context.Context, goalID string, g *Wor
 
 func (s *RSIService) infoFlowFindings(ctx context.Context, goalID string, g *WorkflowGraph) []RsiFinding {
 	out := []RsiFinding{}
+	m := g.Metrics
 
-	// ping_pong: consult_request pairs repeating within one goal.
-	type pair struct {
-		req, tgt string
-		n        int
-	}
-	pairs := map[string]*pair{}
-	order := []string{}
+	// ping_pong: consult_request round trips. Reciprocity is required — one
+	// side asking the same peer three times is "brief is thin", not ping-pong.
+	counts := map[string]int{}
 	rows, err := s.st.DB().QueryContext(ctx,
 		`SELECT requester_agent_id,target_agent_id FROM consult_request WHERE goal_id=?`, goalID)
 	if err == nil {
@@ -661,72 +576,109 @@ func (s *RSIService) infoFlowFindings(ctx context.Context, goalID string, g *Wor
 			if err := rows.Scan(&req, &tgt); err != nil {
 				continue
 			}
-			k := req + "→" + tgt
-			p, ok := pairs[k]
-			if !ok {
-				p = &pair{req: req, tgt: tgt}
-				pairs[k] = p
-				order = append(order, k)
+			if req == "" || tgt == "" {
+				continue
 			}
-			p.n++
+			counts[req+"\x00"+tgt]++
 		}
 		rows.Close()
 	}
-	for _, k := range order {
-		p := pairs[k]
-		if p.n >= rulePingPongPairs {
-			out = append(out, RsiFinding{
-				Category: "ping_pong", Severity: "warn", Confidence: "L1",
-				Title: fmt.Sprintf("咨询乒乓：同一对 agent 往来 %d 次", p.n),
-				Explanation: fmt.Sprintf("%s → %s 往返 %d 次。每次往返都是一整轮 run（排队+执行+等待），信息本可一次给全。",
-					p.req, p.tgt, p.n),
-				Suggestion: "把第一次咨询的问题清单化（一次性列出全部待确认项）；或在派发时把该 target 的上下文直接写进 sub_goal 描述，省掉来回。",
-				Evidence:   []string{fmt.Sprintf("pair=%s count=%d", k, p.n)},
-				Score:      float64(p.n) * 15,
-			})
+	pairKeys := make([]string, 0, len(counts))
+	for k := range counts {
+		pairKeys = append(pairKeys, k)
+	}
+	sort.Strings(pairKeys)
+	seen := map[string]bool{}
+	for _, k := range pairKeys {
+		if seen[k] {
+			continue
 		}
+		parts := strings.SplitN(k, "\x00", 2)
+		rev := parts[1] + "\x00" + parts[0]
+		if counts[k] < rulePingPongPairs || counts[rev] < rulePingPongPairs {
+			continue
+		}
+		seen[k], seen[rev] = true, true
+		total := counts[k] + counts[rev]
+		out = append(out, RsiFinding{
+			Category: "ping_pong", Severity: "warn", Confidence: "L1",
+			Title: fmt.Sprintf("咨询乒乓：%s 与 %s 往返 %d 次", parts[0], parts[1], total),
+			Explanation: fmt.Sprintf("%s ↔ %s 各问 %d 次（合计 %d 次）。每次往返都是一整轮 run（排队+执行+等待），信息本可一次给全。",
+				parts[0], parts[1], counts[k], total),
+			Suggestion: "把第一次咨询的问题清单化（一次性列出全部待确认项）；或在派发时把对方上下文直接写进 sub_goal 描述，省掉来回。",
+			Evidence:   []string{fmt.Sprintf("pair=%s↔%s each=%d,%d total=%d", parts[0], parts[1], counts[k], counts[rev], total)},
+			Score:      ruleScore(scoreBaseWarn, float64(total), float64(2*rulePingPongPairs)),
+		})
 	}
 
-	// brief_quality: verification keeps rejecting — the brief is the magnet.
-	rework := mf(g.Metrics, "rework_ratio")
-	var reworked []string
+	// brief_quality: verification keeps rejecting across MULTIPLE sub-goals —
+	// the brief is the magnet. One noisy task with two rejects is not enough.
+	rework := mf(m, "rework_ratio")
+	reworked := []string{}
+	rejects := 0
+	maxReworks := 0
 	for _, n := range g.Nodes {
 		if n.Kind == "verify" && n.Reworks > 0 && n.Attempt >= 2 {
+			rejects += n.Reworks
+			if n.Reworks > maxReworks {
+				maxReworks = n.Reworks
+			}
 			if r := sgLabel(g, n.SubGoalID); r != "" {
 				reworked = append(reworked, fmt.Sprintf("%s（%d 轮 %d 拒）", r, n.Attempt, n.Reworks))
 			}
 		}
 	}
-	if rework >= ruleReworkRatio && len(reworked) > 0 {
+	// Two shapes justify the rule: rework spread over multiple sub-goals
+	// (a systemic brief problem), or one task rejected repeatedly (a single
+	// badly-written brief). A lone reject on one round stays below the bar.
+	if rework >= ruleReworkRatio && ((len(reworked) >= ruleReworkMinSubGoals && rejects >= ruleReworkMinRejects) || maxReworks >= 2) {
 		out = append(out, RsiFinding{
 			Category: "brief_quality", Severity: "warn", Confidence: "L1",
-			Title: fmt.Sprintf("返工率 %.0f%%：任务简报疑似信息不足", rework*100),
-			Explanation: fmt.Sprintf("验证轮次中 %.0f%% 被拒：%s。反复被拒通常不是执行问题，而是 brief 缺少验收标准或关键上下文。",
-				rework*100, strings.Join(reworked, "；")),
+			Title: fmt.Sprintf("返工率 %.0f%%：多个任务简报疑似信息不足", rework*100),
+			Explanation: fmt.Sprintf("验证轮次中 %.0f%% 被拒，涉及 %d 个任务、共 %d 次拒绝：%s。反复被拒通常不是执行问题，而是 brief 缺少验收标准或关键上下文。",
+				rework*100, len(reworked), rejects, strings.Join(reworked, "；")),
 			Suggestion: "在 sub_goal 描述里补：验收标准（verifier 按什么判 pass）、输入产出物路径、已知约束；必要时先 consult 再派发（前移而不是事后返工）。",
 			Evidence:   reworked,
-			Score:      rework * 40,
+			Score:      ruleScore(scoreBaseWarn, rework, ruleReworkRatio),
 		})
 	}
 
-	// consult_repeat / consult front-loading: consults requested BY a
-	// sub-goal run — clarification happening mid-execution.
-	late := 0
+	// consult_repeat: the SAME sub-goal asked mid-execution repeatedly. The old
+	// rule counted the whole goal and said nothing about which brief to fix.
+	type sgConsults struct {
+		sg string
+		n  int
+	}
+	list := []sgConsults{}
 	crows, err := s.st.DB().QueryContext(ctx,
-		`SELECT COUNT(*) FROM consult_request cr JOIN run r ON r.id=cr.requester_run_id
-		 WHERE cr.goal_id=? AND r.sub_goal_id!=''`, goalID)
+		`SELECT r.sub_goal_id, COUNT(*) FROM consult_request cr JOIN run r ON r.id=cr.requester_run_id
+		 WHERE cr.goal_id=? AND r.sub_goal_id!='' GROUP BY r.sub_goal_id HAVING COUNT(*) >= ?
+		 ORDER BY COUNT(*) DESC`, goalID, ruleConsultRepeat)
 	if err == nil {
-		_ = crows.Scan(&late)
+		for crows.Next() {
+			var x sgConsults
+			if err := crows.Scan(&x.sg, &x.n); err != nil {
+				continue
+			}
+			list = append(list, x)
+		}
 		crows.Close()
 	}
-	if late >= ruleConsultRepeat {
+	if len(list) > 0 {
+		total := 0
+		ev := []string{}
+		for _, x := range list {
+			total += x.n
+			ev = append(ev, fmt.Sprintf("%s=%d", sgLabel(g, x.sg), x.n))
+		}
+		maxN := list[0].n
 		out = append(out, RsiFinding{
 			Category: "consult_repeat", Severity: "info", Confidence: "L1",
-			Title:       fmt.Sprintf("%d 次咨询发生在执行中途", late),
-			Explanation: "执行者边干边问，说明派发时上下文没给全。中途咨询把该节点的墙钟拉长为「执行+等待回复」。",
+			Title:       fmt.Sprintf("%d 个子任务在执行中途反复咨询（共 %d 次）", len(list), total),
+			Explanation: "同一个 sub_goal 的执行者边干边问，说明派发时上下文没给全。中途咨询把该节点的墙钟拉长为「执行+等待回复」。",
 			Suggestion:  "把这些咨询问题前移到 sub_goal 创建前（先 consult 再拆任务），或在描述中链接参考产出物。",
-			Evidence:    []string{fmt.Sprintf("mid_execution_consults=%d", late)},
-			Score:       float64(late) * 10,
+			Evidence:    ev,
+			Score:       ruleScore(scoreBaseInfo, float64(maxN), float64(ruleConsultRepeat)),
 		})
 	}
 	return out
@@ -737,45 +689,49 @@ func (s *RSIService) infoFlowFindings(ctx context.Context, goalID string, g *Wor
 func (s *RSIService) nodeFindings(ctx context.Context, goalID string, g *WorkflowGraph, metrics, baseline map[string]any) []RsiFinding {
 	out := []RsiFinding{}
 
-	// retry_amplification: some node ran far more than once. The metric is
-	// the max Attempt (not the average), so a single retry loop is visible
-	// instead of being diluted by well-behaved siblings.
+	// retry_amplification: some node ran far more than once. Two retries
+	// (attempt=3) is the threshold: the first retry may be a transient
+	// failure, the second means the failure mode repeats.
 	attempts := 0
 	for _, n := range agentNodes(g) {
 		attempts += n.Attempt
 	}
 	nodes := len(agentNodes(g))
 	maxAttempts := int(mf(metrics, "retry_amplification"))
-	if nodes > 0 && maxAttempts >= int(ruleRetryAmplification) {
+	if nodes > 0 && float64(maxAttempts) >= ruleRetryAmplification {
 		conf := "L1"
 		if b := numOr(baseline["retry_amplification"]); b > 0 && float64(maxAttempts) > b {
 			conf = "L2"
 		}
 		out = append(out, RsiFinding{
 			Category: "retry_amplification", Severity: "warn", Confidence: conf,
-			Title:       fmt.Sprintf("重试放大：单个子任务最多执行 %d 次", maxAttempts),
+			Title:       fmt.Sprintf("重试放大：单个子任务最多尝试 %d 次", maxAttempts),
 			Explanation: fmt.Sprintf("%d 个子任务共 %d 次执行。重试通常意味着失败模式重复（环境/凭据/简报），重试本身不修复原因。", nodes, attempts),
 			Suggestion:  "查看失败 sub_goal 的 cancel_reason/错误：若是可自愈类（依赖缺失、锁竞争），把前置检查加进 brief；若是权限类，改为派发前校验。",
 			Evidence:    []string{fmt.Sprintf("max_attempts=%d runs=%d nodes=%d", maxAttempts, attempts, nodes)},
-			Score:       float64(attempts) * 10,
+			Score:       ruleScore(scoreBaseWarn, float64(maxAttempts), ruleRetryAmplification),
 		})
 	}
 
-	// human_wait: gate review seconds vs total elapsed (wall + gate wait).
-	// Using wall alone produced impossible >100% shares because gate time
-	// happens after the run windows end.
+	// human_wait: both final delivery reviews (gate_decision) and blueprint
+	// gate decisions (holder run windows) are human wall-clock. A share alone
+	// can fire on a tiny goal with one 2-minute review, so a 10-minute floor
+	// guards the signal.
 	humanMSv := mi(metrics, "human_wait_ms")
 	wall := mi(metrics, "wall_ms")
+	gateWait := mi(metrics, "gate_wait_ms")
 	share := mf(metrics, "human_wait_share")
-	if share >= ruleHumanWaitShare {
+	if share >= ruleHumanWaitShare && humanMSv >= ruleHumanWaitFloorMS {
 		out = append(out, RsiFinding{
 			Category: "human_wait", Severity: "info", Confidence: "L1",
 			Title: fmt.Sprintf("人工等待占总时长 %.0f%%", 100*share),
-			Explanation: fmt.Sprintf("gate 审查累计 %s，机器执行墙钟 %s（合计 %s）。这是工作流里最大的非机器等待。",
-				humanMS(humanMSv), humanMS(wall), humanMS(wall+humanMSv)),
+			Explanation: fmt.Sprintf("人工决策/审查累计 %s（其中蓝图 gate 等待 %s，交付审查 %s），机器执行墙钟 %s（合计 %s）。这是工作流里最大的非机器等待。",
+				humanMS(humanMSv), humanMS(gateWait), humanMS(humanMSv-gateWait), humanMS(wall), humanMS(wall+humanMSv)),
 			Suggestion: "把高频 gate 的证据包固化成模板（结论+差异+回滚方案置顶），缩短人工判读时间；纯技术性 gate 可评估改为自动通过+事后抽查。",
-			Evidence:   []string{fmt.Sprintf("human_wait_ms=%d wall_ms=%d share=%.2f", humanMSv, wall, share)},
-			Score:      float64(humanMSv) / 1000,
+			Evidence: []string{
+				fmt.Sprintf("human_wait_ms=%d gate_wait_ms=%d wall_ms=%d share=%.2f", humanMSv, gateWait, wall, share),
+			},
+			Score: ruleScore(scoreBaseInfo, share, ruleHumanWaitShare),
 		})
 	}
 	return out
@@ -813,8 +769,9 @@ func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]
 		return map[string]any{}
 	}
 	keys := []string{"critical_path_ms", "parallel_speedup", "serialization_loss_ms",
-		"dependency_wait_ms", "dispatch_wait_ms", "verify_overhead_ratio", "review_overhead_ratio",
-		"rework_ratio", "consult_count", "human_wait_ms", "retry_amplification"}
+		"serialization_loss_share", "dependency_wait_ms", "dispatch_wait_ms", "verify_overhead_ratio",
+		"review_overhead_ratio", "rework_ratio", "consult_count", "human_wait_ms", "human_wait_share",
+		"gate_wait_ms", "retry_amplification", "agent_busy_ms", "lane_imbalance"}
 	out := map[string]any{}
 	for _, k := range keys {
 		vals := []float64{}
@@ -900,13 +857,13 @@ func shortNames(nodes []WorkflowNode) string {
 	return strings.Join(names, "、")
 }
 func laneDump(m map[string]any) string {
-	lanes, ok := m["lanes"].(map[string]any)
-	if !ok {
+	lanes := metricLanes(m)
+	if len(lanes) == 0 {
 		return "{}"
 	}
 	parts := []string{}
 	for k, v := range lanes {
-		parts = append(parts, fmt.Sprintf("%s=%dms", k, int64(numOr(v))))
+		parts = append(parts, fmt.Sprintf("%s=%dms", k, v))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")
