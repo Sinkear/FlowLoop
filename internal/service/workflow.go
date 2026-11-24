@@ -680,11 +680,17 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		}
 	}
 
-	// serialization_loss = actual wall - dependency-constrained minimum wall.
-	// (The old cp-maxNode formula measured imbalance, not lost time.)
-	serLoss := wall - cpMS
-	if serLoss < 0 {
-		serLoss = 0
+	// idle_gap = actual wall - dependency-constrained minimum wall. The number
+	// is the one the old serialization_loss_ms carried, but it measures IDLE
+	// time (dispatch/gate/queue gaps), NOT a serialization penalty: work that
+	// runs one after another because a dependency says so is required labour,
+	// and calling it a loss made a 39-minute necessary chain read as
+	// optimizable. The old key stays as a deprecated alias so RSI round
+	// ledgers, AB metric keys and frozen reports keep reading a number
+	// (issue #13, D1: keep the value, fix the name).
+	idleGap := wall - cpMS
+	if idleGap < 0 {
+		idleGap = 0
 	}
 	// parallel_speedup is actual throughput vs. one-lane execution:
 	// work_sum/wall. 1.0 = fully serial, 2.0 = two lanes' worth of work in
@@ -728,6 +734,11 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	}
 
 	m := g.Metrics
+	// metrics_schema_version = 2 (2026-11-24, issue #13): serialization_loss_ms
+	// renamed to idle_gap_ms (old key kept as an alias) and the critical path
+	// now chains through windowless nodes, so cp/depth/idle_gap are NOT
+	// comparable with version-1 reports. Trend comparisons must respect this.
+	m["metrics_schema_version"] = int64(2)
 	m["node_count"] = len(g.Nodes)
 	m["edge_count"] = len(g.Edges)
 	m["depth"] = int64(len(g.Critical))
@@ -735,7 +746,11 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m["wall_ms"] = wall
 	m["critical_path_ms"] = cpMS
 	m["parallel_speedup"] = speedup
-	m["serialization_loss_ms"] = serLoss
+	m["idle_gap_ms"] = idleGap
+	// serialization_loss_ms is DEPRECATED: same value as idle_gap_ms, kept only
+	// so existing readers (rsi.go SerializationLossMS, ABMetricKeys, delta keys,
+	// frozen rsi_report rows) do not break. New readers must use idle_gap_ms.
+	m["serialization_loss_ms"] = idleGap
 	m["parallel_width_peak"] = peak
 	m["verify_overhead_ratio"] = verifyOverhead
 	m["review_busy_ms"] = reviewBusy

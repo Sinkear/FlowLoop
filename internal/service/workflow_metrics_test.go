@@ -170,6 +170,45 @@ func TestWorkflowCriticalPathChainsThroughWindowlessNode(t *testing.T) {
 	}
 }
 
+// Issue #13 (D1): the metric that carries wall - cp is an IDLE GAP, not a
+// serialization loss. It is published as idle_gap_ms and the old key stays as a
+// same-value deprecated alias so RSI round ledgers and AB tables keep reading a
+// number; the schema version marks the口径 break for trend comparisons.
+func TestWorkflowIdleGapAliasSameValue(t *testing.T) {
+	m := int64(time.Minute / time.Millisecond)
+	g := wfGraph(
+		[]WorkflowNode{
+			wfAgent("sg:a", wfTestBase, 30*m),
+			// Independent task 30 min after: wall 60, cp 30 → 30 min of idle gap.
+			wfAgent("sg:b", wfTestBase+30*m, 30*m),
+		}, nil)
+	computeWorkflowMetrics(g)
+	want := 30 * m
+	if got := mi(g.Metrics, "idle_gap_ms"); got != want {
+		t.Fatalf("idle_gap_ms = %d, want %d", got, want)
+	}
+	if got := mi(g.Metrics, "serialization_loss_ms"); got != want {
+		t.Fatalf("serialization_loss_ms = %d, want %d (deprecated alias must keep the same value)", got, want)
+	}
+	if got := mi(g.Metrics, "metrics_schema_version"); got != 2 {
+		t.Fatalf("metrics_schema_version = %d, want 2", got)
+	}
+	// Pure linear chain → no gap at all (the alias must not fabricate one).
+	linear := wfGraph(
+		[]WorkflowNode{
+			wfAgent("sg:a", wfTestBase, 30*m),
+			wfAgent("sg:b", wfTestBase+30*m, 30*m),
+		},
+		[]WorkflowEdge{{From: "sg:a", To: "sg:b", Kind: "depends_on", Source: "explicit"}})
+	computeWorkflowMetrics(linear)
+	if got := mi(linear.Metrics, "idle_gap_ms"); got != 0 {
+		t.Fatalf("idle_gap_ms = %d, want 0 on a linear chain", got)
+	}
+	if got := mi(linear.Metrics, "critical_path_ms"); got != mi(linear.Metrics, "work_sum_ms") {
+		t.Fatalf("linear chain: cp %d != work_sum %d", got, mi(linear.Metrics, "work_sum_ms"))
+	}
+}
+
 // Splitting a long serial gap into two independent tasks is exactly the
 // "lost parallelism" case: work 60, cp 30, actual speedup 1.0.
 func TestWorkflowLostParallelismInputs(t *testing.T) {
