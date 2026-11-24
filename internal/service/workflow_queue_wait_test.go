@@ -55,10 +55,26 @@ func newQueueWaitHarness(t *testing.T) *queueWaitHarness {
 
 func (h *queueWaitHarness) sub(id, deps string) {
 	h.t.Helper()
+	h.subStatus(id, deps, "verified")
+}
+
+func (h *queueWaitHarness) subStatus(id, deps, status string) {
+	h.t.Helper()
 	cts := h.subAt.UTC().Format(time.RFC3339Nano)
 	if _, err := h.st.DB().Exec(`INSERT INTO sub_goal (id,goal_id,title,assignee_id,status,depends_on,created_at)
-		VALUES (?,?,?,?,?,?,?)`, id, h.goal, id, "ag-x", "verified", deps, cts); err != nil {
+		VALUES (?,?,?,?,?,?,?)`, id, h.goal, id, "ag-x", status, deps, cts); err != nil {
 		h.t.Fatalf("sub_goal %s: %v", id, err)
+	}
+}
+
+// gateNode links a sub-goal to a blueprint gate holder: gates are settled by
+// a human/auto decision and by construction never get a run of their own.
+func (h *queueWaitHarness) gateNode(nodeKey, sgID string) {
+	h.t.Helper()
+	if _, err := h.st.DB().Exec(`INSERT INTO blueprint_node (id,goal_id,node_key,node_type,sub_goal_id,state,created_at)
+		VALUES (?,?,?,'gate',?,'running',?)`,
+		newID(), h.goal, nodeKey, sgID, h.subAt.UTC().Format(time.RFC3339Nano)); err != nil {
+		h.t.Fatalf("blueprint_node %s: %v", nodeKey, err)
 	}
 }
 
@@ -69,6 +85,17 @@ func (h *queueWaitHarness) run(id, sgid string, start, finish time.Time) {
 	// so only the dependency gate (if any) can delay it.
 	if _, err := h.st.DB().Exec(`INSERT INTO run (id,goal_id,sub_goal_id,agent_id,role,status,attempt,queued_at,started_at,finished_at,created_at)
 		VALUES (?,?,?,?,?,?,1,?,?,?,?)`, id, h.goal, sgid, "ag-x", "subgoal", "completed", sts, sts, fis, sts); err != nil {
+		h.t.Fatalf("run %s: %v", id, err)
+	}
+}
+
+// runOpen inserts a run that started but has not finished (empty end
+// timestamp), i.e. a sub-goal that is still executing when the graph is read.
+func (h *queueWaitHarness) runOpen(id, sgid string, start time.Time) {
+	h.t.Helper()
+	sts := start.UTC().Format(time.RFC3339Nano)
+	if _, err := h.st.DB().Exec(`INSERT INTO run (id,goal_id,sub_goal_id,agent_id,role,status,attempt,queued_at,started_at,finished_at,created_at)
+		VALUES (?,?,?,?,?,'running',1,?,?,'',?)`, id, h.goal, sgid, "ag-x", "subgoal", sts, sts, sts); err != nil {
 		h.t.Fatalf("run %s: %v", id, err)
 	}
 }
@@ -156,7 +183,8 @@ func TestQueueWaitNoDependencies(t *testing.T) {
 func TestQueueWaitUnrunSubGoal(t *testing.T) {
 	h := newQueueWaitHarness(t)
 	h.sub("sg-a", "[]")
-	h.sub("sg-b", "[]")
+	// sg-b was created but never dispatched: still running, no run row.
+	h.subStatus("sg-b", "[]", "running")
 	h.run("run-a", "sg-a", h.base, h.base.Add(10*time.Minute))
 
 	g := h.graph()
@@ -168,31 +196,92 @@ func TestQueueWaitUnrunSubGoal(t *testing.T) {
 	}
 }
 
-func TestQueueWaitCappedToWall(t *testing.T) {
+func TestQueueWaitVerifiedWithoutRunIsNotUnrun(t *testing.T) {
+	h := newQueueWaitHarness(t)
+	// Settled without a run of its own (router/gate style settle): the node
+	// is done, not "pending dispatch".
+	h.sub("sg-a", "[]")
+
+	g := h.graph()
+	if got := mi(g.Metrics, "unrun_sub_goals"); got != 0 {
+		t.Fatalf("unrun_sub_goals = %d, want 0 (verified sub-goal must not count as unrun)", got)
+	}
+}
+
+func TestQueueWaitGateHolderIsNotUnrun(t *testing.T) {
+	h := newQueueWaitHarness(t)
+	// A blueprint gate holder never gets a run at all — the human/auto
+	// decision settles it. It must not be reported as an unexecuted sub-goal.
+	h.subStatus("sg-gate", "[]", "running")
+	h.gateNode("gate-1", "sg-gate")
+	h.subStatus("sg-wait", `["sg-gate"]`, "running")
+
+	g := h.graph()
+	if got := mi(g.Metrics, "unrun_sub_goals"); got != 1 {
+		t.Fatalf("unrun_sub_goals = %d, want 1 (only the gated sg-wait, not the gate holder)", got)
+	}
+}
+
+func TestQueueWaitInFlightSubGoalWithinSpan(t *testing.T) {
+	h := newQueueWaitHarness(t)
+	h.sub("sg-a", "[]")
+	// The only run is still in flight (finished_at=''): it contributes no
+	// busy window, so wall_ms stays 0. The dispatch delay must still be
+	// bounded by the orchestration span (ready → now), never by wall_ms
+	// (#11 symptom: queue_wait > wall).
+	h.runOpen("run-a", "sg-a", h.base.Add(10*time.Minute))
+
+	g := h.graph()
+	wall := mi(g.Metrics, "wall_ms")
+	span := mi(g.Metrics, "wall_span_ms")
+	q := mi(g.Metrics, "queue_wait_ms")
+	if wall != 0 {
+		t.Fatalf("wall_ms = %d, want 0 (in-flight run has no busy window)", wall)
+	}
+	if q != int64(10*time.Minute/time.Millisecond) {
+		t.Fatalf("queue_wait_ms = %d, want 10min dispatch delay", q)
+	}
+	if span < q {
+		t.Fatalf("wall_span_ms = %d is below queue_wait_ms = %d (span must cover ready→now)", span, q)
+	}
+	if g.Metrics["queue_wait_capped"] == true {
+		t.Fatalf("queue_wait_capped = true, want unset (10min delay fits in the span)")
+	}
+}
+
+func TestQueueWaitCappedToSpan(t *testing.T) {
 	h := newQueueWaitHarness(t)
 	h.sub("sg-a", "[]")
 	h.sub("sg-b", "[]")
-	// Two independent runs both delayed 20min but overlapping for 10min:
-	// summed dispatch wait (40min) exceeds the 10min wall and must converge.
+	// Two independent runs both delayed 20min and overlapping for 10min:
+	// summed dispatch wait (40min) exceeds the 30min orchestration span
+	// (ready at base → last finish at base+30) and must converge to it.
 	h.run("run-a", "sg-a", h.base.Add(20*time.Minute), h.base.Add(30*time.Minute))
 	h.run("run-b", "sg-b", h.base.Add(20*time.Minute), h.base.Add(30*time.Minute))
 
 	g := h.graph()
 	wall := mi(g.Metrics, "wall_ms")
+	span := mi(g.Metrics, "wall_span_ms")
 	q := mi(g.Metrics, "queue_wait_ms")
-	if q > wall {
-		t.Fatalf("queue_wait_ms = %d exceeds wall_ms = %d", q, wall)
+	if span != int64(30*time.Minute/time.Millisecond) {
+		t.Fatalf("wall_span_ms = %d, want 30min (ready base → last finish base+30)", span)
 	}
-	if q != wall {
-		t.Fatalf("queue_wait_ms = %d, want converged to wall_ms = %d", q, wall)
+	if wall != int64(10*time.Minute/time.Millisecond) {
+		t.Fatalf("wall_ms = %d, want 10min busy wall", wall)
+	}
+	if q > span {
+		t.Fatalf("queue_wait_ms = %d exceeds wall_span_ms = %d", q, span)
+	}
+	if q != span {
+		t.Fatalf("queue_wait_ms = %d, want converged to wall_span_ms = %d", q, span)
 	}
 	if g.Metrics["queue_wait_capped"] != true {
 		t.Fatalf("queue_wait_capped = %v, want true", g.Metrics["queue_wait_capped"])
 	}
-	if got := mi(g.Metrics, "queue_wait_overlap_ms"); got != int64(30*time.Minute/time.Millisecond) {
-		t.Fatalf("queue_wait_overlap_ms = %d, want 30min (40min summed - 10min wall)", got)
+	if got := mi(g.Metrics, "queue_wait_overlap_ms"); got != int64(10*time.Minute/time.Millisecond) {
+		t.Fatalf("queue_wait_overlap_ms = %d, want 10min (40min summed - 30min span)", got)
 	}
-	if got := mi(g.Metrics, "dispatch_wait_ms"); got != wall {
-		t.Fatalf("dispatch_wait_ms = %d, want capped to wall %d", got, wall)
+	if got := mi(g.Metrics, "dispatch_wait_ms"); got != span {
+		t.Fatalf("dispatch_wait_ms = %d, want capped to wall_span_ms %d", got, span)
 	}
 }

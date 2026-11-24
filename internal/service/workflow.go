@@ -194,27 +194,41 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		depsMap[id] = deps
 	}
 
-	var depWait, dispatchWait int64
+	// Dispatch wait is capped against the ORCHESTRATION SPAN below, not the
+	// busy wall: wall_ms only counts nodes with a positive busy window, so an
+	// in-flight run (finished_at='') contributes nothing and a single running
+	// sub-goal would report queue wait > wall (#11). The span runs from the
+	// earliest ready moment to the latest sub-goal finish — or now while a run
+	// is still in flight.
+	var depWait, dispatchWait, spanStart, spanEnd int64
+	nowMS, _ := parseTimeMS(now())
+	inFlight := false
 	for _, id := range sgOrder {
 		r := sgRows[id]
 		n := WorkflowNode{Key: "sg:" + id, Kind: "agent", Label: r.title, AssigneeID: r.assignee,
 			SubGoalID: id, Status: r.status, Attempt: 1, Reworks: r.qualityIter}
+		// Split queue time into dependency gate wait and dispatch delay:
+		// ready_at = max(sub_goal.created_at, latest dependency run end).
+		// A malformed/empty created_at must not turn a dependency's epoch
+		// timestamp into a ~55-year "wait": without a valid creation anchor
+		// both split metrics are unknown and stay 0.
+		createdMS, createdOK := parseTimeMS(r.createdAt)
+		readyMS := int64(0)
+		if createdOK {
+			readyMS = createdMS
+			for _, dep := range depsMap[id] {
+				if wd := wins[dep]; wd != nil && wd.end > readyMS {
+					readyMS = wd.end
+				}
+			}
+			if spanStart == 0 || readyMS < spanStart {
+				spanStart = readyMS
+			}
+		}
 		if w := wins[id]; w != nil {
 			n.Attempt = w.attempts
 			n.StartedAtMS, n.EndedAtMS, n.DurationMS = w.start, w.end, w.busy
-			// Split queue time into dependency gate wait and dispatch delay:
-			// ready_at = max(sub_goal.created_at, latest dependency run end).
-			// A malformed/empty created_at must not turn a dependency's epoch
-			// timestamp into a ~55-year "wait": without a valid creation anchor
-			// both split metrics are unknown and stay 0.
-			createdMS, createdOK := parseTimeMS(r.createdAt)
 			if createdOK {
-				readyMS := createdMS
-				for _, dep := range depsMap[id] {
-					if wd := wins[dep]; wd != nil && wd.end > readyMS {
-						readyMS = wd.end
-					}
-				}
 				if readyMS > createdMS {
 					depWait += readyMS - createdMS
 				}
@@ -222,9 +236,25 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 					dispatchWait += w.start - readyMS
 				}
 			}
+			if w.start > 0 && (spanStart == 0 || w.start < spanStart) {
+				spanStart = w.start
+			}
+			if w.end > spanEnd {
+				spanEnd = w.end
+			}
+			if w.start > 0 && w.end == 0 {
+				inFlight = true
+			}
 		}
 		graph.Nodes = append(graph.Nodes, n)
 		graph.Edges = append(graph.Edges, WorkflowEdge{From: "goal", To: n.Key, Kind: "created", Source: "explicit"})
+	}
+	if inFlight && nowMS > spanEnd {
+		spanEnd = nowMS
+	}
+	span := spanEnd - spanStart
+	if span < 0 {
+		span = 0
 	}
 
 	// Declared dependencies (explicit DAG) — best-effort JSON decode.
@@ -400,35 +430,58 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	computeWorkflowMetrics(graph)
-	wall := mi(graph.Metrics, "wall_ms")
 
 	// "排队等待" measures DISPATCH delay only: started_at − ready_at, where
 	// ready_at = max(created_at, latest dependency finish). Dependency gating
 	// is reported separately as dependency_wait_ms and must never be folded
-	// back in, otherwise a serial chain accumulates waits beyond the wall.
-	if wall > 0 && dispatchWait > wall {
-		graph.Metrics["queue_wait_overlap_ms"] = dispatchWait - wall
+	// back in, otherwise a serial chain accumulates waits beyond the span.
+	//
+	// Concurrent dispatches can still sum past the orchestration span (N
+	// parallel lanes waiting at once), so the total is capped at the span —
+	// earliest ready to last finish, or now while a run is in flight. The
+	// overflow is kept in queue_wait_overlap_ms instead of being dropped.
+	graph.Metrics["wall_span_ms"] = span
+	if span > 0 && dispatchWait > span {
+		graph.Metrics["queue_wait_overlap_ms"] = dispatchWait - span
 		graph.Metrics["queue_wait_capped"] = true
-		dispatchWait = wall
+		dispatchWait = span
 	}
 	graph.Metrics["dependency_wait_ms"] = depWait
 	graph.Metrics["dispatch_wait_ms"] = dispatchWait
 	// queue_wait_ms is a compatibility alias for dispatch_wait_ms.
 	graph.Metrics["queue_wait_ms"] = dispatchWait
 
-	// Sub-goals with no run of their own were never dispatched (for example
-	// folded into the owner run) — count them so the panel can say so instead
-	// of silently showing a zero wait.
+	// Sub-goals that never started executing: no run window at all and no
+	// settled outcome. A blueprint gate HOLDER is excluded even before its
+	// decision lands — by construction it never gets a run (the human/auto
+	// decision is its run), so counting it would label a decision node "未执行".
+	gateHolders := map[string]bool{}
+	if grows, err := s.st.DB().QueryContext(ctx,
+		`SELECT sub_goal_id FROM blueprint_node WHERE goal_id=? AND node_type='gate' AND sub_goal_id!=''`, goalID); err == nil {
+		for grows.Next() {
+			var sgid string
+			if grows.Scan(&sgid) == nil && sgid != "" {
+				gateHolders[sgid] = true
+			}
+		}
+		grows.Close()
+	}
 	unrun := int64(0)
 	for _, id := range sgOrder {
-		if wins[id] == nil {
-			unrun++
+		if wins[id] != nil || gateHolders[id] {
+			continue
 		}
+		switch sgRows[id].status {
+		case "verified", "cancelled", "failed":
+			continue // settled without a run of its own — not pending dispatch
+		}
+		unrun++
 	}
 	graph.Metrics["unrun_sub_goals"] = unrun
 
 	// Human gate wait is entity-level (gate_decision), not derivable from run
 	// windows. The share uses wall+wait so "占比" can never exceed 100%.
+	wall := mi(graph.Metrics, "wall_ms")
 	var humanWaitMS int64
 	_ = s.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(review_duration),0)*1000 FROM gate_decision WHERE goal_id=?`, goalID).Scan(&humanWaitMS)
