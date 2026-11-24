@@ -261,12 +261,17 @@ function NodeCard({
   const Icon = KIND_ICON[node.kind] ?? Waypoints;
   const isSpecNode = node.status === "spec";
   const duration = fmtMs(Number.isFinite(node.duration_ms) ? node.duration_ms : null);
+  // 机器验证轮（issue #13）：与执行 run 共用时间窗，没有独立计时 → duration 是 0，
+  // 但 0 是「没量到」而不是「不花时间」。这类节点脚注写「未度量」，不写 0ms。
+  const unmeasured = node.unmeasured === true && !(node.duration_ms > 0);
   const tooltip = [
     `${node.label || node.key}（${meta.label} · ${st.label}）`,
     node.status ? `状态：${node.status}` : "",
     isSpecNode
       ? "计划态节点：任务激活后才会执行"
-      : `耗时：${duration}`,
+      : unmeasured
+        ? "耗时：未度量（机器验证轮无独立时间窗）"
+        : `耗时：${duration}`,
     node.assignee_id ? `执行者：${node.assignee_id}` : "",
     node.attempt > 0 ? `尝试：${node.attempt}` : "",
     node.reworks > 0 ? `返工：${node.reworks}` : "",
@@ -320,8 +325,8 @@ function NodeCard({
           {node.label || node.key}
         </div>
         <div className="mt-auto flex items-center gap-2 overflow-hidden text-[10px] text-ink-3">
-          {!isSpecNode && duration !== DASH && (
-            <span className="shrink-0 font-mono tabular-nums">{duration}</span>
+          {!isSpecNode && (unmeasured || duration !== DASH) && (
+            <span className="shrink-0 font-mono tabular-nums">{unmeasured ? "未度量" : duration}</span>
           )}
           {node.attempt > 1 && <span className="shrink-0">尝试 {node.attempt}</span>}
           {node.reworks > 0 && (
@@ -399,6 +404,38 @@ export function WorkflowMetricsRow({
   const speedup = metricNum(m, "parallel_speedup");
   const rework = metricNum(m, "rework_ratio");
   const imbalance = metricNum(m, "lane_imbalance");
+  // #11：派发等待是累计口径，并行 lane 同时空转时可超过编排跨度——
+  // 后端按 wall_span_ms 封顶，超出量另记 queue_wait_overlap_ms；
+  // 未开始执行的子目标（unrun_sub_goals）不贡献等待，hint 里点明。
+  const unrun = metricNum(m, "unrun_sub_goals") ?? 0;
+  const capped = m["queue_wait_capped"] === true;
+  const overlap = metricNum(m, "queue_wait_overlap_ms");
+  const dispatchHint =
+    "派发延迟：工序就绪 → 实际开跑的调度延迟（累计口径，按编排跨度封顶）" +
+    (unrun > 0 ? `（${unrun} 个未开始执行的子目标不计入）` : "") +
+    (capped ? `（并行重叠已收敛到编排跨度，超出 ${fmtMs(overlap)} 记入 queue_wait_overlap_ms）` : "");
+  // 验证开销（issue #13）：机器验证轮在 daemon 内完成、与执行 run 共用时间窗，
+  // 账面上没有可分离的计时。此时「0%」是「没量到」，不是「验证不花钱」——
+  // 覆盖率不足就把数值位直接换成「未度量」，覆盖率在 hint 里说清楚。
+  const verifyScope = typeof m["verify_overhead_scope"] === "string" ? m["verify_overhead_scope"] : "";
+  const verifyMeasured = metricNum(m, "verify_measured_rounds");
+  const verifyUnmeasured = metricNum(m, "verify_unmeasured_rounds");
+  const verifyCoverage = metricNum(m, "verify_coverage_ratio");
+  const verifyRounds =
+    metricNum(m, "verify_rounds") ??
+    (verifyMeasured === null && verifyUnmeasured === null
+      ? null
+      : (verifyMeasured ?? 0) + (verifyUnmeasured ?? 0));
+  // 没有验证轮次时这条指标不适用（沿用原来的 0% 呈现），只有「有轮次但没量到」
+  // 才需要把 0% 换成「未度量」。
+  const verifyPartial =
+    verifyRounds !== null &&
+    verifyRounds > 0 &&
+    (verifyScope ? verifyScope !== "complete" : verifyCoverage !== null && verifyCoverage < 1);
+  const verifyHint =
+    verifyPartial && verifyRounds !== null
+      ? `验证占执行时间的比例：${fmtInt(verifyMeasured ?? 0)}/${fmtInt(verifyRounds)} 轮已度量（机器验证未计时）`
+      : "验证占执行时间比例（已度量轮次）";
   const items: { label: string; value: string; tone?: "accent" | "warn"; hint?: string }[] = [
     {
       label: "并行加速",
@@ -407,16 +444,39 @@ export function WorkflowMetricsRow({
       hint: "串行耗时才并行加速之比",
     },
     { label: "关键路径", value: fmtMs(metricNum(m, "critical_path_ms")), hint: "决定墙钟的那条链" },
-    { label: "串行损失", value: fmtMs(metricNum(m, "serialization_loss_ms")), hint: "本可并行却被串起来的等待" },
-    { label: "验证开销", value: fmtRatio(metricNum(m, "verify_overhead_ratio")), hint: "验证占执行时间比例" },
+    {
+      // 后端字段 idle_gap_ms（issue #13 起的正式名）；serialization_loss_ms 只是
+      // 同值的 deprecated 别名，留作旧快照的兜底读取。
+      label: "空闲间隙",
+      value: fmtMs(metricNum(m, "idle_gap_ms", "serialization_loss_ms")),
+      hint: "墙钟 − 依赖约束最优墙钟（派发/门控/抖动，不含依赖内必需的串行）",
+    },
+    {
+      label: "验证开销",
+      value: verifyPartial ? "未度量" : fmtRatio(metricNum(m, "verify_overhead_ratio")),
+      hint: verifyHint,
+    },
     {
       label: "返工率",
       value: fmtRatio(rework),
       tone: rework !== null && rework > 0 ? "warn" : undefined,
-      hint: "返工次数 / 任务数",
+      // 公式是 rejRounds / verifyRounds（workflow.go），分母是验证轮数，不是任务数。
+      hint: "连续拒绝轮 / 验证轮数",
     },
     { label: "咨询次数", value: fmtInt(metricNum(m, "consult_count")), hint: "小队内跨 agent 咨询" },
-    { label: "排队等待", value: fmtMs(metricNum(m, "queue_wait_ms")), hint: "依赖门控 + 派发延迟" },
+    // 旧「排队等待」一栏把两段等待混在一起（依赖门控 ≠ 派发延迟），
+    // 分开读才知道该催哪一环。后端 queue_wait_ms 仅是 dispatch_wait_ms 的
+    // 兼容别名（#11），面板不再单独展示它。
+    {
+      label: "依赖等待",
+      value: fmtMs(metricNum(m, "dependency_wait_ms")),
+      hint: "依赖门控：工序创建 → 上游全部完成（累计口径，可超过墙钟）",
+    },
+    {
+      label: "派发等待",
+      value: fmtMs(metricNum(m, "dispatch_wait_ms")),
+      hint: dispatchHint,
+    },
     {
       label: "分派失衡",
       value: fmtLaneImbalance(imbalance),

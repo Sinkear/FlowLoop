@@ -902,7 +902,7 @@ var ABMetricKeys = []string{
 	"critical_path_ms",
 	"wall_ms",
 	"parallel_speedup",
-	"serialization_loss_share",
+	"idle_gap_share",
 	"rework_ratio",
 	"verify_pass_rate",
 	"verify_overhead_ratio",

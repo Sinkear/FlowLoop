@@ -419,27 +419,27 @@ func (s *RSIService) structureFindings(ctx context.Context, goalID string, g *Wo
 	// shaping rather than "the machine was slow".
 	if cp > 0 && work > 0 {
 		gain := float64(work) / float64(cp)
-		lossShare := mf(m, "serialization_loss_share")
+		idleShare := mf(m, "idle_gap_share")
 		agentShare := 0.0
 		if work > 0 {
 			agentShare = float64(agentBusy) / float64(work)
 		}
-		if gain >= ruleLostParallelGain && lossShare > ruleLostSerialShare && agentShare >= ruleLostAgentBusyShare {
+		if gain >= ruleLostParallelGain && idleShare > ruleLostSerialShare && agentShare >= ruleLostAgentBusyShare {
 			sugg := "对照 seq 边（虚线）复核：时间先后 ≠ 数据依赖。把不共享读写对象的相邻节点改为可并行。"
 			if laneCount := mi(m, "lane_count"); laneCount <= 1 {
 				sugg = "只有 1 条执行通道：先增加可并行认领的执行者/通道，再拆依赖；否则拆出的节点仍会排队。"
 			}
 			out = append(out, RsiFinding{
 				Category: "lost_parallelism", Severity: "info", Confidence: "L1",
-				Title: fmt.Sprintf("理论并行收益 %.1f×，并行收益损失 %.0f%%", gain, 100*lossShare),
-				Explanation: fmt.Sprintf("总工作量 %s，墙钟 %s，其中串行化损失 %s（%.0f%% 墙钟）；执行型工作占 %.0f%%。收益差距主要来自依赖声明过强或派发过晚，而不是机器本身慢。",
-					humanMS(work), humanMS(wallMS), humanMS(mi(m, "serialization_loss_ms")), 100*lossShare, 100*agentShare),
+				Title: fmt.Sprintf("理论并行收益 %.1f×，空闲间隙 %.0f%%", gain, 100*idleShare),
+				Explanation: fmt.Sprintf("总工作量 %s，墙钟 %s，其中空闲间隙 %s（%.0f%% 墙钟）；执行型工作占 %.0f%%。收益差距主要来自依赖声明过强、派发过晚或人工等待，而不是机器本身慢。",
+					humanMS(work), humanMS(wallMS), humanMS(mi(m, "idle_gap_ms")), 100*idleShare, 100*agentShare),
 				Suggestion: sugg,
 				Evidence: []string{
-					fmt.Sprintf("gain=%.2f loss_share=%.2f agent_busy_share=%.2f", gain, lossShare, agentShare),
+					fmt.Sprintf("gain=%.2f idle_gap_share=%.2f agent_busy_share=%.2f", gain, idleShare, agentShare),
 					fmt.Sprintf("dependency_wait_ms=%d dispatch_wait_ms=%d lane_count=%d", mi(m, "dependency_wait_ms"), mi(m, "dispatch_wait_ms"), mi(m, "lane_count")),
 				},
-				Score: ruleScore(scoreBaseInfo, lossShare, ruleLostSerialShare),
+				Score: ruleScore(scoreBaseInfo, idleShare, ruleLostSerialShare),
 			})
 		}
 	}
@@ -768,8 +768,8 @@ func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]
 	if len(samples) < 5 {
 		return map[string]any{}
 	}
-	keys := []string{"critical_path_ms", "parallel_speedup", "serialization_loss_ms",
-		"serialization_loss_share", "dependency_wait_ms", "dispatch_wait_ms", "verify_overhead_ratio",
+	keys := []string{"critical_path_ms", "parallel_speedup", "idle_gap_ms",
+		"idle_gap_share", "dependency_wait_ms", "dispatch_wait_ms", "verify_overhead_ratio",
 		"review_overhead_ratio", "rework_ratio", "consult_count", "human_wait_ms", "human_wait_share",
 		"gate_wait_ms", "retry_amplification", "agent_busy_ms", "lane_imbalance"}
 	out := map[string]any{}
@@ -805,7 +805,7 @@ func narrative(g *WorkflowGraph, findings []RsiFinding, baseline map[string]any)
 	fmt.Fprintf(&b, "本次训练会话把该 goal 的编排过程冻结为一张 %d 节点 / %d 边的工作流图（agent/verify/review/consult/integrate 节点，显式依赖与时间推断边）。\n\n", len(g.Nodes), len(g.Edges))
 	fmt.Fprintf(&b, "结构指标：总工作量 %s，墙钟 %s，关键路径 %s（%d 节点），并行收益 %.2f×，串行损失 %s，峰值并行宽度 %d；验证开销占比 %.0f%%，返工率 %.0f%%，咨询 %d 次，通道 %d 条（不均衡度 %.2f）。\n\n",
 		humanMS(mi(m, "work_sum_ms")), humanMS(mi(m, "wall_ms")), humanMS(mi(m, "critical_path_ms")), len(g.Critical),
-		mf(m, "parallel_speedup"), humanMS(mi(m, "serialization_loss_ms")), mi(m, "parallel_width_peak"),
+		mf(m, "parallel_speedup"), humanMS(mi(m, "idle_gap_ms")), mi(m, "parallel_width_peak"),
 		mf(m, "verify_overhead_ratio")*100, mf(m, "rework_ratio")*100, mi(m, "consult_count"), mi(m, "lane_count"), mf(m, "lane_imbalance"))
 	if len(baseline) > 0 {
 		fmt.Fprintf(&b, "与近 20 次就绪会话的中位数基线对比：关键路径 %s → %s，并行收益 %.2f× → %.2f×。\n\n",

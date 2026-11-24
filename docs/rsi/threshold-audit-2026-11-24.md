@@ -435,12 +435,17 @@ ruleHumanWaitFloorMS     = 600000// 新增：≥10min
   （新增 `gate_wait_ms`）；gate 持有者不再作为 agent 节点进入 work/lane/wall。
 - 评分统一：`severity 基数（critical 90 / warn 60 / info 30）+ 10×clamp01((观测−阈值)/阈值)`；
   `plan_deviation` 用同一刻度（severity high→critical、medium→warn）。
-- `ABMetricKeys` 增加 `serialization_loss_share / human_wait_share / gate_wait_ms /
+- `ABMetricKeys` 增加 `idle_gap_share / human_wait_share / gate_wait_ms /
   lane_imbalance / agent_busy_ms`；baseline 键同步扩展。
+
+> 合并说明（2026-11-24）：并入 main 的 #13 v2 口径后，`serialization_loss_ms` 已更名
+> `idle_gap_ms`（同值），本审计的 share 判据随之改名 `idle_gap_share`；阈值数值不变。
+> v2 的关键路径会穿过无窗节点，`cp / depth / idle_gap` 与 v1 不可直接比较，阈值待按 §5
+> 重新校准（当前沿用 v1 校准值，见 §8）。
 
 **P1 阈值/判据**
 - `split_candidate`：分母改为 `agent_busy_ms`，阈值 50%，`ruleSplitCount=1`（每个重型节点都是候选）。
-- `lost_parallelism`：保留 `gain ≥2.0`，新增 `serialization_loss_share > 0.30` 且
+- `lost_parallelism`：保留 `gain ≥2.0`，新增 `idle_gap_share > 0.30` 且
   `agent_busy_share ≥ 0.50`（用 agent 工作占比排除“纯派发/等待”场景；原计划的
   `dispatch_wait/wall ≤0.25` 会误杀单通道排队，未采用）。
 - `merge_candidate`：同一 assignee 与 verifier；被合并叶时长累加 `added ≤ min(5min, 10%×wall)`；

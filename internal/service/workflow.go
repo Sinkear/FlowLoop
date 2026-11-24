@@ -34,6 +34,12 @@ type WorkflowNode struct {
 	StartedAtMS   int64   `json:"started_at_ms"`
 	EndedAtMS     int64   `json:"ended_at_ms"`
 	CriticalShare float64 `json:"critical_share"` // duration / critical path (filled by metrics)
+	// Verify nodes only (issue #13): rounds split by whether the round had a
+	// timing source. Unmeasured=true means at least one round happened without
+	// one, so duration_ms=0 reads as "not timed" rather than "free".
+	Unmeasured       bool `json:"unmeasured,omitempty"`
+	MeasuredRounds   int  `json:"measured_rounds,omitempty"`
+	UnmeasuredRounds int  `json:"unmeasured_rounds,omitempty"`
 }
 
 // WorkflowEdge is one directed edge. kind:
@@ -249,7 +255,15 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	graph.Metrics["squad_size"] = len(roster)
 	graph.Metrics["squad_agents"] = roster
 
-	var depWait, dispatchWait, gateWait int64
+	// Dispatch wait is capped against the ORCHESTRATION SPAN below, not the
+	// busy wall: wall_ms only counts nodes with a positive busy window, so an
+	// in-flight run (finished_at='') contributes nothing and a single running
+	// sub-goal would report queue wait > wall (#11). The span runs from the
+	// earliest ready moment to the latest sub-goal finish — or now while a run
+	// is still in flight.
+	var depWait, dispatchWait, gateWait, spanStart, spanEnd int64
+	nowMS, _ := parseTimeMS(now())
+	inFlight := false
 	for _, id := range sgOrder {
 		r := sgRows[id]
 		if gateHolders[id] {
@@ -260,22 +274,28 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		}
 		n := WorkflowNode{Key: "sg:" + id, Kind: "agent", Label: r.title, AssigneeID: r.assignee,
 			SubGoalID: id, Status: r.status, Attempt: 1, Reworks: r.qualityIter}
+		// Split queue time into dependency gate wait and dispatch delay:
+		// ready_at = max(sub_goal.created_at, latest dependency run end).
+		// A malformed/empty created_at must not turn a dependency's epoch
+		// timestamp into a ~55-year "wait": without a valid creation anchor
+		// both split metrics are unknown and stay 0.
+		createdMS, createdOK := parseTimeMS(r.createdAt)
+		readyMS := int64(0)
+		if createdOK {
+			readyMS = createdMS
+			for _, dep := range depsMap[id] {
+				if wd := wins[dep]; wd != nil && wd.end > readyMS {
+					readyMS = wd.end
+				}
+			}
+			if spanStart == 0 || readyMS < spanStart {
+				spanStart = readyMS
+			}
+		}
 		if w := wins[id]; w != nil {
 			n.Attempt = w.attempts
 			n.StartedAtMS, n.EndedAtMS, n.DurationMS = w.start, w.end, w.busy
-			// Split queue time into dependency gate wait and dispatch delay:
-			// ready_at = max(sub_goal.created_at, latest dependency run end).
-			// A malformed/empty created_at must not turn a dependency's epoch
-			// timestamp into a ~55-year "wait": without a valid creation anchor
-			// both split metrics are unknown and stay 0.
-			createdMS, createdOK := parseTimeMS(r.createdAt)
 			if createdOK {
-				readyMS := createdMS
-				for _, dep := range depsMap[id] {
-					if wd := wins[dep]; wd != nil && wd.end > readyMS {
-						readyMS = wd.end
-					}
-				}
 				if readyMS > createdMS {
 					depWait += readyMS - createdMS
 				}
@@ -283,9 +303,25 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 					dispatchWait += w.start - readyMS
 				}
 			}
+			if w.start > 0 && (spanStart == 0 || w.start < spanStart) {
+				spanStart = w.start
+			}
+			if w.end > spanEnd {
+				spanEnd = w.end
+			}
+			if w.start > 0 && w.end == 0 {
+				inFlight = true
+			}
 		}
 		graph.Nodes = append(graph.Nodes, n)
 		graph.Edges = append(graph.Edges, WorkflowEdge{From: "goal", To: n.Key, Kind: "created", Source: "explicit"})
+	}
+	if inFlight && nowMS > spanEnd {
+		spanEnd = nowMS
+	}
+	span := spanEnd - spanStart
+	if span < 0 {
+		span = 0
 	}
 
 	// Declared dependencies (explicit DAG) — best-effort JSON decode.
@@ -338,19 +374,29 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	// ── verification nodes (one per sub-goal, rounds aggregated) ────────
+	// A verification round is MEASURED when it has a timing source: a verifier
+	// run window, or a machine round that the daemon actually timed (verify_ms
+	// > 0, phase 2). Everything else is UNMEASURED — the machine gate runs
+	// inside the daemon on the owner run's window, so 0ms here means "we did not
+	// time it", never "verification is free" (issue #13, D2). The empty
+	// verifier_run_id stays the machine-round marker.
 	type vState struct {
-		node   WorkflowNode
-		runIDs []string
+		node       WorkflowNode
+		runIDs     []string
+		measured   int
+		unmeasured int
+		busy       int64
 	}
 	vmap := map[string]*vState{}
 	vrows, err := s.st.DB().QueryContext(ctx,
-		`SELECT sub_goal_id,status,verifier_run_id FROM verification_result WHERE goal_id=? ORDER BY created_at ASC`, goalID)
+		`SELECT sub_goal_id,status,verifier_run_id,verify_ms FROM verification_result WHERE goal_id=? ORDER BY created_at ASC`, goalID)
 	if err != nil {
 		return nil, err
 	}
 	for vrows.Next() {
 		var sgid, status, vrun string
-		if err := vrows.Scan(&sgid, &status, &vrun); err != nil {
+		var verifyMS int64
+		if err := vrows.Scan(&sgid, &status, &vrun, &verifyMS); err != nil {
 			vrows.Close()
 			return nil, err
 		}
@@ -372,8 +418,17 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			v.node.Reworks++
 			v.node.Status = "rejected"
 		}
-		if vrun != "" {
+		switch {
+		case vrun != "":
+			// Verifier round: measured only if its run window is readable.
 			v.runIDs = append(v.runIDs, vrun)
+		case verifyMS > 0:
+			// Machine round with its own timing (phase 2): measured without a
+			// window — the gate has no separable start/end on the graph.
+			v.measured++
+			v.busy += verifyMS
+		default:
+			v.unmeasured++
 		}
 	}
 	vrows.Close()
@@ -385,10 +440,21 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			var st, fi string
 			if err := s.st.DB().QueryRowContext(ctx,
 				`SELECT started_at,finished_at FROM run WHERE id=?`, rid).Scan(&st, &fi); err != nil {
+				v.unmeasured++ // the round names a run the store no longer has
 				continue
 			}
+			v.measured++
 			addBusy(&v.node, st, fi)
 		}
+		v.node.DurationMS += v.busy
+		if rest := v.node.Attempt - v.measured - v.unmeasured; rest > 0 {
+			// Defensive: a round must land in exactly one bucket, so the counts
+			// always add up to Attempt (= verify_rounds) for readers.
+			v.unmeasured += rest
+		}
+		v.node.MeasuredRounds = v.measured
+		v.node.UnmeasuredRounds = v.unmeasured
+		v.node.Unmeasured = v.unmeasured > 0
 		graph.Nodes = append(graph.Nodes, v.node)
 		graph.Edges = append(graph.Edges, WorkflowEdge{From: "sg:" + sgid, To: v.node.Key, Kind: "verified_by", Source: "explicit"})
 	}
@@ -473,22 +539,55 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	computeWorkflowMetrics(graph)
+
+	// "排队等待" measures DISPATCH delay only: started_at − ready_at, where
+	// ready_at = max(created_at, latest dependency finish). Dependency gating
+	// is reported separately as dependency_wait_ms and must never be folded
+	// back in, otherwise a serial chain accumulates waits beyond the span.
+	//
+	// Concurrent dispatches can still sum past the orchestration span (N
+	// parallel lanes waiting at once), so the total is capped at the span —
+	// earliest ready to last finish, or now while a run is in flight. The
+	// overflow is kept in queue_wait_overlap_ms instead of being dropped.
+	graph.Metrics["wall_span_ms"] = span
+	if span > 0 && dispatchWait > span {
+		graph.Metrics["queue_wait_overlap_ms"] = dispatchWait - span
+		graph.Metrics["queue_wait_capped"] = true
+		dispatchWait = span
+	}
 	graph.Metrics["dependency_wait_ms"] = depWait
 	graph.Metrics["dispatch_wait_ms"] = dispatchWait
-	// queue_wait_ms kept as a compatibility alias; new readers should use the
-	// split fields so dependency gating is not mistaken for dispatch delay.
-	graph.Metrics["queue_wait_ms"] = depWait + dispatchWait
+	// queue_wait_ms is a compatibility alias for dispatch_wait_ms.
+	graph.Metrics["queue_wait_ms"] = dispatchWait
+
+	// Sub-goals that never started executing: no run window at all and no
+	// settled outcome. A blueprint gate HOLDER is excluded even before its
+	// decision lands — by construction it never gets a run (the human/auto
+	// decision is its run), so counting it would label a decision node "未执行".
+	unrun := int64(0)
+	for _, id := range sgOrder {
+		if wins[id] != nil || gateHolders[id] {
+			continue
+		}
+		switch sgRows[id].status {
+		case "verified", "cancelled", "failed":
+			continue // settled without a run of its own — not pending dispatch
+		}
+		unrun++
+	}
+	graph.Metrics["unrun_sub_goals"] = unrun
+
 	// Human wait has two sources: final delivery reviews (gate_decision, outside
 	// the execution span) and blueprint gate decisions (holder run windows,
 	// inside the span). Both are human wall-clock, so they are summed; the
 	// share uses wall+wait so it can never exceed 100%.
+	wall := mi(graph.Metrics, "wall_ms")
 	var reviewWaitMS int64
 	_ = s.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(review_duration),0)*1000 FROM gate_decision WHERE goal_id=?`, goalID).Scan(&reviewWaitMS)
 	humanWaitMS := reviewWaitMS + gateWait
 	graph.Metrics["gate_wait_ms"] = gateWait
 	graph.Metrics["human_wait_ms"] = humanWaitMS
-	wall := mi(graph.Metrics, "wall_ms")
 	share := 0.0
 	if denom := wall + humanWaitMS; denom > 0 {
 		share = float64(humanWaitMS) / float64(denom)
@@ -506,11 +605,59 @@ func nodeKeyExists(g *WorkflowGraph, key string) bool {
 	return false
 }
 
+// topoOrder returns the nodes in topological order of the explicit edges
+// (preds). The incoming slice is already start-time sorted and is used as the
+// tie-break, so relaxation order stays deterministic across runs. A cycle in
+// hand-edited depends_on data leaves nodes with no satisfiable predecessor:
+// they are appended in start-time order instead of being dropped, so the pass
+// can never silently lose a node (the time-order validity check below still
+// keeps a cyclic edge from extending a chain).
+func topoOrder(order []WorkflowNode, preds map[string][]string, byKey map[string]*WorkflowNode) []WorkflowNode {
+	out := make([]WorkflowNode, 0, len(order))
+	emitted := make(map[string]bool, len(order))
+	for len(out) < len(order) {
+		progress := false
+		for _, n := range order {
+			if emitted[n.Key] {
+				continue
+			}
+			ready := true
+			for _, from := range preds[n.Key] {
+				if _, ok := byKey[from]; !ok {
+					continue
+				}
+				if !emitted[from] {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+			emitted[n.Key] = true
+			out = append(out, n)
+			progress = true
+		}
+		if !progress { // cycle residue: keep the start-time order, never drop
+			for _, n := range order {
+				if !emitted[n.Key] {
+					emitted[n.Key] = true
+					out = append(out, n)
+				}
+			}
+			break
+		}
+	}
+	return out
+}
+
 // computeWorkflowMetrics fills Critical, CriticalShare, and Metrics. The
 // critical path is a longest chain of node busy durations: nodes relax in
-// start-time order and an edge only extends the chain when the source
-// finishes before the target starts, so the pass is acyclic by construction
-// even when the drawn graph has rework cycles.
+// topological order of the explicit edges and an edge only extends the chain
+// when the source finishes before the target starts, so the pass is acyclic by
+// construction even when the drawn graph has rework cycles. Relaxation must be
+// topological — start-time order alone silently broke the chain at every
+// windowless node (see the DP comment below).
 func computeWorkflowMetrics(g *WorkflowGraph) {
 	byKey := map[string]*WorkflowNode{}
 	for i := range g.Nodes {
@@ -551,7 +698,7 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		prev   string
 	}
 	best := map[string]dp{}
-	for _, n := range order {
+	for _, n := range topoOrder(order, preds, byKey) {
 		// Review runs are unattributed by construction; letting one relax as
 		// its own chain made a 120-min review the "critical path" of a 30-min
 		// execution. They stay on the graph and in review_busy_ms only.
@@ -561,7 +708,14 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		d := dp{length: n.DurationMS}
 		for _, from := range preds[n.Key] {
 			p, ok := best[from]
-			if !ok || p.length == 0 {
+			// A predecessor whose own chain is empty (synthetic goal root, a
+			// sub-goal that never ran) must still be traversed: `prev` already
+			// points at the node before it, so chaining costs 0ms but keeps the
+			// upstream work on the path. Guarding on p.length == 0 here dropped
+			// every upstream node at such a gap (a 45764ms first step fell off
+			// a 12-item chain). No window is invented — a windowless node simply
+			// contributes 0.
+			if !ok {
 				continue
 			}
 			pn := byKey[from]
@@ -597,7 +751,19 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		path = append([]string{tail}, path...)
 		tail = best[tail].prev
 	}
-	g.Critical = path
+	// Only work items that actually carry busy time are工序. The synthetic goal
+	// root, a sub-goal that never ran, and a machine verification round without
+	// timing are traversed by the chain above (they keep the link to their
+	// upstream) but contribute 0ms: listing them as critical工序 would inflate
+	// depth past the real work-item count and highlight a node that never
+	// consumed wall time.
+	critical := make([]string, 0, len(path))
+	for _, key := range path {
+		if n, ok := byKey[key]; ok && n.DurationMS > 0 {
+			critical = append(critical, key)
+		}
+	}
+	g.Critical = critical
 	for i := range g.Nodes {
 		g.Nodes[i].CriticalShare = 0
 		if cpMS > 0 {
@@ -685,11 +851,14 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	// first-try. Computed from the graph (already assembled from
 	// verification_result rows) — zero new instrumentation.
 	verifyPassed, verifyTotal := 0, 0
+	verifyMeasured, verifyUnmeasured := 0, 0
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		if n.Kind == "verify" {
 			verifyRounds += n.Attempt
 			rejRounds += n.Reworks
+			verifyMeasured += n.MeasuredRounds
+			verifyUnmeasured += n.UnmeasuredRounds
 		}
 		if n.Kind == "agent" && n.Status == "verified" {
 			verifyTotal++
@@ -701,16 +870,46 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 			consultCount++
 		}
 	}
-
-	// serialization_loss = actual wall - dependency-constrained minimum wall.
-	// (The old cp-maxNode formula measured imbalance, not lost time.)
-	serLoss := wall - cpMS
-	if serLoss < 0 {
-		serLoss = 0
+	// Rounds whose timing nobody recorded are UNMEASURED, not zero-cost: the
+	// machine gate runs inside the daemon on the owner run's window. Counting
+	// them keeps a 0% honest ("we did not time it") instead of claiming
+	// verification is free (issue #13, D2). A hand-built graph may declare
+	// Attempt without the split — the remainder is unmeasured, so the two
+	// counters always add up to verify_rounds.
+	if rest := verifyRounds - verifyMeasured - verifyUnmeasured; rest > 0 {
+		verifyUnmeasured += rest
 	}
-	serLossShare := 0.0
+	verifyCoverage := 0.0
+	if covered := verifyMeasured + verifyUnmeasured; covered > 0 {
+		verifyCoverage = float64(verifyMeasured) / float64(covered)
+	}
+	verifyScope := "unmeasured"
+	if verifyMeasured+verifyUnmeasured > 0 {
+		switch {
+		case verifyUnmeasured == 0:
+			verifyScope = "complete"
+		case verifyMeasured == 0:
+			verifyScope = "unmeasured"
+		default:
+			verifyScope = "partial"
+		}
+	}
+
+	// idle_gap = actual wall - dependency-constrained minimum wall. The number
+	// is the one the old serialization_loss_ms carried, but it measures IDLE
+	// time (dispatch/gate/queue gaps), NOT a serialization penalty: work that
+	// runs one after another because a dependency says so is required labour,
+	// and calling it a loss made a 39-minute necessary chain read as
+	// optimizable. The old key stays as a deprecated alias so RSI round
+	// ledgers, AB metric keys and frozen reports keep reading a number
+	// (issue #13, D1: keep the value, fix the name).
+	idleGap := wall - cpMS
+	if idleGap < 0 {
+		idleGap = 0
+	}
+	idleGapShare := 0.0
 	if wall > 0 {
-		serLossShare = float64(serLoss) / float64(wall)
+		idleGapShare = float64(idleGap) / float64(wall)
 	}
 	agentBusyShare := 0.0
 	if workSum > 0 {
@@ -727,6 +926,10 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	verifyOverhead := 0.0
 	reviewOverhead := 0.0
 	if workSum > 0 {
+		// Numerator = MEASURED verification busy only. Unmeasured rounds
+		// contribute no time (they are reported by coverage + scope, never by a
+		// fabricated estimate), so a machine-only goal reads 0% WITH
+		// verify_overhead_scope="unmeasured" — the pair is the honest answer.
 		verifyOverhead = float64(verifyBusy) / float64(workSum)
 		reviewOverhead = float64(reviewBusy) / float64(workSum)
 	}
@@ -758,21 +961,38 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	}
 
 	m := g.Metrics
+	// metrics_schema_version = 2 (2026-11-24, issue #13): serialization_loss_ms
+	// renamed to idle_gap_ms (old key kept as an alias) and the critical path
+	// now chains through windowless nodes, so cp/depth/idle_gap are NOT
+	// comparable with version-1 reports. Trend comparisons must respect this.
+	m["metrics_schema_version"] = int64(2)
 	m["node_count"] = len(g.Nodes)
 	m["edge_count"] = len(g.Edges)
-	m["depth"] = len(path)
+	m["depth"] = int64(len(g.Critical))
 	m["work_sum_ms"] = workSum
 	m["wall_ms"] = wall
 	m["critical_path_ms"] = cpMS
 	m["parallel_speedup"] = speedup
-	m["serialization_loss_ms"] = serLoss
-	m["serialization_loss_share"] = serLossShare
+	m["idle_gap_ms"] = idleGap
+	m["idle_gap_share"] = idleGapShare
+	// serialization_loss_ms is DEPRECATED: same value as idle_gap_ms, kept only
+	// so existing readers (rsi.go SerializationLossMS, ABMetricKeys, delta keys,
+	// frozen rsi_report rows) do not break. New readers must use idle_gap_ms.
+	m["serialization_loss_ms"] = idleGap
 	m["parallel_width_peak"] = peak
 	m["verify_overhead_ratio"] = verifyOverhead
+	m["verify_busy_measured_ms"] = verifyBusy
+	m["verify_measured_rounds"] = int64(verifyMeasured)
+	m["verify_unmeasured_rounds"] = int64(verifyUnmeasured)
+	m["verify_coverage_ratio"] = verifyCoverage
+	// unmeasured | partial | complete. "unmeasured" means no round had a timing
+	// source (machine gate inside the daemon), so the ratio above is a floor,
+	// not a measurement (issue #13, D2).
+	m["verify_overhead_scope"] = verifyScope
 	m["review_busy_ms"] = reviewBusy
 	m["review_overhead_ratio"] = reviewOverhead
 	m["retry_amplification"] = float64(maxAttempts)
-	m["verify_rounds"] = verifyRounds
+	m["verify_rounds"] = int64(verifyRounds)
 	m["rework_ratio"] = rework
 	m["verify_pass_rate"] = verifyPass
 	m["consult_count"] = consultCount

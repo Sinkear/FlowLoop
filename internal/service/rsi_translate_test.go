@@ -108,7 +108,7 @@ func graphFor(t *testing.T, st *store.Store, goalID string, keys []string, durat
 	g.Metrics["critical_path_ms"] = total
 	g.Metrics["agent_busy_ms"] = total
 	g.Metrics["agent_busy_share"] = 1.0
-	g.Metrics["serialization_loss_share"] = 0.0
+	g.Metrics["idle_gap_share"] = 0.0
 	return g
 }
 

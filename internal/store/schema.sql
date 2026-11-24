@@ -451,11 +451,21 @@ CREATE INDEX IF NOT EXISTS idx_change_revision_change ON change_revision(change_
 -- 决策 6-5). Verifier runs produce verdicts via the structured tool; machine
 -- verification (verifier_id='') records one row per run-end check. Rounds ≠
 -- run.attempt (verifier runs retry their own machine failures separately).
+--
+-- verify_ms / machine_run_id (issue #13, D2): the machine gate runs inside the
+-- daemon on the owner run's window, so a machine round has no separable
+-- verification time — the workflow graph reports "measured" vs "unmeasured"
+-- rounds instead of a hard 0%. verify_ms is the pre-wired timing slot (0 = not
+-- timed; filled by the phase-2 timing kernel, and the graph counts it as
+-- measured once > 0) and machine_run_id names the run the gate judged.
+-- verifier_run_id='' REMAINS the only machine-round marker.
 CREATE TABLE IF NOT EXISTS verification_result (
     id              TEXT PRIMARY KEY,
     goal_id         TEXT NOT NULL REFERENCES goal(id),
     sub_goal_id     TEXT NOT NULL REFERENCES sub_goal(id),
     verifier_run_id TEXT NOT NULL DEFAULT '',
+    verify_ms       INTEGER NOT NULL DEFAULT 0,
+    machine_run_id  TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL, -- passed|rejected
     summary         TEXT NOT NULL DEFAULT '',
     evidence        TEXT NOT NULL DEFAULT '',
