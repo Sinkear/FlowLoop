@@ -9,7 +9,7 @@
 | T3 | 机器验证未度量口径：`verify_ms` / `machine_run_id` 迁移（store+schema）、机器审计行写 `machine_run_id`、覆盖率与 scope 指标、verify 节点 `unmeasured` | `internal/store/store.go`、`internal/store/schema.sql`、`internal/service/subgoal.go`、`internal/service/workflow.go`、测试 | 未度量计数/scope 用例 + 既有机器验证测试通过 | done |
 | T4 | 面板文案与未度量呈现：空闲间隙、依赖/派发等待两行、验证「未度量」、返工率 hint、节点 `unmeasured` | `web/components/training/workflow-graph.tsx`、`web/components/training/format.ts`、`web/lib/types.ts` | tsc 通过 / 文案与公式一致 | done |
 | T5 | 文档同步：spec/plan/task + `docs/RSI.md` 指标口径 | `docs/issue-13/*`、`docs/RSI.md` | 文档与实现一致 | done |
-| T6 | 自审查（五轴）→ 建 PR → Issue 评论 → A2A QA | — | PR 已创建、评论已发、A2A 已交办 | pending |
+| T6 | 自审查（五轴）→ 建 PR → Issue 评论 → A2A QA | — | PR [#20](https://github.com/Sinkear/ouroflow/pull/20) 已创建、Issue 评论已发、A2A QA 已交办（seq 104644） | done |
 
 ## 回归清单
 
