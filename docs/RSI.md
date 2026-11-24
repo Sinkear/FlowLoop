@@ -39,16 +39,25 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 
 指标由 `internal/service/workflow.go` 的 `computeWorkflowMetrics` 在读取时从节点/边计算；JSON 键名与单位以 API 返回为准（时间为毫秒）。
 
-- `node_count / edge_count / depth`：节点数、边数、explicit 关键路径节点数。
+- `metrics_schema_version`：口径版本（当前 `2`）。v2（issue #13）把 `serialization_loss_ms` 更名 `idle_gap_ms`，并让关键路径穿过无窗节点；v1 与 v2 的 `critical_path_ms / depth / idle_gap_ms` **不可直接比较**，趋势对比必须按版本分段。
+- `node_count / edge_count / depth`：节点数、边数、关键路径上的**工序数**（`depth = len(critical_path)`）。0 busy 贡献的节点（`goal` 根、从未执行的子目标、无计时的机器验证轮）可被链穿过但不出现在路径里——把「没花的墙钟」算成一个工序会让 depth 虚高。
 - `work_sum_ms`：agent + verify + consult + integrate 节点的 busy 时长之和；**不含 review**。
 - `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。只统计已有结束时间的节点，**仍在运行的 run 不计入**（所以运行中的编排 `wall_ms` 可能为 0）。
 - `wall_span_ms`：编排跨度 = 最早就绪时刻（`sub_goal.created_at`，被依赖结束推后）→ 最后一个 sub_goal run 结束；仍有 run 在飞时右端取 `now`。它是排队等待的收敛上限——`wall_ms` 只含已结束节点，不能当上限（#11）。
-- `critical_path_ms`：只沿 explicit/结构边（`created` / `depends_on` / `verified_by` / `consult` / `integrated`）做最长链 DP，并要求前驱结束 ≤ 后继开始；**排除 `source=inferred` 的 `seq` 边**，review 节点也不入链。它是「依赖约束下的最短墙钟」，不是速度指标。
-- `serialization_loss_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的等待（排队/派发/抖动）。
+- `critical_path_ms`：只沿 explicit/结构边（`created` / `depends_on` / `verified_by` / `consult` / `integrated`）做最长链 DP，并要求前驱结束 ≤ 后继开始；**排除 `source=inferred` 的 `seq` 边**，review 节点也不入链。它是「依赖约束下的最短墙钟」，不是速度指标。DP 按 explicit 边的**拓扑序** relax（时间序只做 tie-break），因此无窗节点（从未执行的子目标、`duration_ms=0` 的审计工序）以 0 贡献**穿链**、不会把上游工序甩出路径；也不为无窗节点造估算窗口。
+- `idle_gap_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的**空闲间隙**（派发/门控/抖动）。它**不是串行损失**——依赖内必需的串行是必需劳动，不是损失（issue #13, D1）。
+- `serialization_loss_ms`：**deprecated 别名**，与 `idle_gap_ms` 同值，仅为旧读者（`rsi.go` 的 `SerializationLossMS`、`ABMetricKeys`、round delta 键）保留；新代码与新文档一律用 `idle_gap_ms`。
 - `parallel_speedup = work_sum_ms / wall_ms`（`wall_ms=0` 时为 0）：**实际吞吐加速比**，串行 = 1.0；两个 30min 独立任务并行，wall=30、work=60 → 2.0。旧公式 `work_sum / critical_path` 已废弃，不再作为速度展示。
 - `parallel_width_peak`：工作节点区间扫描的并发峰值（不含 review）。
-- `verify_overhead_ratio = verify busy / work_sum_ms`；`review_busy_ms` 与 `review_overhead_ratio = review busy / work_sum_ms` 单独统计（验证与评审分开，评审不再混入验证开销）。
-- `verify_rounds`：verify 节点 attempt 之和；`rework_ratio = rejected verify 轮数 / verify_rounds`。
+- `verify_overhead_ratio = verify busy（已度量）/ work_sum_ms`；`review_busy_ms` 与 `review_overhead_ratio = review busy / work_sum_ms` 单独统计（验证与评审分开，评审不再混入验证开销）。
+- 验证轮次的度量范围（issue #13, D2）：机器验证轮在 daemon 内完成、与执行 run 共用时间窗，账面上没有可分离的计时，所以分子只算「已度量」的验证忙时，并另发覆盖率与 scope，让 0% 读作「没量到」而不是「验证免费」：
+  - `verify_rounds`：verify 节点 attempt 之和（验证轮数）。
+  - `verify_measured_rounds` / `verify_unmeasured_rounds`：分子/分母的拆分；二者之和恒等于 `verify_rounds`。已度量 = 有验证 run 窗，或机器轮 `verify_ms > 0`（phase 2 计时）；未度量 = 机器轮未计时、或 verify 的 run 窗不可读。
+  - `verify_busy_measured_ms`：已度量验证忙时（= `verify_overhead_ratio` 的分子）。
+  - `verify_coverage_ratio = 已度量轮次 / 轮次总数`（0..1）。
+  - `verify_overhead_scope`：`complete`（全部轮次已度量）/ `partial` / `unmeasured`（一轮都没量到；无验证轮次时也是它）。UI 在非 `complete` 时把数值位显示为「未度量」。
+  - `verification_result` 新增 `verify_ms`（0 = 未计时，phase 2 填充）与 `machine_run_id`（机器 gate 判定的 run）；`verifier_run_id=''` 仍是**机器轮唯一标记**，不复用。
+- `rework_ratio = rejected verify 轮数 / verify_rounds`（分母是验证轮数，不是任务数）。
 - `consult_count`：consult 节点数。
 - `lane_count / lane_imbalance`：按 assignee 分桶的 busy 负载；只统计工作节点（不含 review）；imbalance = 最忙 lane ÷ 各 lane 均值。
 - `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的**累计**等待，衡量依赖门控；累计口径，可超过墙钟。
@@ -63,7 +72,7 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 
 基线与 delta：
 
-- baseline = **同 domain** 最近 20 个 `ready` 会话 metrics 的中位数，键覆盖 `critical_path_ms / parallel_speedup / serialization_loss_ms / dependency_wait_ms / dispatch_wait_ms / verify_overhead_ratio / review_overhead_ratio / rework_ratio / consult_count / human_wait_ms / retry_amplification`；样本 < 5 时 baseline 为空，某键覆盖不足半数时该键不进 baseline。
+- baseline = **同 domain** 最近 20 个 `ready` 会话 metrics 的中位数，键覆盖 `critical_path_ms / parallel_speedup / idle_gap_ms / serialization_loss_ms / dependency_wait_ms / dispatch_wait_ms / verify_overhead_ratio / review_overhead_ratio / rework_ratio / consult_count / human_wait_ms / retry_amplification`；样本 < 5 时 baseline 为空，某键覆盖不足半数时该键不进 baseline。
 - delta = 当前分析 vs **同 domain 上一条 `rsi_round`**（跨 session，不要求同一会话）；`round_no` 按 domain 递增，会话首次分析 `trigger=terminal`，其后 `manual_retry`；首轮无上一条时 `delta={}`。结构为 `{key: {from, to, pct}}`（`from=0` 时省略 `pct`）。
 - 「样本 <5 不给 delta」不成立：delta 只依赖上一条账本；<5 只约束 baseline。跨轮历史累计的 L2 升级当前未实现，finding 默认 L1，仅 `retry_amplification` 在超出同 domain baseline 时标 L2。
 

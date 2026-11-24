@@ -458,9 +458,16 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 		// the SAME transaction as the verified transition (P0-1); the row's
 		// empty verifier_run_id marks it as the machine round (schema contract:
 		// "machine verification records one row per run-end check").
+		//
+		// machine_run_id (issue #13, D2): the empty verifier_run_id can never be
+		// reused for a run link — it IS the machine-round marker, and the graph
+		// keys verifier rounds off it. The run the gate judged is recorded in its
+		// own column instead, so a later phase can attribute a window or timing
+		// to the round; verify_ms stays 0 until the daemon times the gate
+		// (phase 2), which the graph reports as "unmeasured" rather than 0%.
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
-			newID(), sg.GoalID, sg.ID, "machine verification passed", "machine gate passed (run "+rc.RunID+")", now()); err != nil {
+			`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,verify_ms,machine_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'',0,?,'passed',?,?,?)`,
+			newID(), sg.GoalID, sg.ID, rc.RunID, "machine verification passed", "machine gate passed (run "+rc.RunID+")", now()); err != nil {
 			return fmt.Errorf("insert machine verification_result: %w", err)
 		}
 		changeID, err := s.materializeChangeTx(ctx, tx, sg, rc.BaseRef, rc.HeadRef)

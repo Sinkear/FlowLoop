@@ -936,6 +936,12 @@ export interface WorkflowNode {
   started_at_ms: number;
   ended_at_ms: number;
   critical_share: number; // 0..1，占关键路径的时长比例
+  // 验证节点专用（issue #13）：轮次是否都有计时来源。unmeasured=true 表示存在
+  // 没有独立时间窗的轮次（机器验证在 daemon 内完成），duration_ms=0 应读作
+  // 「未度量」而不是「不花时间」。
+  unmeasured?: boolean;
+  measured_rounds?: number;
+  unmeasured_rounds?: number;
 }
 
 export interface WorkflowEdge {

@@ -288,7 +288,9 @@ export const DELTA_METRIC_KEYS = [
 export const DELTA_LABELS: Record<string, string> = {
   parallel_speedup: "并行加速",
   critical_path_ms: "关键路径",
-  serialization_loss_ms: "串行损失",
+  // 键名是 deprecated 别名（后端另有同值的 idle_gap_ms）；量的是空闲间隙，
+  // 不是串行惩罚——依赖内必需的串行不是损失（issue #13, D1）。
+  serialization_loss_ms: "空闲间隙",
   verify_overhead_ratio: "验证开销",
   rework_ratio: "返工率",
   consult_count: "咨询次数",
