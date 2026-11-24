@@ -2,10 +2,10 @@
 
 # OuroFlow
 
-**给 CLI agent 的人类把关交付流水线。**<br>
-你定义“怎样算完成”，agent 干活，平台记录状态与证据，**你决定门开不开**。
+**图驱动的 AI 工作流，会自我迭代。**<br>
+蓝本驱动的 goal 编译成一张有版本的图。agent 执行它，平台记录真实发生的执行图。RSI 把证据变成结构性 finding 和具体的图补丁；**你批准下一个版本**——下一个 goal 就跑在更好的图上。
 
-`goal` → `run` → 完成记录 → **评审（人）** → 交付
+`Blueprint vN` → `goal` → `执行图` → `RSI findings` → `图补丁` → **`你批准`** → `Blueprint vN+1` → `下一个 goal`
 
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -14,45 +14,67 @@
 
 [English](README.md) · [简体中文](README.zh.md)
 
-[特性亮点](#-特性亮点) · [快速开始](#-快速开始) · [核心概念](#-核心概念) · [协作](#-协作) · [架构](#-架构) · [CLI](#-cli-工具) · [文档](#-数据升级与模板) · [技术栈](#-技术栈) · [致谢](#-致谢)
+[自迭代闭环](#-会自我迭代的工作流图) · [特性亮点](#-特性亮点) · [快速开始](#-快速开始) · [核心概念](#-核心概念) · [协作](#-协作) · [架构](#-架构) · [CLI](#-cli-工具) · [文档](#-数据升级与模板) · [技术栈](#-技术栈) · [致谢](#-致谢)
 
 **单 daemon、单机、单用户、本地优先。** 本地 SQLite 持久化，进程内事件总线，Go daemon + Next.js Web 界面。
 
 </div>
 
 <div align="center">
-<img src="docs/assets/ouroflow-loop-zh.svg" alt="OuroFlow 闭环：定义、调度、执行、验收、评审、交付；评审是人工卡点，批准后才交付。" width="100%">
+<img src="docs/assets/ouroflow-self-iteration-zh.svg" alt="自迭代闭环：编译图 vN，执行，记录真实执行图，用 RSI 诊断结构问题，产出图补丁，由人批准图 vN+1 交给下一个 goal。" width="100%">
 </div>
 
 <div align="center">
-<sub>默认 <b>HITL</b>：目标完成后停在 <b>review</b> 等你决定。<b>HOOTL</b> 跳过此门；仓库型 HOOTL 的分支不会自动合入。</sub>
+<sub><b>HITL</b> 仍是默认评审门；仓库型 <b>HOOTL</b> 分支不会自动合入。外层的自迭代闭环才是产品：每次执行都是下一版工作流图的证据。</sub>
 </div>
 
-## 🧭 它跑闭环，你掌闸门
+## 🔁 会自我迭代的工作流图
 
-大多数 agent 会话在聊天结束时就断了。OuroFlow 把工作留下来：**goal** 持有状态，**run** 是 agent 在独立 worktree 里的一次尝试，完成与否由平台判定，而不是 agent 自说自话。
+多数 agent 工具调 prompt、调模型、调聊天。OuroFlow 调的是 agent 外面的**工作流图**：有哪些节点、谁依赖谁、谁跑哪条 lane、工作卡在哪、哪些门必须由人打开。
 
-它自动化流水线：入队、派发、重试、worktree、完成记账、评审路由、批准后的合并/复验/推送，以及通知。
+一个蓝本驱动的 goal 编译在一张**不可变的 Blueprint 版本**上——由 `task`、`condition`、`router`、`gate`、`spawn`、`end` 六类节点组成的 DAG。执行后又留下一张图：**执行图**，记录真实节点、边、等待、重试、咨询和人工门。RSI 读这张图，计算结构指标，产出 finding——串行链、丢失并行、可合并、派错人、重试放大、ping-pong、brief 质量、重复咨询等。finding 变成结构化的**图补丁**：增删改节点、增删边，附带预期效果和复测计划。
 
-它把决定留给人：**HITL/HOOTL** 的选择、评审批准、蓝图提案采纳、版本发布，以及下一轮 RSI。
+图是刻意选择的路径，不是唯一路径：`infer` goal 保留 owner 的动态拆解。平台记录它们的执行形状，连续三次同构后可起草 `v1` 蓝本——同样由人发布。这是从临时 agent 协作收敛到图的入口坡道。
 
-> OuroFlow **不**承诺“无人值守的软件团队”。它不会替你定验收标准，不会自批提案，也不会在没有人工卡点的情况下把仓库改动合进去。
+### 一轮完整闭环
+
+| # | 阶段 | 发生什么 | 谁 |
+|---|---|---|---|
+| 01 | **编译** | 蓝本驱动的 goal 钉住 Blueprint vN；图通过 V1–V6 校验 | 平台 |
+| 02 | **执行** | agent 在隔离 worktree 里按图干活 | agent |
+| 03 | **留痕** | 真实节点、边、等待、重试、咨询、人工门写成执行图 | 平台 |
+| 04 | **诊断** | RSI 计算关键路径、并行加速、返工、重试放大、人工等待占比和九类 finding | RSI |
+| 05 | **补丁** | finding 转成图 diff（`add_node`、`update_node`、`delete_node`、`add_edge`、`delete_edge`）；Phase D 只自动翻译 `serial_chain` | 机器 |
+| 06 | **签字发布** | 你批准，V1–V6 复跑，**你发布** vN+1；下一个 goal 钉住它 | **你** |
+
+版本链就是审计轨迹：`v1 → v2 → v3` 可 diff、不可变、可回滚。七个指标做 A/B——关键路径、墙钟时间、并行加速、返工率、验证通过率、验证开销、人工等待——判断新图是不是真的更好。
+
+> 这**不是**模型训练，也**不是** prompt 自编辑。OuroFlow 只优化编排图。它从不自批提案、不自己发布版本：`decided_by` 由人填，发布由人做，下一轮 RSI 由人触发。当前分析器是确定性规则 + 统计（没有 LLM 归因），Phase E 的评测集 / best-checkpoint 闭环尚未实现。
+
+## 🧭 底座：一条交付流水线
+
+会自迭代的图，最终还是要交付代码。下面这层把 goal 变成工作：**goal** 持有状态，**run** 是 agent 在独立 worktree 里的一次尝试，完成与否由平台判定，而不是 agent 自说自话。
+
+它自动化流水线：入队、派发、重试、worktree、完成记账、评审路由、批准后的合并/复验/推送，以及通知。它把决定留给人：**HITL/HOOTL** 的选择、评审批准、图补丁采纳、版本发布，以及下一轮 RSI。
+
+> OuroFlow **不**承诺“无人值守的软件团队”。图负责提案；你负责评审、签字和发布。
 
 ### 三个需要你的位置
 
 - **开工前** — 写清任务说明，选 **HITL**（默认：完成的 goal 停在 `review`）或 **HOOTL**（直接完成；适合 scratch 或不需要合入的工作）。
 - **评审时** — **批准**会发出 `goal:approved`，触发 merge --no-ff、复验和推送；**驳回/改向**会带着理由把 goal 退回 owner。
-- **迭代间** — 蓝图提案在 `pending` 等人填 `decided_by`；版本由人发布，下一轮 RSI 由人点。`rsi.max_auto_rounds` 只限制机器自动起草的轮数。
+- **版本口** — 图补丁在 `pending` 等人填 `decided_by`；V1–V6 复跑后由人发布 `vN+1`，下一个 goal 钉住它；下一轮 RSI 也由人开启。`rsi.max_auto_rounds` 只限制机器自动起草。
 
 ## 🌟 特性亮点
 
+- **工作流自迭代** — 执行图就是反馈回路：RSI findings → 结构化图补丁 → 人批准的 `vN+1` → 下一个 goal 跑在新图上。优化的是编排，模型权重不变。
+- **版本链，不是 prompt 堆** — Blueprint 版本不可变、可 diff、可回滚；七个指标让每轮可做 A/B，版本链就是 checkpoint。
+- **证据来自执行，不靠猜** — 节点、边、关键路径、并行度、重试、返工、咨询和人工等待都作为事实记录；九类 finding 从图里推导。
 - **状态不随聊天消失，执行彼此隔离** — goal、run、子任务和 change 都存在 SQLite；每次 run 在 `$OUROFLOW_HOME/runs/<runID>` 下有自己的 worktree。重启 daemon 不会丢掉闭环。
 - **真实的评审卡点** — HITL goal 停在 `review` 等你决定。批准后平台才合并、复验、推送。HOOTL 跳过卡点；仓库型 HOOTL **不会自动合入**，分支留给你。
 - **子任务 + 变更** — owner 把活拆成有独立执行者和 worktree 的子任务。子任务完成后产出带修订的 **Change**，owner 负责整合；冲突会唤醒执行者返修。
 - **不靠共享聊天室协作** — Comment / Consult / Handoff / Sub-goal，通过 `ouroflow` CLI 暴露。per-run token 是唯一身份，owner 权限在服务端强制。
-- **蓝图 + RSI，机器起草、人签字** — 图工作流、节点级指标、自迭代发现。机器出提案；人批准提案、发布版本、开启下一轮。
-- **自带 agent 栈** — ACP / JSONL / JSON-RPC × stdio / ws / tcp，可挂额外 MCP server；支持 GitHub/GitCode/cron/飞书触发和远程技能同步。
-- **控制台，而不是日志尾巴** — 实时事件流、执行时间线、子任务 / 变更 / 验证面板、每 agent 的 ACP 聊天，以及对话式创建。
+- **自带 agent 栈 + 控制台** — ACP / JSONL / JSON-RPC × stdio / ws / tcp，可挂额外 MCP server；支持 GitHub/GitCode/cron/飞书触发和远程技能同步；实时时间线、子任务/变更/验证面板、每 agent 的 ACP 聊天。
 
 ## 🚀 快速开始
 
@@ -96,13 +118,15 @@ ouroflow create goal   --title "把这件事做出来" --domain demo --assignee 
 ## 🧩 核心概念
 
 <details>
-<summary><b>对象模型——一张表看完</b></summary>
+<summary><b>对象模型——16 个概念，一张表看完</b></summary>
 
 | 概念 | 含义 |
 |---|---|
 | **项目（Domain）** | 仓库型或 scratch 工作区：git URL/凭据/默认分支。验收级别在 goal 上选（HITL/HOOTL），不再从自然语言编译检查。 |
+| **Blueprint** | goal 编译所依据的版本化工作流图：`task`、`condition`、`router`、`gate`、`spawn`、`end`；经 V1–V6 校验，发布后不可变。一个 goal 钉住一个版本。 |
 | **Goal** | 工作条目（产品面）。状态：backlog → active → review → done / failed / cancelled。状态权威的唯一持有者；`category` 为 `hitl` 或 `hootl`。 |
 | **Run** | 某个 agent 在 goal 上的一次执行。状态五态 + **角色**（owner / subgoal / consult / review / verify）。无权威——终态上报 goal 层仲裁。 |
+| **RSI** | 工作流级自迭代：在 `train` 模式下，完成的 goal 被冻结成执行图并计算/分析；产物是 finding 与图补丁提案。由人批准并发布。 |
 | **Runtime** | 启动规格——transport（stdio/ws/tcp）+ provider（acp/jsonl/jsonrpc）+ executable/args 或 endpoint + env。 |
 | **Agent** | runtime + 人设（system prompt / model / env / 额外 MCP 服务器 / 并发数）。 |
 | **聊天（Chat）** | 通过 `GET /agents/{id}/acp` 与 agent 的直接 ACP 会话——daemon 把帧原样中继到机器侧 CLI；会话存于 CLI 自己的存储，权限在面板里审批。 |
@@ -232,7 +256,7 @@ OuroFlow 是 [agentwork](https://github.com/yusheng-g/agentwork) 的独立衍生
 
 <div align="center">
 
-**OuroFlow** — 人把卡点，平台跑闭环。
+**OuroFlow** — 图负责提案，你负责签字。每一轮都跑在更好的工作流上。
 
 [⬆ 回到顶部](#ouroflow)
 
