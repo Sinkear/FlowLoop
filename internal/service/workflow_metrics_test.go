@@ -126,6 +126,50 @@ func TestWorkflowCriticalPathDeterministicTie(t *testing.T) {
 	}
 }
 
+// Regression (issue #13, Bug 1): a work item that never ran has no window, so
+// its own chain length is 0. The DP used to drop such a predecessor outright
+// (`p.length == 0`), which cut the chain in two: the first工序 fell off the
+// path (45764ms on the reference goal) and depth under-reported the工序 count.
+// Chaining through it must keep the upstream time without inventing a window,
+// and the windowless node itself is not a工序 (it contributes 0ms).
+func TestWorkflowCriticalPathChainsThroughWindowlessNode(t *testing.T) {
+	m := int64(time.Minute / time.Millisecond)
+	windowless := WorkflowNode{Key: "sg:mid", Kind: "agent", Label: "确认审计范围", Status: "pending"}
+	g := wfGraph(
+		[]WorkflowNode{
+			{Key: "goal", Kind: "goal", Label: "沙箱资产审计", Status: "active"},
+			wfAgent("sg:a", wfTestBase, 30*m),
+			windowless,
+			wfAgent("sg:c", wfTestBase+30*m, 10*m),
+		},
+		[]WorkflowEdge{
+			{From: "goal", To: "sg:a", Kind: "created", Source: "explicit"},
+			{From: "goal", To: "sg:mid", Kind: "created", Source: "explicit"},
+			{From: "goal", To: "sg:c", Kind: "created", Source: "explicit"},
+			{From: "sg:a", To: "sg:mid", Kind: "depends_on", Source: "explicit"},
+			{From: "sg:mid", To: "sg:c", Kind: "depends_on", Source: "explicit"},
+		})
+	computeWorkflowMetrics(g)
+	// 30min + 0 + 10min: the upstream 30min must survive the gap.
+	if got := mi(g.Metrics, "critical_path_ms"); got != 40*m {
+		t.Fatalf("critical_path_ms = %d, want %d (chain must pass through the windowless node)", got, 40*m)
+	}
+	if got := mi(g.Metrics, "work_sum_ms"); got != 40*m {
+		t.Fatalf("work_sum_ms = %d, want %d", got, 40*m)
+	}
+	if got := mi(g.Metrics, "wall_ms"); got != 40*m {
+		t.Fatalf("wall_ms = %d, want %d", got, 40*m)
+	}
+	// depth counts工序 (busy work items): the windowless node and the goal root
+	// are traversed but must not be listed.
+	if got := mi(g.Metrics, "depth"); got != 2 {
+		t.Fatalf("depth = %d, want 2", got)
+	}
+	if len(g.Critical) != 2 || g.Critical[0] != "sg:a" || g.Critical[1] != "sg:c" {
+		t.Fatalf("critical path = %v, want [sg:a sg:c]", g.Critical)
+	}
+}
+
 // Splitting a long serial gap into two independent tasks is exactly the
 // "lost parallelism" case: work 60, cp 30, actual speedup 1.0.
 func TestWorkflowLostParallelismInputs(t *testing.T) {

@@ -429,11 +429,59 @@ func nodeKeyExists(g *WorkflowGraph, key string) bool {
 	return false
 }
 
+// topoOrder returns the nodes in topological order of the explicit edges
+// (preds). The incoming slice is already start-time sorted and is used as the
+// tie-break, so relaxation order stays deterministic across runs. A cycle in
+// hand-edited depends_on data leaves nodes with no satisfiable predecessor:
+// they are appended in start-time order instead of being dropped, so the pass
+// can never silently lose a node (the time-order validity check below still
+// keeps a cyclic edge from extending a chain).
+func topoOrder(order []WorkflowNode, preds map[string][]string, byKey map[string]*WorkflowNode) []WorkflowNode {
+	out := make([]WorkflowNode, 0, len(order))
+	emitted := make(map[string]bool, len(order))
+	for len(out) < len(order) {
+		progress := false
+		for _, n := range order {
+			if emitted[n.Key] {
+				continue
+			}
+			ready := true
+			for _, from := range preds[n.Key] {
+				if _, ok := byKey[from]; !ok {
+					continue
+				}
+				if !emitted[from] {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+			emitted[n.Key] = true
+			out = append(out, n)
+			progress = true
+		}
+		if !progress { // cycle residue: keep the start-time order, never drop
+			for _, n := range order {
+				if !emitted[n.Key] {
+					emitted[n.Key] = true
+					out = append(out, n)
+				}
+			}
+			break
+		}
+	}
+	return out
+}
+
 // computeWorkflowMetrics fills Critical, CriticalShare, and Metrics. The
 // critical path is a longest chain of node busy durations: nodes relax in
-// start-time order and an edge only extends the chain when the source
-// finishes before the target starts, so the pass is acyclic by construction
-// even when the drawn graph has rework cycles.
+// topological order of the explicit edges and an edge only extends the chain
+// when the source finishes before the target starts, so the pass is acyclic by
+// construction even when the drawn graph has rework cycles. Relaxation must be
+// topological — start-time order alone silently broke the chain at every
+// windowless node (see the DP comment below).
 func computeWorkflowMetrics(g *WorkflowGraph) {
 	byKey := map[string]*WorkflowNode{}
 	for i := range g.Nodes {
@@ -474,7 +522,7 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		prev   string
 	}
 	best := map[string]dp{}
-	for _, n := range order {
+	for _, n := range topoOrder(order, preds, byKey) {
 		// Review runs are unattributed by construction; letting one relax as
 		// its own chain made a 120-min review the "critical path" of a 30-min
 		// execution. They stay on the graph and in review_busy_ms only.
@@ -484,7 +532,14 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		d := dp{length: n.DurationMS}
 		for _, from := range preds[n.Key] {
 			p, ok := best[from]
-			if !ok || p.length == 0 {
+			// A predecessor whose own chain is empty (synthetic goal root, a
+			// sub-goal that never ran) must still be traversed: `prev` already
+			// points at the node before it, so chaining costs 0ms but keeps the
+			// upstream work on the path. Guarding on p.length == 0 here dropped
+			// every upstream node at such a gap (a 45764ms first step fell off
+			// a 12-item chain). No window is invented — a windowless node simply
+			// contributes 0.
+			if !ok {
 				continue
 			}
 			pn := byKey[from]
@@ -520,7 +575,19 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		path = append([]string{tail}, path...)
 		tail = best[tail].prev
 	}
-	g.Critical = path
+	// Only work items that actually carry busy time are工序. The synthetic goal
+	// root, a sub-goal that never ran, and a machine verification round without
+	// timing are traversed by the chain above (they keep the link to their
+	// upstream) but contribute 0ms: listing them as critical工序 would inflate
+	// depth past the real work-item count and highlight a node that never
+	// consumed wall time.
+	critical := make([]string, 0, len(path))
+	for _, key := range path {
+		if n, ok := byKey[key]; ok && n.DurationMS > 0 {
+			critical = append(critical, key)
+		}
+	}
+	g.Critical = critical
 	for i := range g.Nodes {
 		g.Nodes[i].CriticalShare = 0
 		if cpMS > 0 {
@@ -663,7 +730,7 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m := g.Metrics
 	m["node_count"] = len(g.Nodes)
 	m["edge_count"] = len(g.Edges)
-	m["depth"] = len(path)
+	m["depth"] = int64(len(g.Critical))
 	m["work_sum_ms"] = workSum
 	m["wall_ms"] = wall
 	m["critical_path_ms"] = cpMS
