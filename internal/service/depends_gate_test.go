@@ -521,10 +521,11 @@ func TestMachineVerifyRecordsResultAndWorkflowNode(t *testing.T) {
 	if after.Status != "verified" {
 		t.Fatalf("machine sub-goal must verify, got %q", after.Status)
 	}
-	var verifierRunID, vstatus string
+	var verifierRunID, vstatus, machineRunID string
+	var verifyMS int64
 	if err := st.DB().QueryRowContext(ctx,
-		`SELECT verifier_run_id,status FROM verification_result WHERE sub_goal_id=? ORDER BY rowid DESC LIMIT 1`, sg.ID).
-		Scan(&verifierRunID, &vstatus); err != nil {
+		`SELECT verifier_run_id,status,machine_run_id,verify_ms FROM verification_result WHERE sub_goal_id=? ORDER BY rowid DESC LIMIT 1`, sg.ID).
+		Scan(&verifierRunID, &vstatus, &machineRunID, &verifyMS); err != nil {
 		t.Fatalf("machine verification_result row missing: %v", err)
 	}
 	if verifierRunID != "" {
@@ -532,6 +533,16 @@ func TestMachineVerifyRecordsResultAndWorkflowNode(t *testing.T) {
 	}
 	if vstatus != "passed" {
 		t.Fatalf("machine verification row must be passed, got %q", vstatus)
+	}
+	// Issue #13: the judged run is named in its OWN column so the round can be
+	// attributed later (phase-2 timing); the empty verifier_run_id stays the
+	// machine-round marker. verify_ms=0 today = "not timed", which the graph
+	// reports as an unmeasured round instead of a 0% overhead.
+	if machineRunID != runID {
+		t.Fatalf("machine verification row must name the judged run %q, got %q", runID, machineRunID)
+	}
+	if verifyMS != 0 {
+		t.Fatalf("verify_ms = %d, want 0 until the daemon times the gate", verifyMS)
 	}
 
 	// The workflow graph reads verification_result → the v: node exists.
@@ -545,6 +556,9 @@ func TestMachineVerifyRecordsResultAndWorkflowNode(t *testing.T) {
 			found = true
 			if n.Status != "passed" {
 				t.Fatalf("machine verification node must be passed, got %q", n.Status)
+			}
+			if !n.Unmeasured || n.UnmeasuredRounds != 1 || n.MeasuredRounds != 0 {
+				t.Fatalf("machine verification node must carry one unmeasured round: %+v", n)
 			}
 		}
 	}
