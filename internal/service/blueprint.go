@@ -2642,9 +2642,12 @@ func (s *GoalService) resolveRouterTx(ctx context.Context, tx *sql.Tx, sg *SubGo
 		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, merged, sg.ID); err != nil {
 		return nil, false, fmt.Errorf("snapshot router decision: %w", err)
 	}
+	// machine_run_id (issue #13): the router round is a machine gate — name the
+	// run it judged in its own column (verifier_run_id='' stays the machine
+	// marker) so the round can be attributed once the gate is timed.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
-		newID(), goalID, sg.ID,
+		`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,machine_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'',?,'passed',?,?,?)`,
+		newID(), goalID, sg.ID, rc.RunID,
 		fmt.Sprintf("路由决策：选择类 %s", chosen),
 		fmt.Sprintf("router decision on run %s (raw=%q fallback=%t)", rc.RunID, raw, fallbackUsed),
 		now()); err != nil {
