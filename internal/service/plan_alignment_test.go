@@ -79,7 +79,7 @@ func TestPlanAlignmentFlagsConsultOnlyExecution(t *testing.T) {
 	}
 	// The RSI finding carries the same verdict into the training loop.
 	f := NewRSIService(st, events.NewBus()).planAlignmentFindings(ctx, g.ID)
-	if len(f) != 1 || f[0].Category != "plan_deviation" || f[0].Severity != "high" {
+	if len(f) != 1 || f[0].Category != "plan_deviation" || f[0].Severity != "critical" {
 		t.Fatalf("want one high plan_deviation finding, got %+v", f)
 	}
 }

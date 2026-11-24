@@ -242,9 +242,11 @@ func (s *RSIService) planAlignmentFindings(ctx context.Context, goalID string) [
 	if len(al.Deviations) == 0 {
 		return nil
 	}
-	sev := "medium"
+	sev := "warn"
+	score := scoreBaseWarn
 	if !al.Materialized || (al.ConsultCount > 0 && al.Executed == 0) {
-		sev = "high"
+		sev = "critical"
+		score = scoreBaseCritical
 	}
 	return []RsiFinding{{
 		Category:   "plan_deviation",
@@ -259,6 +261,6 @@ func (s *RSIService) planAlignmentFindings(ctx context.Context, goalID string) [
 				al.Planned, al.Settled, al.Mapped, al.Executed, al.UnplannedSubGoals, al.ConsultCount, al.Materialized),
 			"deviations: " + strings.Join(al.Deviations, " | "),
 		},
-		Score: 80,
+		Score: score,
 	}}
 }

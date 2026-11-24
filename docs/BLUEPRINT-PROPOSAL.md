@@ -653,28 +653,90 @@ infer goal 终态(done) ──▶ 执行图 shape 签名 ──▶ infer_shape �
 
 ### 13.2 确定性 finding→补丁翻译器（LLM+P 的 P 侧自动化第一步）
 
-Phase C 里 finding→patch 是人工翻译。Phase D 把其中**可确定性翻译**的一类
-自动化：`serial_chain`（关键路径 ≥4 串行节点）。翻译规则（全部确定性、零 LLM）：
+Phase C 里 finding→patch 是人工翻译。Phase D 把其中**可确定性翻译**的类别自动化：
+`internal/service/rsi_translate.go` 注册了 11 个 finding→补丁翻译器，与
+`rsi_analyze.go` 产出的 11 类 finding 一一对应。翻译规则全部确定性、零 LLM：
+先用执行图定位热点，再回蓝本 spec 找对应的 task/gate 节点，生成
+`add_node` / `update_node` / `delete_node` / `add_edge` / `delete_edge` 补丁。
 
-- 前提：goal 钉了蓝本版本（infer goal 无 spec 可补丁，跳过）；执行图关键路径
-  上存在 ≥2 个纯 task 串行段，且段内相邻节点间是显式 depends_on 边。
-- 映射：执行节点 sg:id → blueprint_node.node_key（非 spec 任务如 spawn 子项
-  直接放弃翻译）。
-- 数据流检查：段内任何成员的 brief 引用另一成员的 `{{node.X.output}}`
-  （双向查）→ 放弃整个翻译——fork 会断引用。
-- 形状检查：末成员的 done 边必须直达唯一的 end 节点；每个相邻对在 spec 里
-  确实是 done 边相连（spec 是真相，执行图只是线索）。
-- 补丁：删 k−1 条链边 + 每个成员直连共享 end（链→fork；只删一条会让上游
-  失去到 end 的路径，V2 会拒，所以 all-or-nothing）。
+共享前提（任一不满足就静默跳过，不会乱补）：
+
+- 前提：goal 钉了蓝本版本（infer goal 无 spec 可补丁，跳过），且蓝图已编译
+  （`blueprint_node` 有记录）。
+- 映射：执行节点 `sg:id` → `blueprint_node.node_key`；非 spec 任务（spawn 子项、
+  consult 等）没有蓝图节点可补，直接放弃。
+- 形状检查：补丁前先在 spec 上确认目标节点类型与端口合法（spec 是真相，
+  执行图只是线索）；链→fork 时末成员的 done 边必须直达唯一的 end 节点。
+- 数据流检查：被拆分/替换/删除的 task，若其 brief（或 gate prompt）被另一个
+  节点的 `{{node.X.output}}` 引用，翻译器放弃该条——fork 会断引用。链→fork
+  另外保守检查链外节点对非末成员的引用（V1 的单端口出边使这种引用在合法
+  spec 里几乎不可达，但一旦存在就是静默断流，宁可放弃）。
+- 团队边界：`split_candidate` 只翻译 assignee 为 `squad:`/`capability:` 的
+  task。compile 只为这两类挂 `team_squad_id`；`agent:` 归属的 spawn 子项只能
+  派给规划者自己，而执行器按 agent 单飞，拆出来的子项会被串行化——只多一层
+  规划开销，没有并行收益，所以不生成。
+- 验收契约：task 带自定义 verify（`mode` 为 `machine`/`agent`，非
+  `domain_default`）时不做 task→spawn 拆分、也不作为 merge 的被删末梢——
+  spawn 没有 verify 体，V4 只为 `type=task` 配 verifier，强转会静默丢掉验收人。
+- 执行者边界：merge 只吸收与 keeper 同 assignee 的末梢（被删 brief 由 keeper
+  的执行者承接，跨执行者等于悄悄改派，与 analyzer 的 suggestion 相悖）。
 - 安全闸门：翻译产物仍走 CreateProposal 的完整 V1–V6 校验（fail-closed），
   提案状态 pending——**翻译器永不发布，人工仍是闸门**（§12.1 不变）。
-  重复分析防重：按提案 title 精确去重（re-analyze / retry 不堆叠）。
-- 挂点：Analyze 提交后 `draftAutoProposals`（log-and-continue，翻译失败
-  不影响分析本身）。
+- 防重：同一轮分析每类最多起草 1 条、整轮最多 4 条。同一轮内按补丁效果签名
+  （`patches` JSON）去重；跨轮按提案 title 去重（`rejected` 也算——人工否决
+  过的同一条确定性转化不会每轮重来；想重来请改 title 或删旧提案）。
+- 预算：`rsi.max_auto_rounds` 实际计的是**每个蓝本累计 pending/approved 自动
+  提案数**（不是分析轮次；默认 10，每轮最多 4 条），翻译器计数与人工提案/发布
+  完全分开。
 
-其余 finding 类别（split_candidate/lost_parallelism 等）Phase D **不**自动翻译：
-它们的正确补丁依赖重排细节与节点语义，确定性翻译写不出来就会变成瞎猜——
-这些仍走人工翻译通道（LLM+P 分工里 LLM 侧未来再做，见 §13.4）。
+翻译器一览（`findingTranslators`）：
+
+| finding 类别 | 触发 | 确定性补丁 | 预期指标 |
+|---|---|---|---|
+| `serial_chain` | 关键路径 ≥4 串行 task | 删 k−1 条链边，成员全部直连共享 end（链→fork，all-or-nothing） | wall_ms ↓ |
+| `lost_parallelism` | 可并行的串行段 | 同上；同轮已有 serial_chain 时让位，避免双开 | parallel_speedup ↑ |
+| `split_candidate` | agent busy 占比 ≥50%，且 assignee 为 `squad:`/`capability:` | task→spawn（同 id、同 assignee/brief、max_children=2），重连所有出入边 | agent_busy 占比 ↓ |
+| `merge_candidate` | ≥3 个同时收尾的 task 末梢；被合并叶时长和 ≤ min(5min, 10% wall) | 最多 2 个最小末梢并入最重的 keeper（同 assignee 且同 verifier）：入边改指、brief 追加「合并交付」，删除末梢 | wall_ms ↓ |
+| `human_wait` | 人工等待占比 ≥30% 且 ≥10min | 成功 end 前插「人工审核证据包」task（4 项证据），原 done 入边改指到它 | human_wait_ms ↓ |
+| `wrong_assignee` | 最忙 lane ≥5min 且 ≥2× 其余中位数 | 把最忙 lane 上最多 2 个 task 改派给最闲 lane | wall_ms ↓ |
+| `brief_quality` | 受影响任务 ≥2 且被拒 ≥3（或单任务被拒 ≥2） | task brief 追加「验收标准」块（幂等 marker） | rework_ratio ↓ |
+| `retry_amplification` | agent 节点 attempt ≥3（=2 次重试） | brief 追加「执行前置检查」块 | wall_ms ↓ |
+| `consult_repeat` | 同一子项 ≥2 次咨询 | brief 追加「派发前确认清单」块 | wall_ms ↓ |
+| `ping_pong` | 同一对 agent 双向各 ≥2 次咨询 | 相关 task brief 追加「一次性问题清单」块 | wall_ms ↓ |
+| `plan_deviation` | 计划/执行偏离 | 入口 task（无入边）brief 追加「计划节点纪律」块 | wall_ms ↓ |
+
+**规则撞脚与去重**：同一轮里，每个 draft 会记录自己触碰的节点/边身份
+（`n:<id>`、`e:<src>\x00<handle>\x00<tgt>`），后一个 draft 与已触碰集合相交即跳过；
+启动时还会把同一 blueprint 上 `pending/approved` 提案的 `patches_json` 触碰集并入，
+避免与在线提案重复改同一节点。结构类（fork/split/merge/human pack）先于简报类
+（brief/retry/consult/ping/plan_deviation）。已知限制：同一 base 的两个提案
+“批准 P1 → 再批准 P2 并发布”会丢 P1 的改动（ApproveProposal 不做 base 新鲜度检查），
+操作上应按“批准 → 发布 → 再批准下一条”串行进行。
+
+brief 加固块都用固定标题做幂等 marker，重复分析不会重复追加。`human_wait`
+不猜 gate 上游的输出结论（gate auto 规则需要真实 result_summary），而是用
+证据包把人工检查提前到交付前，仍不自动改 gate 动作。证据包提案用固定 title，
+跨轮去重由 title 完成；另外 spec 里已有 `人工审核证据包`/`rsi_review_pack*`
+节点时直接跳过（下一轮 goal 钉到含证据包的新版本时生效；同一 goal 的
+`blueprint_version_id` 是写入即固定，不会换 base）。
+
+挂点：Analyze 提交后 `draftAutoProposals`（log-and-continue，翻译失败不影响
+分析本身）。测试在 `internal/service/rsi_translate_test.go`：每类翻译器都
+断言产物能通过 ApproveProposal 的完整校验，并覆盖效果去重、注册表完整性、
+跨执行者 merge 与 `agent:` split 的跳过路径。
+
+已知边界（既有链路限制，不是本次翻译器引入；换自动提案池后暴露面变大，按
+现状记录）：
+
+- `finding_id` 生命周期：每轮 Analyze 会按 session 重建 `rsi_report`/`rsi_finding`，
+  旧提案的 `finding_id` 随之失效；由 finding 反推下一轮的 `nextRoundOrigin`
+  要求该 finding 仍在最新一轮。批准/发布要在 finding 被下一轮覆盖前完成
+  （Phase C 的 serial_chain 提案同样如此）。
+- 同 base 多提案：一次分析最多产出 4 条，全部以同一钉住的 base 版本校验。
+  ApproveProposal 只校验记录里的 base、不检查 base 是否已过期，因此请逐条
+  「批准 → 发布 → 再批准下一条」；同时批准两条再分别发布，后一条草稿会丢掉
+  前一条的改动。
+- cap 语义：见上文「预算」——按提案数计的自动化闸门，不按分析轮次计。
 
 ### 13.3 冗余缩减与前端精简（2026-11-18 用户指令）
 
@@ -691,8 +753,8 @@ Phase C 里 finding→patch 是人工翻译。Phase D 把其中**可确定性翻
 ### 13.4 Phase D 边界（不做清单）
 
 - 不做 MCTS/AFlow 式自动搜索（远期 Phase E 话题）；
-- 不做 finding→patch 的 LLM 翻译（除 serial_chain 的确定性翻译外全部
-  人工）；
+- 不做 finding→patch 的 LLM 翻译；确定性翻译已覆盖 11 类 finding 中可安全
+  机械化的情形，需要语义重排/语义判断的补丁仍走人工翻译通道（LLM 侧未来再做）；
 - 不做 cost_per_success（无数据源不造数）；
 - 不删任何「感觉没用」但实际在主链上的模块（domains/templates/skills/
   IM 均核实为活功能——分别是 goal 归属/环境冷启动/config.push 推送目标/
