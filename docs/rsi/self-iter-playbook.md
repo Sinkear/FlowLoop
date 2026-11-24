@@ -73,7 +73,10 @@ tail -f /tmp/ouroflow-daemon.log
 |---|---|---|
 | `dependency_wait_ms` | sg 创建→其依赖全部 run 结束（ready）的累计等待 | 大 = 依赖门控太长（前置链没并行） |
 | `dispatch_wait_ms` | ready→首个 sub_goal run 开始的累计等待 | 大 = 派发/认领链路开销 |
-| `queue_wait_ms` | **legacy 兼容别名** = 上两者之和 | 仅用于旧报表；新分析看拆分字段 |
+| `queue_wait_ms` | **legacy 兼容别名** = `dispatch_wait_ms`（旧报表的「依赖 + 派发之和」口径已 breaking） | 仅用于旧报表；新分析看拆分字段 |
+| `queue_wait_capped` / `queue_wait_overlap_ms` | 累计派发等待超过编排跨度时封顶 / 被收敛掉的超出量 | 两者出现 = 多个 lane 同时空转，排队等待按跨度计而不是相加 |
+| `wall_span_ms` | 最早就绪 → 最后结束（有 run 在飞时取 `now`）的编排跨度 | `queue_wait_ms` 的收敛上限；`wall_ms` 不含在飞 run，不能当上限 |
+| `unrun_sub_goals` | 无 run 窗口且未终态的子目标数（blueprint gate holder 恒不计） | 大 = 子目标建了却没派发 |
 | `critical_path_ms` | explicit 依赖链的最短墙钟（排除 inferred seq） | 接近 wall = 依赖过度串行 |
 | `parallel_speedup` | work_sum ÷ wall（实际吞吐加速比；串行=1.0） | 接近 1 = 没吃到并行 |
 | `serialization_loss_ms` | wall − critical_path（排队/派发/抖动） | 大 = 依赖声明过度或分派太碎 |

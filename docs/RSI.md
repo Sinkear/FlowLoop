@@ -41,7 +41,8 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 
 - `node_count / edge_count / depth`：节点数、边数、explicit 关键路径节点数。
 - `work_sum_ms`：agent + verify + consult + integrate 节点的 busy 时长之和；**不含 review**。
-- `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。
+- `wall_ms`：上述工作节点窗口的 max(end) − min(start)；不含 review 与 goal 根节点。只统计已有结束时间的节点，**仍在运行的 run 不计入**（所以运行中的编排 `wall_ms` 可能为 0）。
+- `wall_span_ms`：编排跨度 = 最早就绪时刻（`sub_goal.created_at`，被依赖结束推后）→ 最后一个 sub_goal run 结束；仍有 run 在飞时右端取 `now`。它是排队等待的收敛上限——`wall_ms` 只含已结束节点，不能当上限（#11）。
 - `critical_path_ms`：只沿 explicit/结构边（`created` / `depends_on` / `verified_by` / `consult` / `integrated`）做最长链 DP，并要求前驱结束 ≤ 后继开始；**排除 `source=inferred` 的 `seq` 边**，review 节点也不入链。它是「依赖约束下的最短墙钟」，不是速度指标。
 - `serialization_loss_ms = max(0, wall_ms − critical_path_ms)`：墙钟里未被依赖链解释的等待（排队/派发/抖动）。
 - `parallel_speedup = work_sum_ms / wall_ms`（`wall_ms=0` 时为 0）：**实际吞吐加速比**，串行 = 1.0；两个 30min 独立任务并行，wall=30、work=60 → 2.0。旧公式 `work_sum / critical_path` 已废弃，不再作为速度展示。
@@ -50,9 +51,12 @@ W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 
 - `verify_rounds`：verify 节点 attempt 之和；`rework_ratio = rejected verify 轮数 / verify_rounds`。
 - `consult_count`：consult 节点数。
 - `lane_count / lane_imbalance`：按 assignee 分桶的 busy 负载；只统计工作节点（不含 review）；imbalance = 最忙 lane ÷ 各 lane 均值。
-- `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的累计等待，衡量依赖门控。
-- `dispatch_wait_ms`：ready → 首个 sub_goal run 开始的累计等待，衡量派发链路。
-- `queue_wait_ms`：**legacy 兼容别名** = `dependency_wait_ms + dispatch_wait_ms`；新代码与新文档以拆分字段为准。
+- `dependency_wait_ms`：sub_goal 创建 → 其依赖全部 run 结束（ready）的**累计**等待，衡量依赖门控；累计口径，可超过墙钟。
+- `dispatch_wait_ms`：ready → 首个 sub_goal run 开始的**累计**等待，衡量派发链路；累计口径，超过 `wall_span_ms` 的部分会被收敛（见下）。
+- `queue_wait_ms`：`dispatch_wait_ms` 的 **legacy 兼容别名**（两者相等）。v2 之前的旧报表把它定义为 `dependency_wait_ms + dispatch_wait_ms`，该口径已 **breaking**：不再含依赖门控等待，新代码与新文档只看拆分字段。
+- `queue_wait_capped`：`true` = 累计派发等待超过 `wall_span_ms`，已收敛到编排跨度（只在超限时出现）。
+- `queue_wait_overlap_ms`：收敛掉的超出部分（累计值 − `wall_span_ms`），只在 `queue_wait_capped=true` 时出现。
+- `unrun_sub_goals`：无任何 run 窗口、且未终态（非 `verified`/`cancelled`/`failed`）的子目标数。blueprint gate holder 恒不计——gate 由人工/自动决策 settle，构造上就没有 run；verified 节点也不计，避免把已决策节点标成「未执行」。
 - `human_wait_ms`：`Σ gate_decision.review_duration × 1000`；`human_wait_share = human_wait_ms / (wall_ms + human_wait_ms)`（0..1，分母含人工等待，因此不会超过 100%）。
 - `retry_amplification`：agent 节点中的**最大** Attempt（float；无 agent 节点为 0），不是平均重试次数。
 - `lanes`：上述分桶明细（内部展示用）。

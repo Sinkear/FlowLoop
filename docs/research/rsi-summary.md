@@ -188,7 +188,7 @@ ouroflow 在第三派。正确做法不是退回第一派，而是补上第三�
 | `critical_path_ms` | 图上最长路径（含等待边） | 真正决定交付时长的路径 |
 | `parallel_speedup` | `work_sum_ms / critical_path_ms` | ≥1；越大说明并行越有效 |
 | `serialization_loss_ms` | `critical_path_ms - 最长单节点时长` | 关键路径上「排队等别人」的部分 |
-| `queue_wait_ms` | `Σ(run.started_at - 节点就绪时间)` | 子任务已创建但没被调度的时间 |
+| `queue_wait_ms` | `Σ(run.started_at - 节点就绪时间)`，累计值封顶到编排跨度（`wall_span_ms`） | 子任务已创建但没被调度的时间；封顶时 `queue_wait_capped=true`，超出量在 `queue_wait_overlap_ms` |
 | `lane_imbalance` | `max(泳道工作量) / avg(泳道工作量)` | 某 agent 忙死、其他闲着 |
 | `verify_overhead_ratio` | `verify+review 时长 / work_sum` | 验证/审查本身吃掉多少产能 |
 | `rework_ratio` | `rejected 验证轮次 / 总验证轮次` | 返工而非一次做对 |
