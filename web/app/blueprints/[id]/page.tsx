@@ -47,8 +47,8 @@ import {
 import type { BlueprintProposal } from "@/lib/types";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { DASH, fmtInt } from "@/components/training/format";
+import { ABRow, DiffCanvas, ProposalDiffChanges, abMetricKeys } from "@/components/blueprint-diff";
 import { cn } from "@/lib/utils";
-import type { WorkflowGraph } from "@/lib/types";
 
 function fullTime(iso: string): string {
   if (!iso) return DASH;
@@ -152,36 +152,6 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-
-// A/B 指标的中文名（§13.1：verify_pass_rate 已落地；cost_per_success 仍诚实缺席）。
-const AB_METRIC_LABELS: Record<string, string> = {
-  critical_path_ms: "关键路径",
-  wall_ms: "墙钟时间",
-  parallel_speedup: "并行加速",
-  rework_ratio: "返工率",
-  verify_pass_rate: "一次通过率",
-  verify_overhead_ratio: "验证开销",
-  human_wait_ms: "人工等待",
-};
-
-// A/B 对比一行：指标名 / A 值 / B 值（带 Δ）。数值列用等宽字体对齐。
-function ABRow({ metric, a, b, delta }: { metric: string; a: number | string | undefined; b: number | string | undefined; delta: number }) {
-  const fmt = (v: number | string | undefined) =>
-    v === undefined ? DASH : typeof v === "number" ? String(Math.round(v)) : v;
-  const up = delta > 0;
-  return (
-    <>
-      <span className="truncate text-ink-3" title={metric}>{AB_METRIC_LABELS[metric] ?? metric}</span>
-      <span className="text-ink-2">{fmt(a)}</span>
-      <span className="text-ink-2">
-        {fmt(b)}
-        <span className={cn("ml-1.5 text-[10px]", up ? "text-red-400" : "text-emerald-300")}>
-          Δ {delta > 0 ? "+" : ""}{Math.round(delta)}
-        </span>
-      </span>
-    </>
-  );
-}
 
 export default function BlueprintDetailPage() {
   const params = useParams<{ id: string }>();
@@ -638,10 +608,25 @@ export default function BlueprintDetailPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-ink">{pr.title}</p>
                         <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{pr.hypothesis || "（未写假设）"}</p>
-                        <p className="mt-1 font-mono text-[10.5px] text-ink-3">
-                          {pr.patches.length} 个补丁 op · 基于 {pr.base_version_id.slice(0, 8)}
-                          {pr.expected_metric && ` · 预期 ${pr.expected_metric} ${pr.expected_direction === "down" ? "↓" : "↑"}`}
-                          {pr.applied_version_id && ` · 已生成草稿 ${pr.applied_version_id.slice(0, 8)}`}
+                        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-3">
+                          <span>
+                            <span className="font-mono tabular-nums">{pr.patches.length}</span> 个补丁 op
+                          </span>
+                          <span>
+                            基于 <span className="font-mono">{pr.base_version_id.slice(0, 8)}</span>
+                          </span>
+                          {pr.expected_metric && (
+                            <span>
+                              预期 <span className="font-mono">{pr.expected_metric}</span>{" "}
+                              {pr.expected_direction === "down" ? "↓" : "↑"}
+                            </span>
+                          )}
+                          {pr.applied_version_id && (
+                            <span>
+                              已生成草稿{" "}
+                              <span className="font-mono">{pr.applied_version_id.slice(0, 8)}</span>
+                            </span>
+                          )}
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -692,6 +677,7 @@ export default function BlueprintDetailPage() {
             <SectionCard
               title="提案 diff"
               desc="左：改动前规范图 · 右：改动后规范图（补丁应用后仍过 V1–V6 校验才会出现）"
+              descInBody
             >
               {proposalDiff.isLoading ? (
                 <div className="p-4"><Skeleton className="h-64 w-full" /></div>
@@ -700,46 +686,12 @@ export default function BlueprintDetailPage() {
                   <ErrorBox title="diff 读取失败：" message={String(proposalDiff.error)} />
                 </div>
               ) : proposalDiff.data ? (
-                <div className="space-y-3">
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-medium text-ink-3">改动前</p>
-                      <WorkflowGraphView
-                        graph={proposalDiff.data.base}
-                        loading={false}
-                        error={null}
-                        variant="spec"
-                        showMetrics={false}
-                      />
-                    </div>
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-medium text-ink-3">改动后</p>
-                      <WorkflowGraphView
-                        graph={proposalDiff.data.patched}
-                        loading={false}
-                        error={null}
-                        variant="spec"
-                        showMetrics={false}
-                      />
-                    </div>
+                <div className="space-y-3 p-4">
+                  <div className="grid items-start gap-3 lg:grid-cols-2">
+                    <DiffCanvas label="改动前" graph={proposalDiff.data.base} />
+                    <DiffCanvas label="改动后" graph={proposalDiff.data.patched} />
                   </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px]">
-                    {proposalDiff.data.nodes_added.map((k) => (
-                      <span key={k} className="text-emerald-300">+ 节点 {k}</span>
-                    ))}
-                    {proposalDiff.data.nodes_removed.map((k) => (
-                      <span key={k} className="text-red-400">− 节点 {k}</span>
-                    ))}
-                    {proposalDiff.data.nodes_changed.map((c) => (
-                      <span key={c.id} className="text-amber-300">± 节点 {c.id}（{c.kind}）</span>
-                    ))}
-                    {proposalDiff.data.edges_added.map((k) => (
-                      <span key={k} className="text-emerald-300">+ 边 {k}</span>
-                    ))}
-                    {proposalDiff.data.edges_removed.map((k) => (
-                      <span key={k} className="text-red-400">− 边 {k}</span>
-                    ))}
-                  </div>
+                  <ProposalDiffChanges diff={proposalDiff.data} />
                 </div>
               ) : null}
             </SectionCard>
@@ -749,47 +701,95 @@ export default function BlueprintDetailPage() {
           <SectionCard
             title="同题 A/B"
             desc="输入两个用过本蓝本的任务 id：并排比较执行指标（墙钟/关键路径/并行加速/返工/一次通过率/人工等待）；成本指标仍诚实缺席（run 无 token 采集）"
+            descInBody
           >
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-56 flex-1">
-                <Field label="任务 A（goal id）">
-                  <input className={cn(inputCls, "font-mono text-xs")} value={abGoalA} onChange={(e) => setAbGoalA(e.target.value)} placeholder="32 位任务 id" />
-                </Field>
-              </div>
-              <div className="min-w-56 flex-1">
-                <Field label="任务 B（goal id）">
-                  <input className={cn(inputCls, "font-mono text-xs")} value={abGoalB} onChange={(e) => setAbGoalB(e.target.value)} placeholder="32 位任务 id" />
-                </Field>
-              </div>
-            </div>
-            {ab.isError && (
-              <div className="mt-3"><ErrorBox title="对比读取失败：" message={String(ab.error)} /></div>
-            )}
-            {ab.data && (
-              <div className="mt-3 space-y-2">
-                <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
-                  <span className="text-ink-3">指标</span>
-                  <span className="truncate text-ink-2" title={ab.data.goal_a.goal_id}>
-                    A · {ab.data.goal_a.goal_title || ab.data.goal_a.goal_id.slice(0, 8)}
-                    {ab.data.goal_a.blueprint_version_id && ` (钉 ${ab.data.goal_a.blueprint_version_id.slice(0, 8)})`}
-                  </span>
-                  <span className="truncate text-ink-2" title={ab.data.goal_b.goal_id}>
-                    B · {ab.data.goal_b.goal_title || ab.data.goal_b.goal_id.slice(0, 8)}
-                    {ab.data.goal_b.blueprint_version_id && ` (钉 ${ab.data.goal_b.blueprint_version_id.slice(0, 8)})`}
-                  </span>
-                  {Object.entries(ab.data.deltas).map(([k, d]) => (
-                    <ABRow key={k} metric={k} a={ab.data!.goal_a.metrics[k]} b={ab.data!.goal_b.metrics[k]} delta={d} />
-                  ))}
+            <div className="space-y-3 p-4">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-56 flex-1">
+                  <Field label="任务 A（goal id）">
+                    <input className={cn(inputCls, "font-mono text-xs placeholder:font-sans")} value={abGoalA} onChange={(e) => setAbGoalA(e.target.value)} placeholder="32 位任务 id" />
+                  </Field>
                 </div>
-                {(ab.data.notes?.length ?? 0) > 0 && (
-                  <ul className="space-y-0.5 text-[11px] text-amber-300/90">
-                    {ab.data!.notes!.map((n, i) => (
-                      <li key={i}>· {n}</li>
-                    ))}
-                  </ul>
-                )}
+                <div className="min-w-56 flex-1">
+                  <Field label="任务 B（goal id）">
+                    <input className={cn(inputCls, "font-mono text-xs placeholder:font-sans")} value={abGoalB} onChange={(e) => setAbGoalB(e.target.value)} placeholder="32 位任务 id" />
+                  </Field>
+                </div>
               </div>
-            )}
+              {ab.isError && (
+                <ErrorBox title="对比读取失败：" message={String(ab.error)} />
+              )}
+              {ab.data && (
+                <div className="space-y-2">
+                  <div className="overflow-x-auto rounded-lg border border-line">
+                    <table className="w-full min-w-[560px] table-fixed border-collapse text-xs">
+                      <colgroup>
+                        <col className="w-[108px]" />
+                        <col />
+                        <col />
+                        <col className="w-[84px]" />
+                      </colgroup>
+                      <thead className="bg-surface-2/40">
+                        <tr className="text-[11px] text-ink-3">
+                          <th className="px-3 py-2 text-left font-medium">指标</th>
+                          <th className="px-3 py-2 text-left font-medium" title={ab.data.goal_a.goal_id}>
+                            <span className="flex min-w-0 items-baseline gap-1.5">
+                              <span className="shrink-0">A</span>
+                              <span className="min-w-0 truncate text-ink-2">
+                                {ab.data.goal_a.goal_title || ab.data.goal_a.goal_id.slice(0, 8)}
+                              </span>
+                              {ab.data.goal_a.blueprint_version_id && (
+                                <span className="shrink-0 whitespace-nowrap text-[10px]">
+                                  钉{" "}
+                                  <span className="font-mono tabular-nums">
+                                    {ab.data.goal_a.blueprint_version_id.slice(0, 8)}
+                                  </span>
+                                </span>
+                              )}
+                            </span>
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium" title={ab.data.goal_b.goal_id}>
+                            <span className="flex min-w-0 items-baseline gap-1.5">
+                              <span className="shrink-0">B</span>
+                              <span className="min-w-0 truncate text-ink-2">
+                                {ab.data.goal_b.goal_title || ab.data.goal_b.goal_id.slice(0, 8)}
+                              </span>
+                              {ab.data.goal_b.blueprint_version_id && (
+                                <span className="shrink-0 whitespace-nowrap text-[10px]">
+                                  钉{" "}
+                                  <span className="font-mono tabular-nums">
+                                    {ab.data.goal_b.blueprint_version_id.slice(0, 8)}
+                                  </span>
+                                </span>
+                              )}
+                            </span>
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium" title="B 相对 A 的变化（改善/恶化按指标方向判断）">Δ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {abMetricKeys(ab.data.deltas).map((k) => (
+                          <ABRow
+                            key={k}
+                            metric={k}
+                            a={ab.data!.goal_a.metrics[k]}
+                            b={ab.data!.goal_b.metrics[k]}
+                            delta={ab.data!.deltas[k]}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {(ab.data.notes?.length ?? 0) > 0 && (
+                    <ul className="space-y-0.5 text-[11px] text-amber-300/90">
+                      {ab.data!.notes!.map((n, i) => (
+                        <li key={i}>· {n}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
           </SectionCard>
 
           {/* ── 规范图（Phase A 验收项）：复用执行图渲染器 ── */}
@@ -826,7 +826,7 @@ export default function BlueprintDetailPage() {
                 <summary className="cursor-pointer select-none px-4 py-2.5 text-xs text-ink-3 transition-colors hover:text-ink-2">
                   展开查看原文
                 </summary>
-                <pre className="max-h-96 overflow-auto border-t border-line bg-surface-2/40 p-3 font-mono text-[11.5px] leading-relaxed text-ink-2">
+                <pre className="max-h-96 overflow-auto border-t border-line bg-surface-2/40 p-3 font-mono text-[11px] leading-relaxed text-ink-2">
                   {prettyContent}
                 </pre>
               </details>
@@ -859,7 +859,7 @@ export default function BlueprintDetailPage() {
               保存时服务端会重新跑 V1–V6 校验。草稿可以反复改；「发布」之后这个版本就冻结了，后续改动请开新草稿。
             </p>
             <textarea
-              className={cn(inputCls, "min-h-[380px] resize-y font-mono text-[11.5px] leading-relaxed")}
+              className={cn(inputCls, "min-h-[380px] resize-y font-mono text-[11px] leading-relaxed")}
               spellCheck={false}
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
