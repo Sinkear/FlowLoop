@@ -293,6 +293,16 @@ func Open(path string) (*Store, error) {
 		// fresh DBs; these ALTERs retrofit existing ones.
 		`ALTER TABLE runtime ADD COLUMN models TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE runtime ADD COLUMN models_at TEXT NOT NULL DEFAULT ''`,
+
+		// Machine-round timing (2026-11-24, issue #13 / D2): the machine gate
+		// runs inside the daemon on the owner run's window, so a机器 round had
+		// no separable verification time and verify_overhead was a hard 0.
+		// verify_ms is the pre-wired timing slot (phase 2 fills it; 0 = not
+		// timed) and machine_run_id names the run the gate judged — the empty
+		// verifier_run_id stays the machine-round schema marker, unchanged.
+		// Both columns live in schema.sql for fresh DBs and here for old ones.
+		`ALTER TABLE verification_result ADD COLUMN verify_ms INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE verification_result ADD COLUMN machine_run_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -206,6 +207,102 @@ func TestWorkflowIdleGapAliasSameValue(t *testing.T) {
 	}
 	if got := mi(linear.Metrics, "critical_path_ms"); got != mi(linear.Metrics, "work_sum_ms") {
 		t.Fatalf("linear chain: cp %d != work_sum %d", got, mi(linear.Metrics, "work_sum_ms"))
+	}
+}
+
+// Issue #13 (D2): a machine verification round has no separable timing window
+// (the gate runs inside the daemon on the owner run's window), so the graph used
+// to print verify_overhead 0% with nothing to distinguish it from "verification
+// is free". Rounds are now split into measured/unmeasured with a coverage ratio
+// and a scope marker, and the verify node carrying unmeasured rounds is flagged.
+func TestWorkflowVerifyCoverageUnmeasured(t *testing.T) {
+	st, gsvc, rsi := newRSITestEnv(t)
+	g := mkRSIGoal(t, gsvc, "machine-verify", "infer")
+	base := time.Now().UTC().Add(-2 * time.Hour)
+	created := base.Format(time.RFC3339Nano)
+	const rounds = 12
+	for i := 0; i < rounds; i++ {
+		sg := fmt.Sprintf("sg-%02d", i)
+		if _, err := st.DB().Exec(`INSERT INTO sub_goal (id,goal_id,title,assignee_id,verifier_id,status,depends_on,created_at)
+		 VALUES (?,?,'task','ag-1','','verified','[]',?)`, sg, g.ID, created); err != nil {
+			t.Fatalf("sub_goal: %v", err)
+		}
+		insertRun(t, st, "r-"+sg, g.ID, sg, "subgoal", base, base.Add(10*time.Minute))
+		// A machine round: empty verifier_run_id (the schema marker for machine
+		// verification), machine_run_id names the judged run, verify_ms 0 = the
+		// daemon did not time the gate.
+		if _, err := st.DB().Exec(`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,verify_ms,machine_run_id,status,summary,created_at)
+		 VALUES (?,?,?,'',0,?,'passed','machine gate',?)`, "vr-"+sg, g.ID, sg, "r-"+sg, created); err != nil {
+			t.Fatalf("verification: %v", err)
+		}
+	}
+	gf, err := rsi.BuildGoalWorkflow(context.Background(), g.ID)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if got := mi(gf.Metrics, "verify_rounds"); got != rounds {
+		t.Fatalf("verify_rounds = %d, want %d", got, rounds)
+	}
+	if got := mi(gf.Metrics, "verify_measured_rounds"); got != 0 {
+		t.Fatalf("verify_measured_rounds = %d, want 0", got)
+	}
+	if got := mi(gf.Metrics, "verify_unmeasured_rounds"); got != rounds {
+		t.Fatalf("verify_unmeasured_rounds = %d, want %d", got, rounds)
+	}
+	if got := mf(gf.Metrics, "verify_coverage_ratio"); got != 0 {
+		t.Fatalf("verify_coverage_ratio = %v, want 0", got)
+	}
+	if got, _ := gf.Metrics["verify_overhead_scope"].(string); got != "unmeasured" {
+		t.Fatalf("verify_overhead_scope = %q, want unmeasured", got)
+	}
+	if got := mi(gf.Metrics, "verify_busy_measured_ms"); got != 0 {
+		t.Fatalf("verify_busy_measured_ms = %d, want 0", got)
+	}
+	// The 0% is a FLOOR accompanied by the scope marker, never a bare 0%.
+	if got := mf(gf.Metrics, "verify_overhead_ratio"); got != 0 {
+		t.Fatalf("verify_overhead_ratio = %v, want 0 (measured busy only)", got)
+	}
+	for _, n := range gf.Nodes {
+		if n.Kind != "verify" {
+			continue
+		}
+		if !n.Unmeasured || n.UnmeasuredRounds != 1 || n.MeasuredRounds != 0 || n.Attempt != 1 {
+			t.Fatalf("verify node %s = %+v, want unmeasured 1 round", n.Key, n)
+		}
+	}
+
+	// The other two states, without a DB fixture: partial and complete.
+	m := int64(time.Minute / time.Millisecond)
+	partial := wfGraph([]WorkflowNode{{
+		Key: "v:a", Kind: "verify", Status: "passed", Attempt: 4,
+		MeasuredRounds: 1, UnmeasuredRounds: 3, Unmeasured: true,
+		StartedAtMS: wfTestBase, EndedAtMS: wfTestBase + m, DurationMS: m,
+	}}, nil)
+	computeWorkflowMetrics(partial)
+	if got := mf(partial.Metrics, "verify_coverage_ratio"); got != 0.25 {
+		t.Fatalf("partial coverage = %v, want 0.25", got)
+	}
+	if got, _ := partial.Metrics["verify_overhead_scope"].(string); got != "partial" {
+		t.Fatalf("partial scope = %q, want partial", got)
+	}
+	if got := mi(partial.Metrics, "verify_unmeasured_rounds"); got != 3 {
+		t.Fatalf("partial unmeasured = %d, want 3", got)
+	}
+
+	complete := wfGraph([]WorkflowNode{{
+		Key: "v:b", Kind: "verify", Status: "passed", Attempt: 2,
+		MeasuredRounds: 2,
+		StartedAtMS:    wfTestBase, EndedAtMS: wfTestBase + 2*m, DurationMS: 2 * m,
+	}}, nil)
+	computeWorkflowMetrics(complete)
+	if got := mf(complete.Metrics, "verify_coverage_ratio"); got != 1 {
+		t.Fatalf("complete coverage = %v, want 1", got)
+	}
+	if got, _ := complete.Metrics["verify_overhead_scope"].(string); got != "complete" {
+		t.Fatalf("complete scope = %q, want complete", got)
+	}
+	if got := mf(complete.Metrics, "verify_overhead_ratio"); got != 1 {
+		t.Fatalf("complete verify_overhead_ratio = %v, want 1 (2min verify / 2min work)", got)
 	}
 }
 

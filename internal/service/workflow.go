@@ -34,6 +34,12 @@ type WorkflowNode struct {
 	StartedAtMS   int64   `json:"started_at_ms"`
 	EndedAtMS     int64   `json:"ended_at_ms"`
 	CriticalShare float64 `json:"critical_share"` // duration / critical path (filled by metrics)
+	// Verify nodes only (issue #13): rounds split by whether the round had a
+	// timing source. Unmeasured=true means at least one round happened without
+	// one, so duration_ms=0 reads as "not timed" rather than "free".
+	Unmeasured       bool `json:"unmeasured,omitempty"`
+	MeasuredRounds   int  `json:"measured_rounds,omitempty"`
+	UnmeasuredRounds int  `json:"unmeasured_rounds,omitempty"`
 }
 
 // WorkflowEdge is one directed edge. kind:
@@ -271,19 +277,29 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	// ── verification nodes (one per sub-goal, rounds aggregated) ────────
+	// A verification round is MEASURED when it has a timing source: a verifier
+	// run window, or a machine round that the daemon actually timed (verify_ms
+	// > 0, phase 2). Everything else is UNMEASURED — the machine gate runs
+	// inside the daemon on the owner run's window, so 0ms here means "we did not
+	// time it", never "verification is free" (issue #13, D2). The empty
+	// verifier_run_id stays the machine-round marker.
 	type vState struct {
-		node   WorkflowNode
-		runIDs []string
+		node       WorkflowNode
+		runIDs     []string
+		measured   int
+		unmeasured int
+		busy       int64
 	}
 	vmap := map[string]*vState{}
 	vrows, err := s.st.DB().QueryContext(ctx,
-		`SELECT sub_goal_id,status,verifier_run_id FROM verification_result WHERE goal_id=? ORDER BY created_at ASC`, goalID)
+		`SELECT sub_goal_id,status,verifier_run_id,verify_ms FROM verification_result WHERE goal_id=? ORDER BY created_at ASC`, goalID)
 	if err != nil {
 		return nil, err
 	}
 	for vrows.Next() {
 		var sgid, status, vrun string
-		if err := vrows.Scan(&sgid, &status, &vrun); err != nil {
+		var verifyMS int64
+		if err := vrows.Scan(&sgid, &status, &vrun, &verifyMS); err != nil {
 			vrows.Close()
 			return nil, err
 		}
@@ -302,8 +318,17 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			v.node.Reworks++
 			v.node.Status = "rejected"
 		}
-		if vrun != "" {
+		switch {
+		case vrun != "":
+			// Verifier round: measured only if its run window is readable.
 			v.runIDs = append(v.runIDs, vrun)
+		case verifyMS > 0:
+			// Machine round with its own timing (phase 2): measured without a
+			// window — the gate has no separable start/end on the graph.
+			v.measured++
+			v.busy += verifyMS
+		default:
+			v.unmeasured++
 		}
 	}
 	vrows.Close()
@@ -315,10 +340,21 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			var st, fi string
 			if err := s.st.DB().QueryRowContext(ctx,
 				`SELECT started_at,finished_at FROM run WHERE id=?`, rid).Scan(&st, &fi); err != nil {
+				v.unmeasured++ // the round names a run the store no longer has
 				continue
 			}
+			v.measured++
 			addBusy(&v.node, st, fi)
 		}
+		v.node.DurationMS += v.busy
+		if rest := v.node.Attempt - v.measured - v.unmeasured; rest > 0 {
+			// Defensive: a round must land in exactly one bucket, so the counts
+			// always add up to Attempt (= verify_rounds) for readers.
+			v.unmeasured += rest
+		}
+		v.node.MeasuredRounds = v.measured
+		v.node.UnmeasuredRounds = v.unmeasured
+		v.node.Unmeasured = v.unmeasured > 0
 		graph.Nodes = append(graph.Nodes, v.node)
 		graph.Edges = append(graph.Edges, WorkflowEdge{From: "sg:" + sgid, To: v.node.Key, Kind: "verified_by", Source: "explicit"})
 	}
@@ -663,11 +699,14 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	// first-try. Computed from the graph (already assembled from
 	// verification_result rows) — zero new instrumentation.
 	verifyPassed, verifyTotal := 0, 0
+	verifyMeasured, verifyUnmeasured := 0, 0
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		if n.Kind == "verify" {
 			verifyRounds += n.Attempt
 			rejRounds += n.Reworks
+			verifyMeasured += n.MeasuredRounds
+			verifyUnmeasured += n.UnmeasuredRounds
 		}
 		if n.Kind == "agent" && n.Status == "verified" {
 			verifyTotal++
@@ -677,6 +716,30 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 		}
 		if n.Kind == "consult" {
 			consultCount++
+		}
+	}
+	// Rounds whose timing nobody recorded are UNMEASURED, not zero-cost: the
+	// machine gate runs inside the daemon on the owner run's window. Counting
+	// them keeps a 0% honest ("we did not time it") instead of claiming
+	// verification is free (issue #13, D2). A hand-built graph may declare
+	// Attempt without the split — the remainder is unmeasured, so the two
+	// counters always add up to verify_rounds.
+	if rest := verifyRounds - verifyMeasured - verifyUnmeasured; rest > 0 {
+		verifyUnmeasured += rest
+	}
+	verifyCoverage := 0.0
+	if covered := verifyMeasured + verifyUnmeasured; covered > 0 {
+		verifyCoverage = float64(verifyMeasured) / float64(covered)
+	}
+	verifyScope := "unmeasured"
+	if verifyMeasured+verifyUnmeasured > 0 {
+		switch {
+		case verifyUnmeasured == 0:
+			verifyScope = "complete"
+		case verifyMeasured == 0:
+			verifyScope = "unmeasured"
+		default:
+			verifyScope = "partial"
 		}
 	}
 
@@ -703,6 +766,10 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	verifyOverhead := 0.0
 	reviewOverhead := 0.0
 	if workSum > 0 {
+		// Numerator = MEASURED verification busy only. Unmeasured rounds
+		// contribute no time (they are reported by coverage + scope, never by a
+		// fabricated estimate), so a machine-only goal reads 0% WITH
+		// verify_overhead_scope="unmeasured" — the pair is the honest answer.
 		verifyOverhead = float64(verifyBusy) / float64(workSum)
 		reviewOverhead = float64(reviewBusy) / float64(workSum)
 	}
@@ -753,10 +820,18 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	m["serialization_loss_ms"] = idleGap
 	m["parallel_width_peak"] = peak
 	m["verify_overhead_ratio"] = verifyOverhead
+	m["verify_busy_measured_ms"] = verifyBusy
+	m["verify_measured_rounds"] = int64(verifyMeasured)
+	m["verify_unmeasured_rounds"] = int64(verifyUnmeasured)
+	m["verify_coverage_ratio"] = verifyCoverage
+	// unmeasured | partial | complete. "unmeasured" means no round had a timing
+	// source (machine gate inside the daemon), so the ratio above is a floor,
+	// not a measurement (issue #13, D2).
+	m["verify_overhead_scope"] = verifyScope
 	m["review_busy_ms"] = reviewBusy
 	m["review_overhead_ratio"] = reviewOverhead
 	m["retry_amplification"] = float64(maxAttempts)
-	m["verify_rounds"] = verifyRounds
+	m["verify_rounds"] = int64(verifyRounds)
 	m["rework_ratio"] = rework
 	m["verify_pass_rate"] = verifyPass
 	m["consult_count"] = consultCount
