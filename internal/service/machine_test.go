@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/flowloop/internal/link"
 )
 
 // TestMachineRegistry covers the /connect registry (CLI 分支 Phase 1):

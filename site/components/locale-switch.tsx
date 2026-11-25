@@ -18,7 +18,7 @@ export function LocaleSwitch() {
   function switchTo(next: Locale) {
     if (next === current) return;
     // usePathname() 在含 basePath 的配置下返回不含 basePath 的路径
-    // （/en/docs/architecture，不是 /ouroflow/en/...）。所以直接替换
+    // （/en/docs/architecture，不是 /flowloop/en/...）。所以直接替换
     // 开头的 locale 段即可，router.push 会自动补回 basePath。
     const stripped = pathname.replace(/^\//, "").split("/").filter(Boolean);
     if (stripped.length > 0 && routing.locales.includes(stripped[0] as Locale)) {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/service"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/service"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // patchAcceptance issues PATCH /domains/{id}/acceptance and returns the

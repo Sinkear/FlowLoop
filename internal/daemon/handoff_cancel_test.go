@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/link"
-	"github.com/Sinkear/ouroflow/internal/service"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/link"
+	"github.com/Sinkear/flowloop/internal/service"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // TestHandoffCancelsOldOwnerRun: a goal changing hands (human reassign or an
@@ -411,7 +411,7 @@ func TestIngestRunFinishedRecordsSessionOnHandoffCutRun(t *testing.T) {
 	// the terminal stamp). MarkSession MUST fire here.
 	if rerr := d.IngestRunFinished(ctx, "m1", link.RunFinishedParams{
 		RunID: "run-a", Status: "cancelled", Token: "tok-a",
-		SessionID: "sess-a-123", WorkDir: "/home/.ouroflow/runs/goal/g1/a",
+		SessionID: "sess-a-123", WorkDir: "/home/.flowloop/runs/goal/g1/a",
 	}); rerr != nil {
 		t.Fatalf("IngestRunFinished: %v", rerr)
 	}
@@ -419,7 +419,7 @@ func TestIngestRunFinishedRecordsSessionOnHandoffCutRun(t *testing.T) {
 	if err := st.DB().QueryRowContext(ctx, `SELECT session_id, workdir FROM run WHERE id='run-a'`).Scan(&sid, &wd); err != nil {
 		t.Fatalf("load run: %v", err)
 	}
-	if sid != "sess-a-123" || wd != "/home/.ouroflow/runs/goal/g1/a" {
+	if sid != "sess-a-123" || wd != "/home/.flowloop/runs/goal/g1/a" {
 		t.Fatalf("handoff-cut run's session pointer was not recorded: got session=%q workdir=%q — the next run of this (goal, agent) starts with no memory", sid, wd)
 	}
 
@@ -435,14 +435,14 @@ func TestIngestRunFinishedRecordsSessionOnHandoffCutRun(t *testing.T) {
 	}
 	if rerr := d.IngestRunFinished(ctx, "m1", link.RunFinishedParams{
 		RunID: "run-c", Status: "cancelled", Token: "tok-c",
-		SessionID: "sess-c-456", WorkDir: "/home/.ouroflow/runs/goal/g1/c",
+		SessionID: "sess-c-456", WorkDir: "/home/.flowloop/runs/goal/g1/c",
 	}); rerr != nil {
 		t.Fatalf("IngestRunFinished (pre-stamped): %v", rerr)
 	}
 	if err := st.DB().QueryRowContext(ctx, `SELECT session_id, workdir FROM run WHERE id='run-c'`).Scan(&sid, &wd); err != nil {
 		t.Fatalf("load pre-stamped run: %v", err)
 	}
-	if sid != "sess-c-456" || wd != "/home/.ouroflow/runs/goal/g1/c" {
+	if sid != "sess-c-456" || wd != "/home/.flowloop/runs/goal/g1/c" {
 		t.Fatalf("pre-stamped cancelled run's session pointer was not recorded: got session=%q workdir=%q — the window-stamp path lost the memory too", sid, wd)
 	}
 }

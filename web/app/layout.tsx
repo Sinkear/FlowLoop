@@ -18,7 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ouroflow",
+  title: "flowloop",
   description: "Task-driven multi-runtime agent management",
 };
 
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 // 默认浅色 Studio Paper；深色 Terminal Studio 为可选项。
 // 注意：html 上刻意不写 data-theme——由这段脚本独占该属性，React 便不会在
 // hydration 时把它“修”回默认值（否则某些客户端路由会闪回浅色）。
-const THEME_BOOT = `(function(){try{var t=localStorage.getItem('ouroflow-theme');if(t!=='dark'&&t!=='light')t='light';document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='light';}})()`;
+const THEME_BOOT = `(function(){try{var t=localStorage.getItem('flowloop-theme');if(t!=='dark'&&t!=='light')t='light';document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='light';}})()`;
 
 export default function RootLayout({
   children,

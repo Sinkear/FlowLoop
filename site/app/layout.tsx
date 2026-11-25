@@ -9,8 +9,8 @@ import "./globals.css";
 // "en" 默认；如需精确 lang，可在此处读 segment，但静态导出下保持简单。
 export const metadata: Metadata = {
   title: {
-    default: "OuroFlow — Graph-Driven AI Workflow OS",
-    template: "%s | OuroFlow",
+    default: "FlowLoop — Graph-Driven AI Workflow OS",
+    template: "%s | FlowLoop",
   },
   description:
     "Graph-driven AI workflow OS: versioned Blueprint graphs, agent execution, RSI-proposed graph patches, human-approved vN+1. Self-hosted Go + Next.js, ACP/MCP.",

@@ -1,0 +1,270 @@
+// flowloop-daemon — task-driven multi-runtime agent management platform.
+//
+// Single binary: HTTP server + embedded daemon. MVP runs everything in one
+// process. The agent-side CLI (flowloop-cli) is a separate binary; the daemon
+// injects its directory into the agent subprocess PATH so the agent can call
+// back.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Sinkear/flowloop/internal/daemon"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/notify"
+	"github.com/Sinkear/flowloop/internal/paths"
+	"github.com/Sinkear/flowloop/internal/proto"
+	"github.com/Sinkear/flowloop/internal/proto/acpbackend"
+	"github.com/Sinkear/flowloop/internal/proto/jsonlbackend"
+	"github.com/Sinkear/flowloop/internal/proto/jsonrpcbackend"
+	"github.com/Sinkear/flowloop/internal/server"
+	"github.com/Sinkear/flowloop/internal/service"
+	"github.com/Sinkear/flowloop/internal/store"
+	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+func main() {
+	// Rename bridge: adopt pre-rename OUROFLOW_* env vars and move an existing
+	// ~/.ouroflow data root to ~/.flowloop before anything resolves the layout.
+	paths.AdoptLegacyEnv()
+	if err := paths.MigrateLegacyHome(); err != nil {
+		fmt.Fprintf(os.Stderr, "flowloop home migration: %v\n", err)
+	}
+	// version: print just the build version (e.g. "v0.0.2") on stdout — the
+	// machine-capture form (VER=$(flowloop-daemon version)), matching the
+	// CLI's `flowloop version` and git --version / go version convention.
+	// Checked BEFORE flag.Parse: the flag package doesn't recognize the bare
+	// "version" positional, and would error out on it.
+	if len(os.Args) >= 2 && os.Args[1] == "version" {
+		fmt.Printf("v%s\n", daemon.DaemonVersion)
+		return
+	}
+	// paths: print the resolved data layout (FLOWLOOP_HOME-aware) — the
+	// operator's answer to "where does flowloop keep its data?".
+	if len(os.Args) >= 2 && os.Args[1] == "paths" {
+		fmt.Println(paths.Current().JSON())
+		return
+	}
+	// backup: consistent snapshot of the SQLite DB (+ optionally run files).
+	// Safe while the daemon is running; use it before replacing an artifact.
+	if len(os.Args) >= 2 && os.Args[1] == "backup" {
+		backupCmd(os.Args[2:])
+		return
+	}
+	// export-template: snapshot an existing agent/squad/project as reusable
+	// YAML for the user's template repository.
+	if len(os.Args) >= 2 && os.Args[1] == "export-template" {
+		exportTemplateCmd(os.Args[2:])
+		return
+	}
+	addr := flag.String("addr", "127.0.0.1:47813", "HTTP listen address")
+	dbPath := flag.String("db", "", "SQLite path (default $FLOWLOOP_HOME/flowloop.db)")
+	flag.Parse()
+
+	if _, err := paths.EnsureHome(); err != nil {
+		fmt.Fprintf(os.Stderr, "flowloop home: %v\n", err)
+		os.Exit(1)
+	}
+
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		logging.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+
+	// slog + lumberjack: the daemon's structured logger writes its compact
+	// line format (RFC3339 [LEVEL] msg — the tailer and /logs parse it) to
+	// BOTH stdout and $FLOWLOOP_HOME/daemon.log (10MB size rotation, 3
+	// compressed backups). The runtime level is one atomic knob — the Web
+	// panel's PUT /logs/level — and persists in app_settings.
+	lj := &lumberjack.Logger{Filename: logging.DefaultPath(), MaxSize: 10, MaxBackups: 3, Compress: true}
+	slog.SetDefault(slog.New(logging.NewHandler(io.MultiWriter(os.Stdout, lj))))
+	logging.Infof("flowloop: home=%s db=%s", paths.Home(), paths.DB())
+	if raw, err := service.NewSettingsService(st).Get(context.Background(), "logging.level"); err == nil && raw != "" {
+		logging.SetLevel(logging.ParseLevel(raw))
+		logging.Infof("logging: level restored to %s", logging.GetLevel())
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	bus := events.NewBus()
+
+	// IM connection (DESIGN.md decision 2-14): the Web UI drives the Feishu
+	// connect flow — one-click app registration via QR scan, then the first
+	// bot message captures the receive target. Credentials persist to SQLite;
+	// the daemon auto-reconnects on startup. No environment configuration.
+	settingsSvc := service.NewSettingsService(st)
+	qs := notify.NewSQLQueryStore(st) // M3: card evidence / digest / intake queries
+	imConn := notify.NewConnector(settingsSvc, bus)
+	imConn.SetQueryStore(qs)
+	go func() {
+		if err := imConn.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logging.Errorf("notify: feishu connector ended: %v", err)
+		}
+	}()
+
+	// Services. wired together explicitly to avoid a constructor-order cycle:
+	// GoalService <-> RunService hold cross-references (reconcile enqueues
+	// retries/wakes; run finish delegates to reconcile).
+	goalSvc := service.NewGoalService(st, bus)
+	runSvc := service.NewRunService(st, bus)
+	commentSvc := service.NewCommentService(st, bus)
+	agentSvc := service.NewAgentService(st, bus)
+	goalSvc.SetRunService(runSvc)
+	runSvc.SetGoalService(goalSvc)
+	commentSvc.SetRunService(runSvc)
+	commentSvc.SetGoalService(goalSvc)
+
+	squadSvc := service.NewSquadService(st, bus)
+	schedSvc := service.NewScheduleService(st, bus)
+	domainSvc := service.NewDomainService(st, bus)
+
+	skillSvc := service.NewSkillService(st)
+	// Platform built-in skills (//go:embed under internal/service/assets): the
+	// conversation-first creation skill is installed/refreshed BEFORE the
+	// steward seed, because the steward's agent.skills carries its fixed id.
+	// A failure here is not fatal — the platform works without the skill, and
+	// a later boot retries.
+	if sk, err := service.SeedBuiltinSkills(context.Background(), skillSvc); err != nil {
+		logging.Warnf("seed builtin skills: %v", err)
+	} else {
+		logging.Infof("builtin skill ready: %s (%s)", sk.Name, sk.ID)
+	}
+
+	// Seed the system-internal steward agent (type=steward) — used by team-import
+	// to run the exploration processor task. Binds to the first active runtime;
+	// skipped if no runtime is active yet (ImportTeam reports the error then).
+	// Runs after the builtin skill seed so the steward can reference it.
+	if err := agentSvc.SeedSteward(context.Background()); err != nil {
+		logging.Warnf("seed steward agent: %v", err)
+	}
+	rsiSvc := service.NewRSIService(st, bus)
+	goalSvc.SetRSI(rsiSvc)
+	// Blueprint service (Phase A, docs/BLUEPRINT-PROPOSAL.md): versioned
+	// spec graphs — CRUD + publish gate. GoalService compiles a goal's
+	// pinned version inside Activate; the server exposes the blueprint
+	// CRUD + spec-graph endpoints.
+	blueprintSvc := service.NewBlueprintService(st, bus)
+	// Phase C §12.4: the RSI emergent draft (3-isomorphism trigger) drafts
+	// blueprint v1 through the blueprint validator — wire it.
+	rsiSvc.SetBlueprint(blueprintSvc)
+	teamImportSvc := service.NewTeamImportService(st, bus)
+	teamImportSvc.SetDependencies(runSvc, goalSvc, domainSvc, agentSvc, skillSvc, squadSvc)
+
+	// Hooks (spec: tmp/hooks-spec.md v0.2): the lifecycle executor. Startup
+	// order matters — sweep orphan runs from a previous process BEFORE
+	// attaching to the bus; after Subscribe, running rows belong to us.
+	hookSvc := service.NewHookService(st, bus)
+	if n, err := hookSvc.SweepOrphanRuns(ctx); err != nil {
+		logging.Warnf("hook orphan sweep: %v", err)
+	} else if n > 0 {
+		logging.Infof("hook sweep: marked %d orphaned run(s) failed (daemon restart)", n)
+	}
+	hookSvc.Subscribe()
+
+	// Seed the built-in digest schedule (每日AI知识精选): fires daily at 09:00
+	// Asia/Shanghai on the steward (AI SHELL), collects AI news into
+	// ~/.flowloop/digest/.
+	// Idempotent; skipped when no steward exists yet (no active runtime) —
+	// re-run on machine registration (server seedStewardIfCLI).
+	if err := service.SeedDigestSchedule(context.Background(), st, agentSvc, domainSvc, schedSvc); err != nil {
+		logging.Warnf("seed digest schedule: %v", err)
+	}
+
+	// Templates: the GitCode YAML template library + its apply orchestration
+	// (P0 squad / P1 project — TEMPLATE-PLAN.md). The git tester is wired
+	// after the daemon exists (gitTester below).
+	templateSvc := service.NewTemplateService(st, settingsSvc)
+	templateApplySvc := service.NewTemplateApplyService(st, templateSvc,
+		agentSvc, skillSvc, squadSvc, domainSvc, goalSvc, schedSvc, nil)
+
+	// M3 IM: the approval-card callbacks resolve through the goal layer; the
+	// owner's inbound messages become intake parse runs on the configured
+	// global parser agent (app_settings platform.intake_agent). The ask-card
+	// reply form (决策 7-3) posts the human's reply through the comment layer
+	// (parent_id → owner wake).
+	imConn.SetGoalService(goalSvc)
+	imConn.SetCommentService(commentSvc)
+	intakeSvc := notify.NewIntakeService(qs, settingsSvc, runSvc)
+	intakeSvc.SetAgentService(agentSvc)
+	imConn.SetIntakeService(intakeSvc)
+
+	// Protocol backends registered by provider name (runtime.provider selects).
+	protoReg := proto.NewRegistry()
+	protoReg.Register("acp", acpbackend.New())
+	protoReg.Register("jsonl", jsonlbackend.New())
+	protoReg.Register("jsonrpc", jsonrpcbackend.New())
+
+	d := daemon.New(st, bus, *addr, protoReg, goalSvc, runSvc, commentSvc, agentSvc, squadSvc, schedSvc, imConn, qs, intakeSvc)
+	d.SetTeamImportService(teamImportSvc)
+	d.SetRSI(rsiSvc)
+	d.SetDomainService(domainSvc)
+	d.SetSkillService(skillSvc)
+	// Intake: create blueprint rides the same ask-once draft path as the other
+	// create intents; the daemon needs the blueprint layer to commit.
+	d.SetBlueprintService(blueprintSvc)
+	// Templates need the daemon's git probe (the create-domain gate) and the
+	// skill/config pusher (so apply ships persona + tools to the machine
+	// immediately, like the HTTP CRUD handlers) — wire both now that the daemon
+	// exists.
+	templateApplySvc.SetGitTester(gitTesterFunc(d.TestDomainGit))
+	templateApplySvc.SetSkillPusher(func(agentID string) {
+		d.PushAgentSkills(context.Background(), agentID)
+	})
+	// Skill updates (UpsertByName rewrites the files) re-push the CURRENT
+	// archive to every agent that has the skill selected — detached so the
+	// apply/import flow doesn't block on N machine pushes.
+	templateApplySvc.SetSkillUpdatePusher(func(skillID string) {
+		go d.PushSkillUpdate(skillID)
+	})
+	teamImportSvc.SetSkillUpdatePusher(func(skillID string) {
+		go d.PushSkillUpdate(skillID)
+	})
+	go func() {
+		if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logging.Errorf("daemon: %v", err)
+		}
+	}()
+
+	// The steward's built-in skill was attached in the seed above; a machine
+	// that was already registered before this boot won't receive it via the
+	// register-time PushMachineSkills, so push once now (no-op when the peer or
+	// the machine is offline — the next register retries).
+	go func() {
+		if a, err := agentSvc.GetSteward(ctx); err == nil {
+			d.PushAgentSkills(ctx, a.ID)
+		}
+	}()
+
+	srv := server.New(st, bus, d, goalSvc, runSvc, commentSvc, squadSvc, schedSvc, domainSvc, imConn, teamImportSvc, skillSvc, intakeSvc)
+	srv.SetRSI(rsiSvc)
+	srv.SetBlueprint(blueprintSvc)
+	srv.SetTemplates(templateSvc, templateApplySvc)
+	srv.SetHooks(hookSvc)
+	if err := srv.ListenAndServe(ctx, *addr); err != nil && !errors.Is(err, context.Canceled) {
+		logging.Fatalf("server: %v", err)
+	}
+}
+
+// gitTesterFunc adapts the daemon's TestDomainGit to the service-side
+// GitTester interface (a field-for-field mapping — the daemon package
+// imports service, so the service cannot reference the daemon type).
+type gitTesterFunc func(ctx context.Context, gitURL, defaultBranch, credentials string) *daemon.DomainGitTestResult
+
+func (f gitTesterFunc) TestDomainGit(ctx context.Context, gitURL, defaultBranch, credentials string) *service.DomainGitProbeResult {
+	r := f(ctx, gitURL, defaultBranch, credentials)
+	return &service.DomainGitProbeResult{
+		OK: r.OK, BranchExists: r.BranchExists,
+		ResolvedBranch: r.ResolvedBranch, Refs: r.Refs, Error: r.Error,
+	}
+}

@@ -1,6 +1,6 @@
 import { useTranslations } from "next-intl";
 
-const REPO = "https://github.com/Sinkear/ouroflow";
+const REPO = "https://github.com/Sinkear/flowloop";
 
 export function Footer() {
   const t = useTranslations("footer");
@@ -8,7 +8,7 @@ export function Footer() {
     <footer className="mt-20 border-t border-border py-8 text-sm text-muted">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 sm:flex-row sm:justify-between">
         <div className="flex items-center gap-2">
-          <span className="font-mono font-semibold text-text">ouroflow</span>
+          <span className="font-mono font-semibold text-text">flowloop</span>
         </div>
         <div className="flex gap-6">
           <a href={REPO} className="transition-colors hover:text-accent">GitHub</a>

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // newGuardServices wires the services the delete-guard tests exercise. Each

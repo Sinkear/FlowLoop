@@ -14,7 +14,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/flowloop/internal/acp"
 )
 
 // ErrUnsupportedProvider is returned when no backend is registered for a

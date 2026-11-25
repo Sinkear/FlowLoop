@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestMentionCycleFailsGoal: agent-to-agent mention churn above the hard

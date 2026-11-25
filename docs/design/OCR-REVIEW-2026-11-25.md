@@ -96,4 +96,4 @@
 - `ProjectSquadService.Remove` 的提示文案仍写“小队接入”，实际入口已移到项目接入页。
 - `project-access-tab.tsx` 的旧 connection 迁移循环没有 catch；删除失败时无 UI 提示。
 - `schedule.projectPin` 投影查询忽略错误。
-- CLI `ouroflow create blueprint --squad <name>` 只按 id 使用（chat 传 id）。
+- CLI `flowloop create blueprint --squad <name>` 只按 id 使用（chat 传 id）。

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 func (h *Handlers) listProjectSquads(w http.ResponseWriter, r *http.Request) {

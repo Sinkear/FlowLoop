@@ -6,11 +6,11 @@
   "status": "pass",
   "visualReview": "not-requested",
   "provenance": "current",
-  "deliveryReceiptId": "20f308ea-dcbb-4372-8471-3bdaa0ccf61d",
+  "deliveryReceiptId": "49569c14-e8e6-48c3-a666-dac4d37b73b4",
   "artifact": {
-    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
-    "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
-    "bytes": 835735
+    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "sha256": "93b4ec16033580062eaea403f91b09276c45d8ad5d60039571dabf86f70c6eba",
+    "bytes": 835732
   },
   "state": {
     "detail": "read",

@@ -1,4 +1,4 @@
--- ouroflow schema. Run once at startup (CREATE TABLE IF NOT EXISTS).
+-- flowloop schema. Run once at startup (CREATE TABLE IF NOT EXISTS).
 -- Single-user, single-file SQLite (WAL mode).
 -- foreign_keys + journal_mode are set per-connection via the DSN in store.go
 -- (they are per-connection pragmas, so setting them here only affects the one
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS webhook_delivery (
 CREATE INDEX IF NOT EXISTS idx_webhook_delivery_domain ON webhook_delivery(domain_id, received_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_delivery_repo ON webhook_delivery(repo, received_at);
 
--- machine: one remote machine running `ouroflow connect` — the execution
+-- machine: one remote machine running `flowloop connect` — the execution
 -- host registered to the platform (CLI 分支 Phase 1). The probed agent
 -- CLIs ride probed_clis (JSON); they become runtime rows once remote
 -- execution lands (Phase 2). status flips offline via the server's stale
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS machine (
 -- A runtime is the launch spec of one probed agent CLI on one registered
 -- machine (CLI 分支): id + machine + how the machine spawns it (args =
 -- acp_spawn) + env. The local-transport concepts
--- (transport/provider/executable/endpoint/ouroflow_url) are RETIRED — the
+-- (transport/provider/executable/endpoint/flowloop_url) are RETIRED — the
 -- daemon never opens a transport; every run dispatches over the machine's
 -- /connect link. The wire protocol is the MACHINE's implementation detail
 -- (always ACP today; a future a2a backend would live in the machine's
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS agent (
 -- skill: a platform-managed skill package (SKILL.md + resources) — the
 -- skills library agents get their skills from. Files live on disk under
 -- the skills root (<runsRoot>/skills/<id>/); the machine receives them
--- via config.push and installs them under ouroflow-<name>/ (CLI 分支
+-- via config.push and installs them under flowloop-<name>/ (CLI 分支
 -- Phase 4).
 CREATE TABLE IF NOT EXISTS skill (
     id          TEXT PRIMARY KEY,
@@ -548,7 +548,7 @@ CREATE INDEX IF NOT EXISTS idx_gate_decision_goal ON gate_decision(goal_id, deci
 --   [@Name](mention://human/<uuid>)   → renders a link, no run
 --   [@all](mention://all/all)         → suppress auto-trigger, notify humans
 -- Mentions are parsed only from persisted comment bodies, never from agent
--- stdout (the agent drives triggers by calling ouroflow-cli).
+-- stdout (the agent drives triggers by calling flowloop-cli).
 CREATE TABLE IF NOT EXISTS comment (
     id          TEXT PRIMARY KEY,
     goal_id     TEXT NOT NULL REFERENCES goal(id),

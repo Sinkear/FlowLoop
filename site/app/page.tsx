@@ -8,7 +8,7 @@ import { routing } from "@/i18n/routing";
 // basePath 注意：meta refresh 的 url 是字符串字面量，Next 不会自动加
 // basePath 前缀（只有 <Link>/<Image>/useRouter 会）。用相对路径
 // `${defaultLocale}/` 而非绝对 `/en/`——相对当前文档路径（gh-pages 上
-// 是 /ouroflow/）解析成 /ouroflow/en/，本地 dev（/ouroflow/）也成立。
+// 是 /flowloop/）解析成 /flowloop/en/，本地 dev（/flowloop/）也成立。
 //
 // 不再自己包 <html>/<body>——根 app/layout.tsx 已包（Next 要求唯一根
 // layout 持有这两个标签，否则报 Missing <html> and <body> 错误）。
@@ -18,10 +18,10 @@ export default function RootPage() {
     <>
       <head>
         <meta httpEquiv="refresh" content={`0; url=${target}`} />
-        <title>ouroflow</title>
+        <title>flowloop</title>
       </head>
       <noscript>
-        <a href={target}>ouroflow</a>
+        <a href={target}>flowloop</a>
       </noscript>
     </>
   );

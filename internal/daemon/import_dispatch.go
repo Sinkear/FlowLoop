@@ -12,8 +12,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // isImportGoal reports whether the goal was created by the team-import flow.

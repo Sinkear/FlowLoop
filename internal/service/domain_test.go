@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestDomainCRUD covers the domain lifecycle: create with defaults, read
@@ -16,8 +16,8 @@ func TestDomainCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	d, err := svc.Create(ctx, Domain{
-		Name:   "ouroflow",
-		GitURL: "https://github.com/Sinkear/ouroflow.git",
+		Name:   "flowloop",
+		GitURL: "https://github.com/Sinkear/flowloop.git",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -33,7 +33,7 @@ func TestDomainCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name != "ouroflow" {
+	if got.Name != "flowloop" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 
@@ -76,7 +76,7 @@ func TestUpdateDomainTypeGuard(t *testing.T) {
 	// validateIssueTracking now sees the real type (scratch) and must refuse
 	// issue config even though the request body carries no type field.
 	if _, err := svc.Update(ctx, scratch.ID, Domain{
-		IssueRepo:     "ouroflow/notebook",
+		IssueRepo:     "flowloop/notebook",
 		IssueAssignee: "someone",
 	}); err == nil {
 		t.Fatalf("expected scratch domain to reject issue tracking on edit")
@@ -85,15 +85,15 @@ func TestUpdateDomainTypeGuard(t *testing.T) {
 	// A repo domain — editing without type (the normal frontend path) keeps
 	// working and persists the git config.
 	repo, err := svc.Create(ctx, Domain{
-		Name:   "ouroflow",
+		Name:   "flowloop",
 		Type:   "repo",
-		GitURL: "https://github.com/Sinkear/ouroflow.git",
+		GitURL: "https://github.com/Sinkear/flowloop.git",
 	})
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
 	updated, err := svc.Update(ctx, repo.ID, Domain{
-		GitURL:         "https://github.com/Sinkear/ouroflow.git",
+		GitURL:         "https://github.com/Sinkear/flowloop.git",
 		GitCredentials: "token-xyz",
 	})
 	if err != nil {
@@ -107,7 +107,7 @@ func TestUpdateDomainTypeGuard(t *testing.T) {
 	// path must never silently swallow a type change into a contradiction.
 	if _, err := svc.Update(ctx, repo.ID, Domain{
 		Type:   "scratch",
-		GitURL: "https://github.com/Sinkear/ouroflow.git",
+		GitURL: "https://github.com/Sinkear/flowloop.git",
 	}); err == nil {
 		t.Fatalf("expected error when editing tries to change type repo→scratch")
 	}
@@ -129,7 +129,7 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 
 	// Create rejects an unknown level loudly.
 	if _, err := svc.Create(ctx, Domain{
-		Name: "bad", GitURL: "https://github.com/ouroflow/bad.git", AcceptanceLevel: "auto",
+		Name: "bad", GitURL: "https://github.com/flowloop/bad.git", AcceptanceLevel: "auto",
 	}); err == nil || !errors.Is(err, ErrValidation) {
 		t.Fatalf("expected validation error for acceptance_level=auto, got %v", err)
 	}
@@ -139,7 +139,7 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 		name := "d-" + level
 		d, err := svc.Create(ctx, Domain{
 			Name:            name,
-			GitURL:          "https://github.com/ouroflow/" + name + ".git",
+			GitURL:          "https://github.com/flowloop/" + name + ".git",
 			AcceptanceLevel: level,
 		})
 		if err != nil {
@@ -172,18 +172,18 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 
 	// Update: empty incoming name/acceptance mean "keep the old values".
 	target, err := svc.Create(ctx, Domain{
-		Name: "alpha", GitURL: "https://github.com/ouroflow/alpha.git", AcceptanceLevel: "hitl",
+		Name: "alpha", GitURL: "https://github.com/flowloop/alpha.git", AcceptanceLevel: "hitl",
 	})
 	if err != nil {
 		t.Fatalf("create alpha: %v", err)
 	}
 	if _, err := svc.Create(ctx, Domain{
-		Name: "beta", GitURL: "https://github.com/ouroflow/beta.git",
+		Name: "beta", GitURL: "https://github.com/flowloop/beta.git",
 	}); err != nil {
 		t.Fatalf("create beta: %v", err)
 	}
 	updated, err := svc.Update(ctx, target.ID, Domain{
-		GitURL: "https://github.com/ouroflow/alpha.git", // partial edit carries no name/acceptance
+		GitURL: "https://github.com/flowloop/alpha.git", // partial edit carries no name/acceptance
 	})
 	if err != nil {
 		t.Fatalf("update keep: %v", err)
@@ -195,7 +195,7 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 	// Rename + change the level in one edit.
 	updated, err = svc.Update(ctx, target.ID, Domain{
 		Name:            "alpha-2",
-		GitURL:          "https://github.com/ouroflow/alpha.git",
+		GitURL:          "https://github.com/flowloop/alpha.git",
 		AcceptanceLevel: "hootl",
 	})
 	if err != nil {
@@ -208,7 +208,7 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 	// A non-empty name that collides with another domain is a coded dup error.
 	_, err = svc.Update(ctx, target.ID, Domain{
 		Name:   "beta",
-		GitURL: "https://github.com/ouroflow/alpha.git",
+		GitURL: "https://github.com/flowloop/alpha.git",
 	})
 	var ce CodedError
 	if err == nil || !errors.As(err, &ce) || ce.Code() != CodeDomainNameExists {
@@ -218,7 +218,7 @@ func TestDomainAcceptanceLevel(t *testing.T) {
 	// Invalid level on update is rejected (non-empty incoming).
 	if _, err := svc.Update(ctx, target.ID, Domain{
 		Name:            "alpha-2",
-		GitURL:          "https://github.com/ouroflow/alpha.git",
+		GitURL:          "https://github.com/flowloop/alpha.git",
 		AcceptanceLevel: "auto",
 	}); err == nil || !errors.Is(err, ErrValidation) {
 		t.Fatalf("expected validation error on bad update level, got %v", err)

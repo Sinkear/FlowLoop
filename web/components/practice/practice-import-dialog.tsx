@@ -362,7 +362,7 @@ export function PracticeImportDialog({
               value={text}
               onChange={(event) => applyPackageText(event.target.value)}
               spellCheck={false}
-              placeholder={'{\n  "api_version": "ouroflow/v1",\n  "kind": "squad",\n  "metadata": { "name": "我的小队包" },\n  "spec": { ... }\n}'}
+              placeholder={'{\n  "api_version": "flowloop/v1",\n  "kind": "squad",\n  "metadata": { "name": "我的小队包" },\n  "spec": { ... }\n}'}
               className={cn(inputCls, "min-h-[170px] resize-y font-mono text-[11px] leading-relaxed")}
             />
             {parsed.error && !parsed.value && (

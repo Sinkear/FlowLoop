@@ -6,11 +6,11 @@
   "status": "pass",
   "visualReview": "pending",
   "provenance": "current",
-  "deliveryReceiptId": "20f308ea-dcbb-4372-8471-3bdaa0ccf61d",
+  "deliveryReceiptId": "49569c14-e8e6-48c3-a666-dac4d37b73b4",
   "artifact": {
-    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
-    "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
-    "bytes": 835735
+    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "sha256": "93b4ec16033580062eaea403f91b09276c45d8ad5d60039571dabf86f70c6eba",
+    "bytes": 835732
   },
   "state": {
     "detail": "read",
@@ -1936,7 +1936,7 @@
     "contactSheet": "blueprint-overview.visual-check.html"
   },
   "sidecars": {
-    "directory": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/shots",
+    "directory": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/shots",
     "receipt": "blueprint-overview.visual-check.json",
     "contactSheet": "blueprint-overview.visual-check.html",
     "files": [
@@ -1946,23 +1946,23 @@
         "file": "blueprint-overview.visual-check.html"
       },
       {
-        "sha256": "2fe232094d8fa16c912a79cb3cbe34c398d27e4dd35b33cde07a1dc03b83994c",
-        "bytes": 148319,
+        "sha256": "c038e4a036c127d6d776384a3b6630412be088fb8b160755715a809baeee4f62",
+        "bytes": 147666,
         "file": "blueprint-overview.visual-check.1440x900.light.png"
       },
       {
-        "sha256": "de2ace013f2c766fac180651cb2f19191f15d34a872d59566992d1e489935bda",
-        "bytes": 167657,
+        "sha256": "080f70bc6fa7dfcf09835a46e3dbd437d2892a62b1312ce955e76bd3069d095e",
+        "bytes": 166904,
         "file": "blueprint-overview.visual-check.1440x900.dark.png"
       },
       {
-        "sha256": "22966131e80c0efbfdd4672dc34d49487e371ad5ab4c92979984973401c06824",
-        "bytes": 199566,
+        "sha256": "466a09c33e9d499532611b1965e0f71081e62a1730b9fd0b597b03399d629da4",
+        "bytes": 199189,
         "file": "blueprint-overview.visual-check.2048x1320.light.png"
       },
       {
-        "sha256": "4c1bf9dad35b4a9b19710db3503a59b5cd782943a75784cca8a3d254ab9a274f",
-        "bytes": 226858,
+        "sha256": "500542724dcde683f8297e5993eff5aac41eb45d4229f05b96fb10e03d21c9d2",
+        "bytes": 225849,
         "file": "blueprint-overview.visual-check.2048x1320.dark.png"
       }
     ]

@@ -12,7 +12,7 @@ package jsonlbackend
 import (
 	"context"
 
-	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/flowloop/internal/proto"
 )
 
 type Backend struct{}

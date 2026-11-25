@@ -20,9 +20,9 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/skip2/go-qrcode"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // Connector is the IM connection manager: the Web-driven Feishu connect
@@ -202,8 +202,8 @@ func (c *Connector) StartRegistration(ctx context.Context) (string, QRInfo, erro
 func (c *Connector) registrationOptions() *registration.Options {
 	return &registration.Options{
 		AppPreset: &registration.AppPreset{
-			Name: "ouroflow-bot",
-			Desc: "ouroflow butler: your AI workflow steward — work goes to me, checkpoints come to you",
+			Name: "flowloop-bot",
+			Desc: "flowloop butler: your AI workflow steward — work goes to me, checkpoints come to you",
 		},
 		Addons: &registration.AppAddons{
 			Scopes: registration.AppAddonsScopes{

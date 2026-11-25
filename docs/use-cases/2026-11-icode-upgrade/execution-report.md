@@ -1,7 +1,7 @@
-# OuroFlow 任务全程执行报告：升级 icode 至最新版本
+# FlowLoop 任务全程执行报告：升级 icode 至最新版本
 
 > **报告生成时间**: 2026-11-14 10:30 (北京时间)
-> **数据来源**: OuroFlow API（/goals、/runs、/comments）+ 交付件落盘核验 + 本会话补验实测
+> **数据来源**: FlowLoop API（/goals、/runs、/comments）+ 交付件落盘核验 + 本会话补验实测
 > **报告位置**: goal 沙盒路径 `…/goals/f68bd0a5…/reports/`（持久，非 /tmp）
 
 ---
@@ -162,7 +162,7 @@ pipeline_spec:          # 小队 instructions v4.0 定义的执行流
 
 | 时刻 | 主体 | 事件 | 耗时 |
 |---|---|---|---|
-| ~10:15 | 架构伙伴(AI) | 按用户指令补验：**直跑 verifier skill 脚本**（非派发 Verifier agent，无 OuroFlow run 记录，详见 §6 治理注记），34 条 base（fast），报告首次落盘 goal 沙盒持久路径 | ~105s |
+| ~10:15 | 架构伙伴(AI) | 按用户指令补验：**直跑 verifier skill 脚本**（非派发 Verifier agent，无 FlowLoop run 记录，详见 §6 治理注记），34 条 base（fast），报告首次落盘 goal 沙盒持久路径 | ~105s |
 | 结果 | — | **17PASS / 1FAIL / 13SKIP / 3REDLINE_EXCLUDED**；唯一 FAIL=zz.009「版本不一致 template=1.0.2 env=1.0.3」，根因为 Packager 元数据对齐只抬了 env 侧到 1.0.3、JEM 模板注册表仍 1.0.2（账面错位，非功能回归） | — |
 
 ---
@@ -179,7 +179,7 @@ pipeline_spec:          # 小队 instructions v4.0 定义的执行流
 | 6 | spec 扫描报告 artifact-spec-report.json | Packager | 11-13 18:40 | `/tmp/` | ❌ **已丢失** |
 | 7 | **重打包产物 1.0.4 三件套**（当前有效）：runtime `icode_runtime_linux_arm64_1.0.4_202611140041.tar.gz` 74M sha256=`3eb8f3c2…6627b`；template `icode_template_1.0.4…tar.gz` 6.5K sha256=`8be1dbef…c856`；`icode_1.0.4…_metadata.json` | AI SHELL | 11-14 08:42 | `/root/jobEnvPackage/` | ✅ 存活 |
 | 8 | **补验报告 icode-report.json**（17PASS/1FAIL/13SKIP/3REDLINE） | 本会话补验 | 11-14 10:15 | goal 沙盒 `…/reports/` | ✅ **首次持久落盘** |
-| 9 | 28 条结构化交接评论（Checker/Upgrader/Verifier/Packager 全链路留痕） | 各 agent | 全程 | OuroFlow goal 评论区 | ✅ 平台留存 |
+| 9 | 28 条结构化交接评论（Checker/Upgrader/Verifier/Packager 全链路留痕） | 各 agent | 全程 | FlowLoop goal 评论区 | ✅ 平台留存 |
 | 10 | 本执行报告 | 本会话 | 11-14 10:30 | goal 沙盒 `…/reports/` | ✅ |
 
 ---
@@ -267,7 +267,7 @@ agents_summary:
     total_compute: 2164s ≈ 36min
     output: "1.0.3 三件套 + 平台元数据对齐；后续被 1.0.4 取代"
   补验(本会话-架构伙伴直跑):
-    ouroflow_runs: 0          # ⚠️ 未派发 Verifier agent(20db3c05)，无 OuroFlow run 记录
+    flowloop_runs: 0          # ⚠️ 未派发 Verifier agent(20db3c05)，无 FlowLoop run 记录
     execution_mode: "shell 直跑 verifier skill 的 test_job_env.py（与 Verifier agent 同一 skill/脚本/用例/判定逻辑）"
     governance_note: "测试内容等价、治理不等价（无独立执行人身份、不走小队交接协议）；如需正式治理记录须派发 Verifier agent"
     total_compute: 约 105s

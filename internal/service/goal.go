@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/store"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -130,7 +130,7 @@ const maxAttempts = 3
 // Whitelist starts with the narrowest high-confidence marker only
 // (model-configuration errors); transient faults keep the full retry
 // behavior below. Extend only with equally unambiguous markers.
-// (RSI R2 提案3【已批准】—— 基线重建 ouroflow-int-v2 时语义化重放)
+// (RSI R2 提案3【已批准】—— 基线重建 flowloop-int-v2 时语义化重放)
 var nonRetryableMarkers = []string{
 	"Model unavailable",
 }
@@ -3183,7 +3183,7 @@ func (s *GoalService) compileWakeNoteTx(ctx context.Context, tx *sql.Tx, goalID,
 			if len(titles) == 0 {
 				continue // raced to rework — nothing to name
 			}
-			bullets = append(bullets, fmt.Sprintf("- Sub-goal(s) %q failed — decide: cancel or re-create (inspect with `ouroflow subgoal get <id>`, cancel with `ouroflow subgoal cancel <id>`)", strings.Join(titles, ", ")))
+			bullets = append(bullets, fmt.Sprintf("- Sub-goal(s) %q failed — decide: cancel or re-create (inspect with `flowloop subgoal get <id>`, cancel with `flowloop subgoal cancel <id>`)", strings.Join(titles, ", ")))
 		case "integration":
 			// ready changes to merge (决策 6-8). The no-code wrapup face is its
 			// own bit now (see case "wrapup") — the flag layer was split to match
@@ -3193,7 +3193,7 @@ func (s *GoalService) compileWakeNoteTx(ctx context.Context, tx *sql.Tx, goalID,
 				return "", "", err
 			}
 			if ready > 0 {
-				bullets = append(bullets, fmt.Sprintf("- %d change(s) ready to integrate — inspect with `ouroflow change list`, merge each with `ouroflow change integrate <id>`", ready))
+				bullets = append(bullets, fmt.Sprintf("- %d change(s) ready to integrate — inspect with `flowloop change list`, merge each with `flowloop change integrate <id>`", ready))
 			}
 		case "wrapup":
 			// no-code wrapups: verified sub-goals whose deliverable lives in

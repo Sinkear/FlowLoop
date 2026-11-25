@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/daemon"
-	"github.com/Sinkear/ouroflow/internal/issue"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/notify"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/daemon"
+	"github.com/Sinkear/flowloop/internal/issue"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/notify"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 type Handlers struct {
@@ -40,7 +40,7 @@ type Handlers struct {
 	// git exec). nil = the check is skipped (tests construct handlers
 	// without it).
 	Daemon *daemon.Daemon
-	// Machines is the remote-machine registry (the ouroflow CLI's link,
+	// Machines is the remote-machine registry (the flowloop CLI's link,
 	// CLI 分支 Phase 1).
 	Machines *service.MachineService
 	// Skills is the skills library (CLI 分支 Phase 4).
@@ -1099,7 +1099,7 @@ func (h *Handlers) sendIntake(w http.ResponseWriter, r *http.Request) {
 }
 
 // intakeCreate is the chat-as-tool entry point (决策7-5): the steward agent
-// calls `ouroflow create goal` etc., which hits this endpoint. It delegates
+// calls `flowloop create goal` etc., which hits this endpoint. It delegates
 // to Daemon.DispatchIntake — a thin pass-through to intakeReg.dispatch. The
 // body is a full intakeAction JSON (intent + sub-struct), constructed by the
 // CLI from the agent's flags.

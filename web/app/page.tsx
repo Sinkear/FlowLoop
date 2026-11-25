@@ -85,7 +85,7 @@ export default function WorkbenchPage() {
             <Step
               n="1"
               title="连接运行环境"
-              desc={machineCount > 0 ? `已有 ${machineCount} 台机器，运行环境就绪。` : "装好 ouroflow 后，机器会出现在运行环境里。"}
+              desc={machineCount > 0 ? `已有 ${machineCount} 台机器，运行环境就绪。` : "装好 flowloop 后，机器会出现在运行环境里。"}
               href="/infra"
               action={machineCount > 0 ? "查看运行环境" : "去连机器"}
             />

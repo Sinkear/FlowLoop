@@ -19,13 +19,13 @@
     "mentalModel": "goal 编译在一张不可变的 Blueprint 图上；run 留下真实执行图；RSI 把它变成 finding 与补丁提案。图负责提案——你负责批准、评审和发布。",
     "heroStack": ["Go 1.26", "Next.js 16", "ACP", "SQLite"],
     "terminal": {
-      "title": "ouroflow — zsh",
+      "title": "flowloop — zsh",
       "lines": [
-        { "type": "cmd", "text": "ouroflow connect" },
+        { "type": "cmd", "text": "flowloop connect" },
         { "type": "ok", "text": "已链接 daemon（machine=m4.local，探测到 3 个 agent CLI）" },
-        { "type": "cmd", "text": "ouroflow create goal --title \"重构 intake parser\" --assignee claude" },
+        { "type": "cmd", "text": "flowloop create goal --title \"重构 intake parser\" --assignee claude" },
         { "type": "out", "text": "goal g7a3 已创建 → run r9k1 已入队" },
-        { "type": "cmd", "text": "ouroflow goal list" },
+        { "type": "cmd", "text": "flowloop goal list" },
         { "type": "out", "text": "  g7a3  active    重构 intake parser     [claude]" },
         { "type": "out", "text": "  g6f2  review    修复飞书流式           [opencode]" },
         { "type": "ok", "text": "2 个 goal" },
@@ -48,7 +48,7 @@
       },
       "collab": {
         "title": "四种协作行为",
-        "desc": "Comment / Consult / Handoff / Sub-goal，以 ouroflow CLI 暴露，owner 权限服务端强制。"
+        "desc": "Comment / Consult / Handoff / Sub-goal，以 flowloop CLI 暴露，owner 权限服务端强制。"
       },
       "protocol": {
         "title": "多协议多传输",
@@ -62,7 +62,7 @@
     "archTeaserTitle": "架构一览",
     "archTeaserDesc": "单 daemon、单机、单用户、无鉴权。本地 SQLite 存状态，进程内事件总线，Go daemon + Next.js web UI。总线只是唤醒提示——每个状态迁移都是一个带条件的 DB 事务，重放下幂等。",
     "archReadMore": "阅读完整架构 →",
-    "loopFigureAlt": "OuroFlow 自迭代闭环：编译图 vN，执行，记录执行图，用 RSI 诊断，产出图补丁，由人发布 vN+1。",
+    "loopFigureAlt": "FlowLoop 自迭代闭环：编译图 vN，执行，记录执行图，用 RSI 诊断，产出图补丁，由人发布 vN+1。",
     "loopFigureCaption": "每次执行都是下一版工作流图的证据。图负责提案；人给 vN+1 签字。",
     "arch": {
       "web": { "title": "Web UI", "sub": "Next.js · 浏览器", "note": "ACP 聊天客户端 + 实时流" },
@@ -73,7 +73,7 @@
       "scheduler": "per-agent workers · PULL 派发",
       "link": "/connect · WS 上 JSON-RPC",
       "pull": "run.poll · chat.*",
-      "machine": { "title": "ouroflow connect", "sub": "机器 sidecar", "note": "拉取工作 · spawn CLI" },
+      "machine": { "title": "flowloop connect", "sub": "机器 sidecar", "note": "拉取工作 · spawn CLI" },
       "runtime": "runtime.Open · acp / jsonl / jsonrpc · stdio / ws / tcp",
       "cli": { "title": "Agent CLI", "sub": "子进程", "note": "ACP 帧原样转发" },
       "deliver": "验证 · 人工关卡 → 合并 + 再验证 + 推送"
@@ -87,13 +87,13 @@
     "firstGoal": [
       "启动 daemon 和 Web（见快速开始），打开 http://127.0.0.1:47814。",
       "创建 domain：仓库 URL，或 scratch 工作区。",
-      "运行 ouroflow connect，再从它探测到的 runtime 创建 agent。",
+      "运行 flowloop connect，再从它探测到的 runtime 创建 agent。",
       "创建 goal、指派、选 HITL/HOOTL，看状态走：执行 → 评审（人）→ 批准后交付。",
       "或从 Agents 页面直接和任意 agent 聊天——每次打开都重新 staging 该 agent 的 ACP 会话。"
     ]
   },
   "docs": {
-    "sidebarTitle": "ouroflow",
+    "sidebarTitle": "flowloop",
     "sidebarVersion": "文档",
     "groupOverview": "总览",
     "groupModel": "模型",
@@ -114,15 +114,15 @@
         },
         {
           "title": "机器执行器（PULL）",
-          "desc": "ouroflow connect 持有一条 JSON-RPC 长连接，拉取工作（run.poll）；它执行运行并托管每 agent 的 chat bridge——spawn CLI，原样转发 ACP 帧。",
+          "desc": "flowloop connect 持有一条 JSON-RPC 长连接，拉取工作（run.poll）；它执行运行并托管每 agent 的 chat bridge——spawn CLI，原样转发 ACP 帧。",
           "chips": ["run.poll", "pull-model", "JSON-RPC"],
           "example": "machine → daemon:  run.poll\ndaemon → machine:  { run: r9k1, cancels: [] }\nmachine:          runtime.Open(spec) → spawn CLI"
         },
         {
           "title": "按 run 工作树",
-          "desc": "~/.ouroflow/runs/<runID> 临时 git worktree，挂在每 domain 的 bare repo 上；崩溃恢复时重放终态 run 并在启动时重算 attention。",
+          "desc": "~/.flowloop/runs/<runID> 临时 git worktree，挂在每 domain 的 bare repo 上；崩溃恢复时重放终态 run 并在启动时重算 attention。",
           "chips": ["ephemeral", "bare-repo", "recovery"],
-          "example": "~/.ouroflow/runs/r9k1/      # git worktree\n~/.ouroflow/repos/<domain>/  # bare repo（真相）"
+          "example": "~/.flowloop/runs/r9k1/      # git worktree\n~/.flowloop/repos/<domain>/  # bare repo（真相）"
         },
         {
           "title": "协调器",
@@ -143,7 +143,7 @@
     },
     "concept": {
       "title": "核心概念",
-      "intro": "ouroflow 的词汇表——goal 是状态权威的唯一持有者；其他都只上报。",
+      "intro": "flowloop 的词汇表——goal 是状态权威的唯一持有者；其他都只上报。",
       "groups": [
         {
           "group": "状态权威",
@@ -152,19 +152,19 @@
               "name": "Goal",
               "desc": "一个工作项。状态权威的唯一持有者——run 只上报，从不决策。",
               "chips": ["backlog", "active", "review", "done"],
-              "example": "$ ouroflow create goal --title \"重构 intake\" --assignee claude\ngoal g7a3 已创建 → run r9k1 已入队"
+              "example": "$ flowloop create goal --title \"重构 intake\" --assignee claude\ngoal g7a3 已创建 → run r9k1 已入队"
             },
             {
               "name": "Run",
               "desc": "某个 agent 在 goal 上的一轮。无权威——只向 goal 层上报。",
               "chips": ["queued", "running", "completed", "failed"],
-              "example": "$ ouroflow goal list\n  g7a3  active   重构 intake   [claude]\n  g6f2  review   修复飞书流式  [opencode]"
+              "example": "$ flowloop goal list\n  g7a3  active   重构 intake   [claude]\n  g6f2  review   修复飞书流式  [opencode]"
             },
             {
               "name": "Domain",
               "desc": "仓库型或 scratch 工作区。验收级别在 goal 上选。",
               "chips": ["repo", "scratch", "hitl/hootl"],
-              "example": "$ ouroflow create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
+              "example": "$ flowloop create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
             }
           ]
         },
@@ -181,7 +181,7 @@
               "name": "Agent",
               "desc": "一个 runtime + 人设（system prompt / model / env / MCP server / 并发）。",
               "chips": ["persona", "model", "mcp"],
-              "example": "$ ouroflow agent create --runtime opencode \\\n    --system-prompt \"你是一个严谨的审查者\""
+              "example": "$ flowloop agent create --runtime opencode \\\n    --system-prompt \"你是一个严谨的审查者\""
             },
             {
               "name": "Chat",
@@ -198,19 +198,19 @@
               "name": "Squad",
               "desc": "一个不做任何事的路由组——goal 路由到队长，队长通过子目标委派。",
               "chips": ["leader", "delegate", "reviewers"],
-              "example": "$ ouroflow squad create --name review-team \\\n    --leader claude --reviewer opencode"
+              "example": "$ flowloop squad create --name review-team \\\n    --leader claude --reviewer opencode"
             },
             {
               "name": "Sub-goal",
               "desc": "从 goal 拆出的工作项（无递归）。自己的执行者 + 可选 agent 验证器。",
               "chips": ["split", "verifier", "≤3 重试"],
-              "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"补测试\" --assignee opencode"
+              "example": "$ flowloop subgoal create --parent g7a3 \\\n    --title \"补测试\" --assignee opencode"
             },
             {
               "name": "Change",
               "desc": "子目标的逻辑交付物。owner 通过 integrate_change 工具整合。",
               "chips": ["ready", "integrating", "conflict"],
-              "example": "$ ouroflow change integrate ch9f2\n# 冲突 → 执行者返工 → revision N+1"
+              "example": "$ flowloop change integrate ch9f2\n# 冲突 → 执行者返工 → revision N+1"
             }
           ]
         },
@@ -233,13 +233,13 @@
               "name": "Mention",
               "desc": "Consult 原语——评论里的结构化 URI 把 agent 拉进只读 guest run。",
               "chips": ["consult", "guest", "auto-resume"],
-              "example": "$ ouroflow goal comment --text \\\n    \"[@opencode](mention://agent/a4) 这样安全吗?\""
+              "example": "$ flowloop goal comment --text \\\n    \"[@opencode](mention://agent/a4) 这样安全吗?\""
             },
             {
               "name": "Schedule",
               "desc": "一个 cron 模板，每次触发克隆一个 goal。幂等、时区感知。",
               "chips": ["cron", "idempotent", "tz-aware"],
-              "example": "$ ouroflow schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
+              "example": "$ flowloop schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
             }
           ]
         }
@@ -247,38 +247,38 @@
     },
     "collab": {
       "title": "协作",
-      "intro": "Agent 只通过 ouroflow CLI（daemon 二进制的 shim，spawn 时放在 agent 的 PATH 上）协调。每条命令携带 per-run token（OUROFLOW_TOKEN），daemon 解析成 run 的 (goal, agent, role)——token 是唯一身份，自报 id 被忽略，handoff owner 检查服务端强制。",
+      "intro": "Agent 只通过 flowloop CLI（daemon 二进制的 shim，spawn 时放在 agent 的 PATH 上）协调。每条命令携带 per-run token（FLOWLOOP_TOKEN），daemon 解析成 run 的 (goal, agent, role)——token 是唯一身份，自报 id 被忽略，handoff owner 检查服务端强制。",
       "behaviors": [
         {
           "name": "Comment",
           "desc": "在 goal 上说一句——所有参与者可见。最基础的交互，无需权限。",
           "who": "任何人",
           "chips": ["say", "no-auth"],
-          "example": "$ ouroflow goal comment g7a3 --text \"阻塞: CI 上测试 flaky\""
+          "example": "$ flowloop goal comment g7a3 --text \"阻塞: CI 上测试 flaky\""
         },
         {
           "name": "Consult",
           "desc": "通过 mention URI 把另一个 agent 拉进只读 guest run。请求者在回答落地后自动恢复。",
           "who": "owner",
           "chips": ["mention", "guest-run", "auto-resume"],
-          "example": "$ ouroflow goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) 这次重构安全吗?\""
+          "example": "$ flowloop goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) 这次重构安全吗?\""
         },
         {
           "name": "Handoff",
           "desc": "把 goal 所有权转给另一个 agent。owner 检查服务端强制——只有当前 owner 能转。",
           "who": "owner",
           "chips": ["transfer", "server-check"],
-          "example": "$ ouroflow goal assign g7a3 opencode --note \"parser 归你了\""
+          "example": "$ flowloop goal assign g7a3 opencode --note \"parser 归你了\""
         },
         {
           "name": "Sub-goal",
           "desc": "从 goal 拆出工作——自己的执行者、工作树、可选验证器。不是子 goal（无递归）。机器重试 ≤3。",
           "who": "owner",
           "chips": ["split", "worktree", "verifier"],
-          "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"补集成测试\" --assignee opencode"
+          "example": "$ flowloop subgoal create --parent g7a3 \\\n    --title \"补集成测试\" --assignee opencode"
         }
       ],
-      "tokenNote": "per-run token（OUROFLOW_TOKEN）是唯一身份——自报 id 被忽略，owner 检查服务端强制。",
+      "tokenNote": "per-run token（FLOWLOOP_TOKEN）是唯一身份——自报 id 被忽略，owner 检查服务端强制。",
       "fullModel": "完整模型见 docs/design/Collaboration.v2.md →"
     }
   },

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 func insertTestSquad(t *testing.T, st *store.Store, leader, defaultWorkflow string) string {

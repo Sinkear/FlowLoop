@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestScheduleCategoryPersists: the schedule's HITL/HOOTL mode is persisted

@@ -91,7 +91,7 @@ export function MachineDetail({
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-4 text-xs text-ink-3">
               <span className="truncate font-mono">{machine.hostname || "主机名未知"}</span>
               <span aria-hidden="true">·</span>
-              <span>ouroflow {machine.version || "版本未知"}</span>
+              <span>flowloop {machine.version || "版本未知"}</span>
               <span aria-hidden="true">·</span>
               <span title={fullTime(machine.last_seen_at)}>
                 最后心跳 {machine.last_seen_at ? relTime(machine.last_seen_at) : "未知"}
@@ -198,7 +198,7 @@ export function MachineDetail({
         {runtimes.length === 0 ? (
           <Empty icon={<Terminal className="h-5 w-5" />}>
             <span className="block">
-              这台机器还没有运行时。机器执行 <code className="font-mono">ouroflow connect</code>{" "}
+              这台机器还没有运行时。机器执行 <code className="font-mono">flowloop connect</code>{" "}
               时探测到的 CLI 会自动注册；也可以手动添加一个。
             </span>
             <span className="mt-3 block">
@@ -373,7 +373,7 @@ export function MachineDetailPlaceholder({ onAddMachine }: { onAddMachine: () =>
       <Empty icon={<Monitor className="h-5 w-5" />}>
         <span className="block">
           先在左侧选择一台机器，这里会显示它的运行时、模型目录和绑定的 Agent。
-          如果列表还是空的，说明还没有主机通过 <code className="font-mono">ouroflow connect</code> 接入。
+          如果列表还是空的，说明还没有主机通过 <code className="font-mono">flowloop connect</code> 接入。
         </span>
         <span className="mt-3 block">
           <Button variant="outline" onClick={onAddMachine} className="gap-1.5">

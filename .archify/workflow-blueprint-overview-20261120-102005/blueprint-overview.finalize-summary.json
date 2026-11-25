@@ -6,14 +6,14 @@
   "type": "workflow",
   "quality": "showcase",
   "specification": {
-    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
-    "sha256": "95654105603a8be592d105004737d7b742eb3fb2026974918fbdab1e21b5b1da",
-    "bytes": 8184
+    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/candidate.json",
+    "sha256": "ea984e8e14fecafc782e235e217b6fef3ee6c895d66a56c62a9767f92a597db9",
+    "bytes": 8183
   },
   "artifact": {
-    "path": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
-    "sha256": "1106039aeca9da146ccc820830f8994488ed82916d81843c13f1a31f763a5c80",
-    "bytes": 835735
+    "path": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.html",
+    "sha256": "93b4ec16033580062eaea403f91b09276c45d8ad5d60039571dabf86f70c6eba",
+    "bytes": 835732
   },
   "gates": {
     "validate": "pass",
@@ -28,22 +28,25 @@
     "truncated": false
   },
   "evidence": {
-    "receipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
-    "summaryReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
-    "browserCheckReceipt": "/home/sinkear/developer/ouroflow-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
+    "receipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize.json",
+    "summaryReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.finalize-summary.json",
+    "browserCheckReceipt": "/home/sinkear/developer/agentwork-main/.archify/workflow-blueprint-overview-20261120-102005/blueprint-overview.browser-check.json"
   },
   "update": {
-    "status": "current",
+    "status": "update_available",
     "installedVersion": "3.2.0",
-    "availableVersion": "3.2.0",
-    "releaseNotes": null,
-    "checkedAt": "2026-11-20T02:21:37.949Z",
+    "availableVersion": "3.3.1",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.3.1",
+    "severity": "normal",
+    "summary": "Polishes automatic Architecture layout, spine labels, crossing reduction, and Classic styling, and deduplicates cited Explainer files.",
+    "checkedAt": "2026-11-25T10:12:19.112Z",
     "source": "cache",
-    "noticeRequired": false,
-    "noticeText": null
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.2.0 → 3.3.1. A previous check at 2026-11-25T10:12:19.112Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.3.1. Would you like me to update Archify?",
+    "eventKey": "archify@sha256:b92b4d55446966fd74e5338a45d6de9a7a1b194420cd5eb14d2cdc39f1053b80"
   },
   "visualReview": "not-requested",
-  "durationMs": 3434,
+  "durationMs": 2856,
   "browserCheck": {
     "requested": true,
     "ran": true

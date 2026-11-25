@@ -10,10 +10,10 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 const nextConfig: NextConfig = {
   // 静态导出到 site/out/，gh-pages 直接服这个目录。
   output: "export",
-  // 站点服在 yusheng-g.github.io/ouroflow（project path，非 user root）。
+  // 站点服在 yusheng-g.github.io/flowloop（project path，非 user root）。
   // <Link>/<Image>/useRouter 自动加此前缀；裸 <a> 和 CSS url() 不会——
   // 内部跳转一律走 <Link>，外部链接用裸 <a>。
-  basePath: "/ouroflow",
+  basePath: "/flowloop",
   // gh-pages 从目录服 index.html：/docs/concepts/ → docs/concepts/index.html。
   // 无 trailingSlash 会找不到无扩展名的 URL。
   trailingSlash: true,

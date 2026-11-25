@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // verifySweepInterval is how often the daemon heals verifying sub-goals

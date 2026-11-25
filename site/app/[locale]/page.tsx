@@ -14,7 +14,7 @@ import { CodeBlock } from "@/components/code-block";
 import { TerminalWindow } from "@/components/terminal-window";
 import { Callout } from "@/components/callout";
 
-const REPO = "https://github.com/Sinkear/ouroflow";
+const REPO = "https://github.com/Sinkear/flowloop";
 
 const FEATURE_ICONS = {
   loop: RefreshCw,
@@ -48,7 +48,7 @@ export default async function LandingPage({
           {/* 左：定位 + CTA + 技术栈 chip */}
           <div>
             <h1 className="font-mono text-5xl font-bold tracking-tight text-text">
-              ouroflow
+              flowloop
             </h1>
             <p className="mt-3 font-mono text-lg font-medium text-accent">
               {t("tagline")}
@@ -99,7 +99,7 @@ export default async function LandingPage({
       {/* 自迭代闭环 — 首页主流程图 */}
       <section className="mx-auto max-w-7xl px-6 pb-12">
         <img
-          src={`/ouroflow/ouroflow-self-iteration-${locale === "zh" ? "zh" : "en"}.svg`}
+          src={`/flowloop/flowloop-self-iteration-${locale === "zh" ? "zh" : "en"}.svg`}
           alt={t("loopFigureAlt")}
           width={1200}
           height={760}
@@ -159,10 +159,10 @@ export default async function LandingPage({
         <p className="mb-8 text-sm text-muted">{t("prereq")}</p>
 
         <h3 className="mb-2 font-semibold text-text">{t("backendTitle")}</h3>
-        <CodeBlock label="bash">{`./build.sh   # builds build/ouroflow (CLI) + build/ouroflow-daemon
+        <CodeBlock label="bash">{`./build.sh   # builds build/flowloop (CLI) + build/flowloop-daemon
 
 # Terminal 1 — control plane (default :47813)
-./build/ouroflow-daemon`}</CodeBlock>
+./build/flowloop-daemon`}</CodeBlock>
 
         <h3 className="mb-2 mt-6 font-semibold text-text">{t("frontendTitle")}</h3>
         <CodeBlock label="bash">{`cd web
@@ -173,7 +173,7 @@ npm run dev   # http://127.0.0.1:47814
 
         <h3 className="mb-2 mt-6 font-semibold text-text">{t("executionTitle")}</h3>
         <CodeBlock label="bash">{`# Terminal 3 — execution plane (pull runs, spawn agent CLIs, host chats)
-./build/ouroflow connect --server http://127.0.0.1:47813`}</CodeBlock>
+./build/flowloop connect --server http://127.0.0.1:47813`}</CodeBlock>
 
         <h3 className="mb-3 mt-6 font-semibold text-text">{t("firstGoalTitle")}</h3>
         <ol className="max-w-3xl list-inside list-decimal space-y-2 text-sm leading-relaxed text-text">

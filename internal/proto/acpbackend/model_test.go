@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
-	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/flowloop/internal/acp"
+	"github.com/Sinkear/flowloop/internal/proto"
 )
 
 // opencodeConfigOptions is the session/new payload opencode 2.2.5 returns:

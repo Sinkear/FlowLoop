@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/acp"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // StewardSystemPrompt is the platform-fixed persona shipped to the steward

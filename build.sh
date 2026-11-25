@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds the ouroflow CLI and daemon with one shared version stamp.
+# Builds the flowloop CLI and daemon with one shared version stamp.
 #
-#   OUROFLOW_COMPILE_VERSION=0.0.1-beta.2 ./build.sh
+#   FLOWLOOP_COMPILE_VERSION=0.0.1-beta.2 ./build.sh
 #
 # The env var overrides the default (0.0.1-beta.1). Both binaries MUST be
 # built with the same stamp: the register-time version check between the
@@ -10,11 +10,11 @@
 set -e
 cd "$(dirname "$0")"
 
-VERSION="${OUROFLOW_COMPILE_VERSION:-0.0.1-beta.1}"
+VERSION="${FLOWLOOP_COMPILE_VERSION:-0.0.1-beta.1}"
 LDFLAGS="-X main.cliVersion=$VERSION \
--X github.com/Sinkear/ouroflow/internal/daemon.DaemonVersion=$VERSION"
+-X github.com/Sinkear/flowloop/internal/daemon.DaemonVersion=$VERSION"
 
 mkdir -p build
-go build -ldflags "$LDFLAGS" -o build/ouroflow ./cmd/ouroflow-cli
-go build -ldflags "$LDFLAGS" -o build/ouroflow-daemon ./cmd/ouroflow-daemon
-echo "built build/ouroflow (CLI) + build/ouroflow-daemon v$VERSION"
+go build -ldflags "$LDFLAGS" -o build/flowloop ./cmd/flowloop-cli
+go build -ldflags "$LDFLAGS" -o build/flowloop-daemon ./cmd/flowloop-daemon
+echo "built build/flowloop (CLI) + build/flowloop-daemon v$VERSION"

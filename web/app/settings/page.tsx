@@ -38,7 +38,7 @@ function currentTheme(): ThemeId {
 function applyTheme(t: ThemeId) {
   document.documentElement.dataset.theme = t;
   try {
-    localStorage.setItem("ouroflow-theme", t);
+    localStorage.setItem("flowloop-theme", t);
   } catch {
     /* 隐私模式等：主题仍对本页生效，只是不持久化 */
   }
@@ -149,10 +149,10 @@ export default function SettingsPage() {
       const doomed: string[] = [];
       for (let i = 0; i < localStorage.length; i += 1) {
         const key = localStorage.key(i);
-        if (key?.startsWith("ouroflow-chat-")) doomed.push(key);
+        if (key?.startsWith("flowloop-chat-")) doomed.push(key);
       }
       for (const key of doomed) localStorage.removeItem(key);
-      localStorage.removeItem("ouroflow-goals-view");
+      localStorage.removeItem("flowloop-goals-view");
     } catch {}
     applyTheme("light");
     setTheme("light");

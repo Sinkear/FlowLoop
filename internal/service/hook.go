@@ -32,10 +32,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/paths"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/paths"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // ── constants ──
@@ -46,7 +46,7 @@ const (
 	hookDefaultTimeout = 60
 	hookMaxTimeout     = 600
 	// hookDefaultServerURL matches the daemon's default listen address; the
-	// daemon's own OUROFLOW_SERVER_URL (if set) overrides it.
+	// daemon's own FLOWLOOP_SERVER_URL (if set) overrides it.
 	hookDefaultServerURL = "http://127.0.0.1:47813"
 )
 
@@ -127,7 +127,7 @@ var hookParamKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
 
 // validateHookParams enforces the flat string map: values are strings by Go
 // type, keys are conservative identifiers so they flatten to safe env names
-// (OUROFLOW_PARAM_<KEY>). Nested objects/arrays are impossible here — the
+// (FLOWLOOP_PARAM_<KEY>). Nested objects/arrays are impossible here — the
 // handler decodes straight into map[string]string.
 func validateHookParams(m map[string]string) error {
 	for k := range m {
@@ -942,7 +942,7 @@ func (s *HookService) fireBinding(ctx context.Context, b HookBinding, hookEvent,
 // merged params (if any) ride along as a top-level "params" object.
 func (s *HookService) buildPayload(hookEvent, goalID, title, domainID, createdByType string, m map[string]any, params map[string]string) map[string]any {
 	p := map[string]any{
-		"platform":        "ouroflow",
+		"platform":        "flowloop",
 		"hook_schema":     1,
 		"hook_event_name": hookEvent,
 		"goal_id":         goalID,
@@ -1045,7 +1045,7 @@ func (s *HookService) finishRun(ctx context.Context, r *runRecord) {
 }
 
 // executeScript stages the script and runs it with the contract environment
-// (spec §3): cwd = $OUROFLOW_HOME/runs/hooks/<run_id>, stdin = payload JSON,
+// (spec §3): cwd = $FLOWLOOP_HOME/runs/hooks/<run_id>, stdin = payload JSON,
 // process-group SIGTERM → 2s → SIGKILL on timeout.
 func (s *HookService) executeScript(ctx context.Context, hook *Hook, runID, hookEvent string, payload map[string]any, params map[string]string) *runRecord {
 	rec := &runRecord{ID: runID, Hook: hook, Event: hookEvent, StartedAt: now()}
@@ -1129,31 +1129,31 @@ func (s *HookService) executeScript(ctx context.Context, hook *Hook, runID, hook
 }
 
 // hookEnv builds the minimal environment (spec §3.1): only the whitelist
-// passes through from the daemon plus OUROFLOW_* contract vars. OUROFLOW_TOKEN
+// passes through from the daemon plus FLOWLOOP_* contract vars. FLOWLOOP_TOKEN
 // / worker_token are deliberately NOT passed — hooks are owner-side actions
 // and must not impersonate a run identity. Params reach the script three
-// ways: the whole merged set as JSON (OUROFLOW_HOOK_PARAMS), each key
-// flattened (OUROFLOW_PARAM_<KEY>), and inside the stdin payload.
+// ways: the whole merged set as JSON (FLOWLOOP_HOOK_PARAMS), each key
+// flattened (FLOWLOOP_PARAM_<KEY>), and inside the stdin payload.
 func hookEnv(hookEvent, runID string, hook *Hook, goalID, domainID any, params map[string]string) []string {
 	env := []string{
-		"OUROFLOW_HOOK_EVENT=" + hookEvent,
-		"OUROFLOW_HOOK_RUN_ID=" + runID,
-		"OUROFLOW_HOOK_NAME=" + hook.Name,
-		"OUROFLOW_HOOK_GOAL_ID=" + stringOf(goalID),
-		"OUROFLOW_DOMAIN_ID=" + stringOf(domainID),
+		"FLOWLOOP_HOOK_EVENT=" + hookEvent,
+		"FLOWLOOP_HOOK_RUN_ID=" + runID,
+		"FLOWLOOP_HOOK_NAME=" + hook.Name,
+		"FLOWLOOP_HOOK_GOAL_ID=" + stringOf(goalID),
+		"FLOWLOOP_DOMAIN_ID=" + stringOf(domainID),
 	}
 	if len(params) > 0 {
-		env = append(env, "OUROFLOW_HOOK_PARAMS="+encodeParams(params))
+		env = append(env, "FLOWLOOP_HOOK_PARAMS="+encodeParams(params))
 		for k, v := range params {
-			envKey := "OUROFLOW_PARAM_" + strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
+			envKey := "FLOWLOOP_PARAM_" + strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
 			env = append(env, envKey+"="+v)
 		}
 	}
-	serverURL := os.Getenv("OUROFLOW_SERVER_URL")
+	serverURL := os.Getenv("FLOWLOOP_SERVER_URL")
 	if serverURL == "" {
 		serverURL = hookDefaultServerURL
 	}
-	env = append(env, "OUROFLOW_SERVER_URL="+serverURL)
+	env = append(env, "FLOWLOOP_SERVER_URL="+serverURL)
 	for _, k := range []string{"PATH", "HOME", "LANG", "TZ", "TMPDIR"} {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
@@ -1224,7 +1224,7 @@ func (s *HookService) TestHook(ctx context.Context, hookID, event string) (*Hook
 		return nil, NewValidationError("unknown hook event " + event)
 	}
 	payload := map[string]any{
-		"platform":        "ouroflow",
+		"platform":        "flowloop",
 		"hook_schema":     1,
 		"hook_event_name": event,
 		"goal_id":         "test-goal",

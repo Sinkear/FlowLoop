@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Replace the ouroflow artifact (bin/ + web/) inside a job-environment sandbox
+# Replace the flowloop artifact (bin/ + web/) inside a job-environment sandbox
 # WITHOUT touching the data directory. Safe flow: backup -> stop -> swap ->
 # start, never delete/re-deploy (which recreates /workspace).
 #
 # Usage:
-#   JEM_URL=http://127.0.0.1:8090 ENV_ID=ouroflow DAEMON_PORT=17450 \
-#     ./scripts/jem-swap-release.sh dist/ouroflow-v0.0.1-beta.2-linux-amd64.tar.gz
+#   JEM_URL=http://127.0.0.1:8090 ENV_ID=flowloop DAEMON_PORT=17450 \
+#     ./scripts/jem-swap-release.sh dist/flowloop-v0.0.1-beta.2-linux-amd64.tar.gz
 #
 # Options (env or flags):
 #   --release PATH   new package dir or .tar.gz (required)
-#   --env-id ID      job-environment env id (default ouroflow)
+#   --env-id ID      job-environment env id (default flowloop)
 #   --runtime-dir D  runtime dir on the host (default /root/runtime/$ENV_ID)
-#   --data-home D    OUROFLOW_HOME host path (default: discover from sandbox)
-#   --db PATH        explicit SQLite path (default: $DATA_HOME/ouroflow.db)
-#   --backup-dir D   backup root (default /root/workspace/ouroflow-backups)
+#   --data-home D    FLOWLOOP_HOME host path (default: discover from sandbox)
+#   --db PATH        explicit SQLite path (default: $DATA_HOME/flowloop.db)
+#   --backup-dir D   backup root (default /root/workspace/flowloop-backups)
 #   --daemon-port P  daemon port for health check (default 47813)
 #   --no-backup      skip the pre-swap backup
 #
@@ -22,11 +22,11 @@
 set -euo pipefail
 
 JEM_URL="${JEM_URL:-http://127.0.0.1:8090}"
-ENV_ID="${ENV_ID:-ouroflow}"
+ENV_ID="${ENV_ID:-flowloop}"
 RUNTIME_DIR="${RUNTIME_DIR:-}"
 DATA_HOME="${DATA_HOME:-}"
 DB="${DB:-}"
-BACKUP_DIR="${BACKUP_DIR:-/root/workspace/ouroflow-backups}"
+BACKUP_DIR="${BACKUP_DIR:-/root/workspace/flowloop-backups}"
 DAEMON_PORT="${DAEMON_PORT:-47813}"
 RELEASE="${RELEASE:-}"
 DO_BACKUP=1
@@ -62,7 +62,7 @@ trap cleanup EXIT
 
 # ── 0. artifact layout ──────────────────────────────────────────────────────
 [ -e "$RELEASE" ] || die "release not found: $RELEASE"
-WORK=$(mktemp -d /tmp/ouroflow-swap.XXXXXX)
+WORK=$(mktemp -d /tmp/flowloop-swap.XXXXXX)
 REL=""
 if [ -d "$RELEASE" ]; then
   REL="$RELEASE"
@@ -71,10 +71,10 @@ else
     *.tar.gz|*.tgz) tar -xzf "$RELEASE" -C "$WORK" || die "extract failed";;
     *) die "release must be a directory or .tar.gz";;
   esac
-  REL=$(find "$WORK" -maxdepth 3 -type f -name ouroflow-daemon -printf '%h\n' 2>/dev/null | head -1)
-  [ -n "$REL" ] && REL=$(dirname "$REL") || die "release has no bin/ouroflow-daemon"
+  REL=$(find "$WORK" -maxdepth 3 -type f -name flowloop-daemon -printf '%h\n' 2>/dev/null | head -1)
+  [ -n "$REL" ] && REL=$(dirname "$REL") || die "release has no bin/flowloop-daemon"
 fi
-[ -x "$REL/bin/ouroflow" ] && [ -x "$REL/bin/ouroflow-daemon" ] || die "release missing bin/ouroflow{,-daemon}"
+[ -x "$REL/bin/flowloop" ] && [ -x "$REL/bin/flowloop-daemon" ] || die "release missing bin/flowloop{,-daemon}"
 [ -f "$REL/web/server.js" ] || die "release missing web/server.js"
 # Next 把 daemon 反代端口固化在构建产物里；端口不一致时页面会 500，
 # 必须在停机前就拒绝。
@@ -96,7 +96,7 @@ esac
 log "state=$STATE runtime=$RUNTIME_DIR"
 
 # Prefer the running daemon's own answer over guessing from the sandbox path:
-# a migrated env may keep OUROFLOW_HOME on a host directory.
+# a migrated env may keep FLOWLOOP_HOME on a host directory.
 if [ -z "$DB" ] && [ "$WAS_RUNNING" = 1 ]; then
   HEALTH=$(curl -sf --max-time 5 "http://127.0.0.1:$DAEMON_PORT/healthz?verbose=1" || true)
   DB=$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("db",""))' 2>/dev/null || true)
@@ -105,12 +105,12 @@ fi
 
 if [ -z "$DB" ]; then
   if [ -n "$DATA_HOME" ]; then
-    DB="$DATA_HOME/ouroflow.db"
+    DB="$DATA_HOME/flowloop.db"
   else
-    DB=$(ls -t /root/job-envs/sandboxes/${ENV_ID}-*/.ouroflow/ouroflow.db 2>/dev/null | head -1 || true)
+    DB=$(ls -t /root/job-envs/sandboxes/${ENV_ID}-*/.flowloop/flowloop.db 2>/dev/null | head -1 || true)
   fi
 fi
-[ -n "$DB" ] && [ -f "$DB" ] || die "cannot locate ouroflow.db; pass --data-home or --db"
+[ -n "$DB" ] && [ -f "$DB" ] || die "cannot locate flowloop.db; pass --data-home or --db"
 DATA_HOME=$(dirname "$DB")
 log "database: $DB"
 
@@ -131,12 +131,12 @@ fi
 # ── 3. backup DB (+ skills) ────────────────────────────────────────────────
 if [ "$DO_BACKUP" = 1 ]; then
   step "备份数据"
-  BK="$BACKUP_DIR/ouroflow-$(date +%Y%m%d-%H%M%S)"
+  BK="$BACKUP_DIR/flowloop-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BK"
-  for f in ouroflow.db ouroflow.db-wal ouroflow.db-shm; do
+  for f in flowloop.db flowloop.db-wal flowloop.db-shm; do
     [ -f "$(dirname "$DB")/$f" ] && cp -a "$(dirname "$DB")/$f" "$BK/"
   done
-  python3 - "$BK/ouroflow.db" <<'PY'
+  python3 - "$BK/flowloop.db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
 assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -154,7 +154,7 @@ fi
 
 # ── 4. swap bin/web in place ───────────────────────────────────────────────
 step "替换制品（只换 bin/web）"
-[ -x "$RUNTIME_DIR/bin/ouroflow-daemon" ] || die "runtime dir looks wrong: $RUNTIME_DIR"
+[ -x "$RUNTIME_DIR/bin/flowloop-daemon" ] || die "runtime dir looks wrong: $RUNTIME_DIR"
 RB="$WORK/rollback"
 mkdir -p "$RB"
 cp -a "$RUNTIME_DIR/bin" "$RB/bin" 2>/dev/null || true
@@ -167,11 +167,11 @@ if [ "$DO_BACKUP" = 1 ] && [ -n "${BK:-}" ]; then
   log "previous artifact kept: $BK/previous-bin $BK/previous-web"
 fi
 
-cp "$REL/bin/ouroflow" "$RUNTIME_DIR/bin/ouroflow.new"
-cp "$REL/bin/ouroflow-daemon" "$RUNTIME_DIR/bin/ouroflow-daemon.new"
-chmod +x "$RUNTIME_DIR/bin/ouroflow.new" "$RUNTIME_DIR/bin/ouroflow-daemon.new"
-mv "$RUNTIME_DIR/bin/ouroflow.new" "$RUNTIME_DIR/bin/ouroflow"
-mv "$RUNTIME_DIR/bin/ouroflow-daemon.new" "$RUNTIME_DIR/bin/ouroflow-daemon"
+cp "$REL/bin/flowloop" "$RUNTIME_DIR/bin/flowloop.new"
+cp "$REL/bin/flowloop-daemon" "$RUNTIME_DIR/bin/flowloop-daemon.new"
+chmod +x "$RUNTIME_DIR/bin/flowloop.new" "$RUNTIME_DIR/bin/flowloop-daemon.new"
+mv "$RUNTIME_DIR/bin/flowloop.new" "$RUNTIME_DIR/bin/flowloop"
+mv "$RUNTIME_DIR/bin/flowloop-daemon.new" "$RUNTIME_DIR/bin/flowloop-daemon"
 rm -rf "$RUNTIME_DIR/web.new" "$RUNTIME_DIR/web.old"
 cp -a "$REL/web" "$RUNTIME_DIR/web.new"
 [ -d "$RUNTIME_DIR/web" ] && mv "$RUNTIME_DIR/web" "$RUNTIME_DIR/web.old"
@@ -203,16 +203,16 @@ if [ "$WAS_RUNNING" = 1 ]; then
     die "start failed, state=$ST; old artifact restored"
   fi
   # The artifact can only preserve data if the daemon really uses the same
-  # home we backed up. start-all.sh defaults to $HOME/.ouroflow, so a host
-  # data dir must be exported by the JEM template env as OUROFLOW_HOME.
+  # home we backed up. start-all.sh defaults to $HOME/.flowloop, so a host
+  # data dir must be exported by the JEM template env as FLOWLOOP_HOME.
   HEALTH=$(curl -sf --max-time 5 "http://127.0.0.1:$DAEMON_PORT/healthz?verbose=1" || true)
   ACTUAL_HOME=$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("home",""))' 2>/dev/null || true)
   ACTUAL_DB=$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("db",""))' 2>/dev/null || true)
   if [ -n "$ACTUAL_HOME" ] && [ "$(readlink -f "$ACTUAL_HOME")" != "$(readlink -f "$DATA_HOME")" ]; then
     curl -s -X POST "$JEM_URL/api/v1/envs/$ENV_ID/stop" >/dev/null || true
-    die "daemon used home=$ACTUAL_HOME db=$ACTUAL_DB, expected home=$DATA_HOME. Set OUROFLOW_HOME=$DATA_HOME in the JEM template env (or migrate the old DB there), then retry."
+    die "daemon used home=$ACTUAL_HOME db=$ACTUAL_DB, expected home=$DATA_HOME. Set FLOWLOOP_HOME=$DATA_HOME in the JEM template env (or migrate the old DB there), then retry."
   fi
-  V=$("$RUNTIME_DIR/bin/ouroflow" version)
+  V=$("$RUNTIME_DIR/bin/flowloop" version)
   log "version: $V"
   log "daemon home: ${ACTUAL_HOME:-unknown} db: ${ACTUAL_DB:-unknown}"
   curl -sf --max-time 5 "http://127.0.0.1:$DAEMON_PORT/domains" >/dev/null || die "daemon health check failed on :$DAEMON_PORT"

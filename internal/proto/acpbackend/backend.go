@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
-	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/flowloop/internal/acp"
+	"github.com/Sinkear/flowloop/internal/proto"
 )
 
 // Backend is the ACP provider backend. It builds an acp.Session over the

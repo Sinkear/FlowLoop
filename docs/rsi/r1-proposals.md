@@ -10,7 +10,7 @@
 | 原题 | RSI R1 基线与瓶颈提案（round-1） | RSI R1 优化提案（optimizer · 只读 · 复跑版） |
 | 产出者 / 场景 | optimizer，RSI 训练循环的「只读分析产物」 | optimizer，「只读复跑版」；作为 R1 轮次的优化提案交付物 |
 | 数据来源 | 本机 RSI 训练接口（session / workflow / rounds）+ 本 goal 评论流；session `e9f5c086…`（goal `98d60d12`，workflow 冻结于 11:08:15Z） | ① `benchmark-report.md`（当时为基线 `33f16dc` 的 R1 复跑版：冷 38.4s / 温中位 4.4s / 测试 14.5s）；② optimizer 本轮实测复测（`go test -json` 逐用例计时、平台 runs API 全量 23 条 run）；③ 行级定位均在 `33f16dc` 上核实 |
-| 基线 | 指标口径：`critical_path_ms=293,501`（sg-B 单节点）；无代码 commit 基线声明 | 代码基线 `ouroflow-int` HEAD `33f16dc` |
+| 基线 | 指标口径：`critical_path_ms=293,501`（sg-B 单节点）；无代码 commit 基线声明 | 代码基线 `flowloop-int` HEAD `33f16dc` |
 | 提案数 | 3 条（编排层） | 3 条（P1/P2/P3，测试/运行时层） |
 | 原文状态 | **【待评审】/ 只读**（无批准记录） | **【待评审】**——等待人工 review，未获批准前不实施任何改动 |
 | 后续状态 | 见 §3.1：合并可核对范围内未见 A 组提案的实施/复测记录 | 见 §3.2：三条均已实施（`3cf2116`/`8ca9957`/`18a8c3c`，R2 基线 `365e108`），并在 v2 以不同 SHA 重放（`e08cb72`/`e2bda1d`） |
@@ -78,7 +78,7 @@
 
 ### 2.1 数据源与关系（原文）
 
-1. `benchmark-report.md`（bench 复跑产出，基线 `ouroflow-int` HEAD `33f16dc`，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
+1. `benchmark-report.md`（bench 复跑产出，基线 `flowloop-int` HEAD `33f16dc`，go1.26.4 linux/arm64，构建冷 38.4s / 温中位 4.4s，测试 14.5s）；
 2. optimizer 本轮实测复测（`go test -json` 逐用例计时、平台 runs API 全量 23 条 run 记录）；
 3. 行级定位均已在基线 `33f16dc` 上逐行核实。
 
@@ -93,7 +93,7 @@
 - **② 拟改动位置（文件 + 行级，已在 `33f16dc` 核实）**
   - `internal/daemon/intake_test.go`、`verify_test.go`、`gate_test.go`、`schedule_test.go`、`runaway_test.go`、`prompt_context_test.go`、`handoff_cancel_test.go`（7 个文件均无 `t.Setenv`，已逐一核实）的顶层测试函数，逐一加 `t.Parallel()`（优先挑相互独立、不碰全局状态的）。
   - 对使用 `t.Setenv` 的 3 个文件（`internal/daemon/deliver_test.go`、`digest_test.go`、`worktree_test.go`）保持串行（`t.Setenv` 会自动禁止并行）或重构为显式参数注入后再并行。
-  - 次级目标（同法）：`cmd/ouroflow-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
+  - 次级目标（同法）：`cmd/flowloop-cli`（复跑 5.15s，最慢单测约 1.1s，同样调度开销为主）。
 - **③ 预期收益（可量化）**：`internal/daemon` wall 8.17s → 约 3–4s（7 核并行）；全量 `go test ./... -count=1` 14.5s → 约 10–11s（**-25% 左右**）；每次 CI/开发迭代节省 3–5s，按日频迭代累计可观。
 - **④ 风险与回滚**：风险——并行后共享 HOME / 临时目录 / git 全局配置的测试可能互踩产生 flaky。缓解——只对无共享可变状态的测试并行；`t.Setenv` 文件保持串行；改动后连续跑 3 次 `-count=1` 验证稳定。回滚——纯 `*_test.go` 改动，不触碰任何生产代码；`git revert` 单个 commit 即可完全还原。
 
@@ -105,7 +105,7 @@
   - 现状影响：`go test ./...` 长期 1/24 包红，真回归的信号被固定噪音淹没（信噪比问题），也使 CI 的「全绿」判定失效。
 - **② 拟改动位置（文件 + 行级，已在 `33f16dc` 核实）**
   - `internal/service/codes_test.go:96-99`：decode 失败由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与 89-90/93-94 行既有 skip 语义对齐。
-  - `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `OUROFLOW_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
+  - `internal/service/codes_test.go:100-104`（逐码断言）：可选增强——缺码信息保留 `t.Errorf`，但增加环境开关（如 `FLOWLOOP_SKIP_CDN_DRIFT=1` 时 skip 整个守卫），供无法走 CDN 审批流的开发环境使用。
   - 本地不变量守卫 `TestErrorCodesExported`（`codes_test.go:52`）保持不动。
 - **③ 预期收益（可量化）**：`go test ./...` 恢复全绿（当前 1/24 包 FAIL → 0）；固定红测试噪音清零；测试信噪比恢复：今后任何 `internal/service` 的红都是真回归；`internal/service` 包（复跑 4.47s）不再因失败路径走额外的输出/重试展示开销；主要收益是可靠性而非耗时。
 - **④ 风险与回滚**：风险——漂移守卫弱化，CDN 缺码不再使测试变红，跨层漂移可能被漏掉。缓解——skip 时必须输出缺码清单日志（保留可诊断性）；`TestErrorCodesExported` 仍守本地列表的唯一性/非空；需要时可用 `-run TestCodesMatchRemoteTermJSON` 手动触发检查。回滚——`git revert` 单个 commit 即可恢复原严格断言。
@@ -142,7 +142,7 @@
 ### 3.2 B 组（P1/P2/P3）
 
 - **已实施（R2）**：三条提案分别在 `feat-25da0cc6-sg-23d061da` 落地，commit `3cf2116`（P1）、`8ca9957`（P2）、`18a8c3c`（P3），随后 `365e108`（impl-notes docs）。实施细节与验证见 `docs/reports/benchmark-history.md` §4.1；复测结论：`go test ./... -count=1` 三连跑全绿（14 包 0 FAIL）、daemon 中位 5.911s。
-- **v2 重放**：`ouroflow-int-v2` 用不同 SHA 重放同一组提案——`e08cb72`（P1）、`e2bda1d`（P2/P3 语义化重放）；新基线 `e7c2572`。见 `docs/reports/benchmark-history.md` §1.1。
+- **v2 重放**：`flowloop-int-v2` 用不同 SHA 重放同一组提案——`e08cb72`（P1）、`e2bda1d`（P2/P3 语义化重放）；新基线 `e7c2572`。见 `docs/reports/benchmark-history.md` §1.1。
 - **后续审查对 B 组效果的修正**（来源 `docs/rsi/int-v2-review-fix.md`）：
   - P1：受控 A/B 实测 daemon 中位 3.615→3.44s（-4.8%），全量配对仅省 0.56s、不可归因；原文「-35% / 全量 -25%」在 16 核机器不可复现。
   - P2：实施方向被判定「生效但方向反了」——四条路径全 SKIP 后守卫失去 FAIL 路径；后续 `2aaa78b` 改为「缺码默认 FAIL + 到期 allowlist + env=1 才 skip」。

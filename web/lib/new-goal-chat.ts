@@ -5,7 +5,7 @@
 //   a) 记录只是组件 state，卸载即丢；
 //   b) 卸载 cleanup 里 disposeClient() 关 WebSocket → daemon 视为会话断开
 //      （chat.go CloseChat）→ 机器侧关 CLI stdin → 3 秒强杀进程。管家正在
-//      跑的「ouroflow create goal」被掐死，任务永远建不出来。
+//      跑的「flowloop create goal」被掐死，任务永远建不出来。
 // 把对话搬进模块作用域后，切页只是「视图离开」：连接、记录、建任务轮询
 // 全部在后台继续；回到 /goals/new 直接续上现场。
 //
@@ -36,42 +36,42 @@ const CREATE_INTENTS: Record<
   goal: {
     label: "任务",
     cliKind: "goal",
-    cli: 'ouroflow create goal --title "..."',
+    cli: 'flowloop create goal --title "..."',
     fields: "负责人/项目",
     backView: "任务视图",
   },
   project: {
     label: "项目",
     cliKind: "domain（项目）",
-    cli: 'ouroflow create domain --name "..."',
+    cli: 'flowloop create domain --name "..."',
     fields: "仓库地址/默认分支/验收级别（hitl、hootl 或不设）",
     backView: "项目列表",
   },
   squad: {
     label: "小队",
     cliKind: "squad（小队）",
-    cli: 'ouroflow create squad --name "..."',
+    cli: 'flowloop create squad --name "..."',
     fields: "负责人/成员/职责",
     backView: "小队列表",
   },
   agent: {
     label: "智能体",
     cliKind: "agent",
-    cli: 'ouroflow create agent --name "..."',
+    cli: 'flowloop create agent --name "..."',
     fields: "运行时/模型/职责（智能体是公共资源，不挂小队）",
     backView: "智能体列表",
   },
   workflow: {
     label: "工作流",
     cliKind: "blueprint（工作流）",
-    cli: 'ouroflow create blueprint --name "..."',
+    cli: 'flowloop create blueprint --name "..."',
     fields: "所属小队/步骤/人工卡点/适用场景",
     backView: "工作流列表",
   },
   schedule: {
     label: "定时任务",
     cliKind: "schedule",
-    cli: 'ouroflow create schedule --name "..."',
+    cli: 'flowloop create schedule --name "..."',
     fields: "项目/cron/负责人/验收分类/是否生成复盘",
     backView: "定时任务列表",
   },
@@ -193,7 +193,7 @@ export function getNewGoalState(): NewGoalState {
 // 一段流程 = 一次「交给管家创建」的 first ask 及其追问。在途时把 ACP
 // sessionId（CLI 已按 cwd 持久化它）和 startedAt 钉进 sessionStorage：
 // 刷新回来 listSessions→loadSession 接回同一段对话，轮询从 startedAt 续跑。
-const SNAPSHOT_KEY = "ouroflow-new-goal-flow";
+const SNAPSHOT_KEY = "flowloop-new-goal-flow";
 const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const POLL_INTERVAL_MS = 2000;
 // 轮询上限：管家把建任务卡死时不至于永远打 /goals。
@@ -492,7 +492,7 @@ export async function ask(say: string, first: boolean, kind: CreateKind = "goal"
       push({ role: "user", text: body });
       push({
         role: "system",
-        text: `已交给管家：它用 ouroflow CLI 建${spec.label}，建好会自动切回${spec.backView}。`,
+        text: `已交给管家：它用 flowloop CLI 建${spec.label}，建好会自动切回${spec.backView}。`,
       });
       ensurePolling();
       writeSnapshot();

@@ -1,6 +1,6 @@
 "use client";
 
-// 「新建」独立页：选类型 + 一句话描述 → 管家用 ouroflow CLI 建出来。
+// 「新建」独立页：选类型 + 一句话描述 → 管家用 flowloop CLI 建出来。
 //
 // 2026-11-25 用户明确要求：新建是单独页面，不要弹窗；页面里要有 chat
 // 窗口来创建。这个页面把“描述—管家反馈—追问”放在同一屏，右侧用树和
@@ -75,7 +75,7 @@ const KIND_META: Record<
     label: "任务",
     icon: <ListChecks className="h-3.5 w-3.5" />,
     hint: "说清要做什么；项目、负责人、工作流可以交给管家补",
-    placeholder: "例如：把 webhook 投递失败的重试逻辑写成文档，挂在 ouroflow 项目下",
+    placeholder: "例如：把 webhook 投递失败的重试逻辑写成文档，挂在 flowloop 项目下",
     examples: [
       "把 webhook 投递失败的重试逻辑写成一份文档，放到 webhook 面板旁边",
       "给任务看板加一个按负责人筛选的入口",

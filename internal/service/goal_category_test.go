@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestGoalCategoryHITLParkedByGate is the HITL control arm for the v3

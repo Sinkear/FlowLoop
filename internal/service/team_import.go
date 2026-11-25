@@ -15,10 +15,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/gitutil"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/gitutil"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // importDomainName / importKeyDomain are the seeded scratch import domain's
@@ -354,15 +354,15 @@ func (s *TeamImportService) GitConfigForGoal(ctx context.Context, goalID string)
 }
 
 // importPrompt builds the instruction for the steward agent. The agent clones
-// the import repo ITSELF (Path D — credentials ride the OUROFLOW_GIT_* env,
+// the import repo ITSELF (Path D — credentials ride the FLOWLOOP_GIT_* env,
 // never the prompt) into a repo/ subdir, explores it with its file tools, then
 // writes team.json to the workdir ROOT (the artifact upload root — NOT inside
 // repo/). runtimeNames is the list of active runtimes the steward can assign
 // to each imported agent.
 func importPrompt(runtimeNames []string) string {
 	var b strings.Builder
-	b.WriteString("你是 ouroflow 的团队导入处理器。当前工作目录是一个空的 scratch 目录。\n\n")
-	b.WriteString("第 0 步：克隆导入仓库。执行 `git clone $OUROFLOW_GIT_URL repo` 将团队定义仓库克隆到 `repo/` 子目录，然后 `cd repo` 再开始探索。如果设置了 $OUROFLOW_GIT_CREDENTIALS，它已经嵌入在 $OUROFLOW_GIT_URL 里——不要再额外添加。如果克隆失败，报告错误并停止。\n\n")
+	b.WriteString("你是 flowloop 的团队导入处理器。当前工作目录是一个空的 scratch 目录。\n\n")
+	b.WriteString("第 0 步：克隆导入仓库。执行 `git clone $FLOWLOOP_GIT_URL repo` 将团队定义仓库克隆到 `repo/` 子目录，然后 `cd repo` 再开始探索。如果设置了 $FLOWLOOP_GIT_CREDENTIALS，它已经嵌入在 $FLOWLOOP_GIT_URL 里——不要再额外添加。如果克隆失败，报告错误并停止。\n\n")
 	b.WriteString("探索克隆下来的仓库，理解团队结构，然后在工作目录根目录（你启动时的目录，不是 repo/ 里面）生成 team.json。平台从工作目录根读取 team.json；如果你写到了 repo/ 里面，它不会被找到。\n\n")
 	b.WriteString("高效探索（重要——大仓库不要逐个读所有文件）：\n")
 	b.WriteString("- 先用 list_files / find / ls 扫描仓库文件清单，建立全局视图，再决定读哪些。\n")

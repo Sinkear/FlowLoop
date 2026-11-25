@@ -1,4 +1,4 @@
-module github.com/Sinkear/ouroflow
+module github.com/Sinkear/flowloop
 
 go 1.26.4
 

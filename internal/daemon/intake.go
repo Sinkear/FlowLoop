@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/link"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/notify"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/link"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/notify"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // runIntakeTask executes an inbound-message parse run: the parser
@@ -79,7 +79,7 @@ func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, promp
 
 	// Legacy transports have no executor anymore (the unified model
 	// dispatches everything to machines).
-	d.failIntakeRun(ctx, q, "this runtime has no machine — run `ouroflow connect` and point the agent at a machine-owned runtime", runType)
+	d.failIntakeRun(ctx, q, "this runtime has no machine — run `flowloop connect` and point the agent at a machine-owned runtime", runType)
 }
 
 // ingestIntakeArtifact completes an intake run from its FILE artifact
@@ -425,7 +425,7 @@ func (r *intakeRegistry) fallbackReply() string {
 }
 
 // DispatchIntake is the chat-as-tool entry point (决策7-5): the steward agent
-// calls `ouroflow create goal` etc., which hits POST /intake/dispatch, which
+// calls `flowloop create goal` etc., which hits POST /intake/dispatch, which
 // calls this. It receives a full intakeAction JSON (the same contract the IM
 // processor-run path produces from intake.json) and dispatches it through
 // intakeReg — the SAME handlers + draft/merge/collectAndAsk logic. No kind→intent

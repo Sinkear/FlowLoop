@@ -85,7 +85,7 @@ export function Nav() {
       <div className="flex w-full items-center gap-2 px-3 md:hidden">
         <Link href="/" className="flex min-w-0 items-center gap-2">
           <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-          <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
+          <span className="font-mono text-sm font-semibold tracking-tight text-ink">flowloop</span>
         </Link>
         <div className="ml-auto flex items-center gap-1">
           <button
@@ -157,7 +157,7 @@ export function Nav() {
           className="flex items-center gap-2 rounded-md px-3 pb-3 pt-2 transition-colors hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-          <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
+          <span className="font-mono text-sm font-semibold tracking-tight text-ink">flowloop</span>
         </Link>
 
         <button

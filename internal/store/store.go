@@ -1,7 +1,7 @@
 // Package store is the SQLite persistence layer.
 //
-// Single-file SQLite (WAL mode) at $OUROFLOW_HOME/ouroflow.db by default
-// (~/.ouroflow/ouroflow.db when OUROFLOW_HOME is unset).
+// Single-file SQLite (WAL mode) at $FLOWLOOP_HOME/flowloop.db by default
+// (~/.flowloop/flowloop.db when FLOWLOOP_HOME is unset).
 // Schema is applied on Open via schema.sql (CREATE TABLE IF NOT EXISTS) —
 // no migration tool for now.
 package store
@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/paths"
+	"github.com/Sinkear/flowloop/internal/paths"
 	_ "modernc.org/sqlite"
 )
 
@@ -28,7 +28,7 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the SQLite database at path and applies
-// the schema. If path is empty, defaults to $OUROFLOW_HOME/ouroflow.db.
+// the schema. If path is empty, defaults to $FLOWLOOP_HOME/flowloop.db.
 func Open(path string) (*Store, error) {
 	if path == "" {
 		path = paths.DB()

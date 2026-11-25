@@ -1,23 +1,23 @@
-# ouroflow-int-v2 自迭代分支审查与修复落地
+# flowloop-int-v2 自迭代分支审查与修复落地
 
-> 合并自：`docs/rsi/review-v2.md`（ouroflow-int-v2 自迭代分支审查报告）、`docs/rsi/fix-v2.md`（ouroflow-int-v2 修复落地记录） ｜ 合并日期：2026-11-23 ｜ 状态：历史记录（只读） ｜ 用途：单文件还原「审查 → 修复 → 验证 → 遗留」全链：审查对象 `ae12054`、修复分支 `ouroflow-int-v2-fix`、全部 commit 与效果数字；两份原文事实未改写，仅在章节间去重并标注冲突。
+> 合并自：`docs/rsi/review-v2.md`（flowloop-int-v2 自迭代分支审查报告）、`docs/rsi/fix-v2.md`（flowloop-int-v2 修复落地记录） ｜ 合并日期：2026-11-23 ｜ 状态：历史记录（只读） ｜ 用途：单文件还原「审查 → 修复 → 验证 → 遗留」全链：审查对象 `ae12054`、修复分支 `flowloop-int-v2-fix`、全部 commit 与效果数字；两份原文事实未改写，仅在章节间去重并标注冲突。
 
 ## 0. 来源与时点
 
 | 原文件 | 性质 | 日期 | 对象 / 基线 | 覆盖 | 并入本文件 |
 | --- | --- | --- | --- | --- | --- |
-| `rsi/review-v2.md` | 审查报告（静态审计 + 合成 fixture/受控 A/B + 真实复现 + 全量构建/测试） | 2026-11-14 | `origin/ouroflow-int-v2` @ `ae12054`（相对 `origin/ouroflow-int` 领先 28 个提交） | 17 个问题场景、P0/P1/P2 修复优先级、采纳清单、质量评级、复现索引、局限 | §1、§2、§4.3、附录 A/B |
-| `rsi/fix-v2.md` | 修复落地记录 | 2026-11-14 | 基线 `ae12054`，分支 `ouroflow-int-v2-fix`（worktree `/home/sinkear/developer/ouroflow-v2-fix`，已 push） | 10 个提交、22 行「场景→修复→验证」、指标口径前后对比、9 项残留风险 | §3、§4.1–§4.2 |
+| `rsi/review-v2.md` | 审查报告（静态审计 + 合成 fixture/受控 A/B + 真实复现 + 全量构建/测试） | 2026-11-14 | `origin/flowloop-int-v2` @ `ae12054`（相对 `origin/flowloop-int` 领先 28 个提交） | 17 个问题场景、P0/P1/P2 修复优先级、采纳清单、质量评级、复现索引、局限 | §1、§2、§4.3、附录 A/B |
+| `rsi/fix-v2.md` | 修复落地记录 | 2026-11-14 | 基线 `ae12054`，分支 `flowloop-int-v2-fix`（worktree `/home/sinkear/developer/flowloop-v2-fix`，已 push） | 10 个提交、22 行「场景→修复→验证」、指标口径前后对比、9 项残留风险 | §3、§4.1–§4.2 |
 
 - 关系：fix 只记录 review「修后可拿」范围的**实际落地**，不复述审查过程；review §10 也同步写了修复摘要并指向 fix。合并时保留两份的不同粒度：review 的回答是「问题是真是假、改动是否生效」，fix 的回答是「最终改了什么、凭什么判生效」。
-- 时点：review 的验证基线在 v2 分支（`ae12054`）；fix 在 `ouroflow-int-v2-fix` 上重验。两者都在 2026-11-14 完成，但机器/分支不同，数字不可混算。
+- 时点：review 的验证基线在 v2 分支（`ae12054`）；fix 在 `flowloop-int-v2-fix` 上重验。两者都在 2026-11-14 完成，但机器/分支不同，数字不可混算。
 
 ## 1. 审查范围与结论
 
 ### 1.1 方法与边界（review §1）
 
 - **双路验证**：一路读代码/文档找声明；另一路用合成 fixture、受控 A/B、真实命令复现，确认「场景是否真的存在」，再判断「修改是否真的生效」。
-- **环境**：Linux amd64，16 核；Go 1.26.5；v2 工作树 `/home/sinkear/developer/ouroflow-v2-review`；本地 DB 为 2026-11-08 的早期 MVP 数据，**不是** R1–R3 生产库（生产数据在 `/root/.ouroflow`，本机不可读）。
+- **环境**：Linux amd64，16 核；Go 1.26.5；v2 工作树 `/home/sinkear/developer/flowloop-v2-review`；本地 DB 为 2026-11-08 的早期 MVP 数据，**不是** R1–R3 生产库（生产数据在 `/root/.flowloop`，本机不可读）。
 - **能验证的**：代码逻辑、合成数据、公开构建/测试、git/环境变量复现、UI 类型与构建契约。
 - **不能验证的**：R1–R3 生产库原始行、R2 那 6 个失败的真实根因、UI 真机截图（本机没有对应 daemon）。
 - 因此凡「生产数据」结论只作为**文档自述**引用，不当作已证实事实；凡「代码/合成 fixture/命令复现」结论都给了复现路径。
@@ -26,7 +26,7 @@
 
 - `GOCACHE=/tmp/gocache-v2-cold go build ./...` → PASS，**23.103s**（冷）。
 - `go test ./... -count=1` → exit 0；`daemon 2.537s`、`service 3.140s`、`cli 0.841s`、`link 0.008s`、`server 0.016s`。
-- 所以 v2 在本机是绿的；R3 报告里的 6 个失败是 `/root` HOME/`OUROFLOW_HOME` 环境隔离问题，不是本机必现。
+- 所以 v2 在本机是绿的；R3 报告里的 6 个失败是 `/root` HOME/`FLOWLOOP_HOME` 环境隔离问题，不是本机必现。
 
 ### 1.2 一句话结论（review §0）
 
@@ -60,7 +60,7 @@
 | 4 | P-B：`rsi_round` 两行都是 `round_no=1`、delta 恒 `{}` | **真实，但不是代码 bug**：每个 goal 一个 session，`MAX(round_no) WHERE session_id=?` 是对的；跨轮比较本就跨 session | 文档提议按 session 加锁/去重 | **不适用**：加锁解决不了跨轮；需要按 domain 建「轮次序列」 | 采纳问题，改方案 |
 | 5 | #14 基准冷/温漂移，`23.012s` vs `14.5s` vs `11.3s` | **真实**：本机冷/温 build 20.56 vs 2.85s（7.2×），test 26.15 vs 7.36s（3.6×） | 文档记录现象 | **未生效**：R2 的 -50% 是缓存假象；R3 的 build -7% 与「本轮未改代码」自相矛盾 | 采纳 #14 现象，重定基准协议 |
 | 6 | #15 `/rsi` 文档端点 404 | **真实但只是文档错**：8 个真实端点都在；`/rsi` 从未有别名 | 改文档 | **生效**：文档已列真实端点 | 采纳（文档修复） |
-| 7 | #4b unset `OUROFLOW_HOME` 后 `go: command not found`（127） | **环境层面可能真实**：daemon PATH 无 `/usr/local/go/bin`；生产复现不可得 | 手工 unset + 前置检查 | **未真正修复**：只是绕过；根因在子进程环境继承 | 归入 P-A，做环境消毒 |
+| 7 | #4b unset `FLOWLOOP_HOME` 后 `go: command not found`（127） | **环境层面可能真实**：daemon PATH 无 `/usr/local/go/bin`；生产复现不可得 | 手工 unset + 前置检查 | **未真正修复**：只是绕过；根因在子进程环境继承 | 归入 P-A，做环境消毒 |
 | 8 | depends_on：sg-O 必须在 sg-B 验证后才跑 | **真实**：这是自迭代编排的硬需求 | 创建时门控 + 验证后唤醒 | **happy path 生效**；依赖失败后**会永久卡死**；唤醒 run 丢失 trigger comment 锚点 | 修后采纳（阻断合并） |
 | 9 | RSI 图/指标能定位串行、丢失并行、重试放大 | **场景真实**（R1/R3 确实串行、重试多），但指标实现不可信 | 读时装配 + 冻结快照 + 9 类规则 | **作为决策依据未生效**：CP 扇入重复计数、seq 边进 CP、review 无边、`lost_parallelism` 恒假 | 只采纳脚手架，先修 P0 |
 | 10 | 9 类 finding + `human_wait` 能指导优化 | 部分真实 | 规则表 | **部分生效**：serial/split 可算但被污染；lost/retry-L2 死；`human_wait` 不进指标 | 修规则后再用 |
@@ -69,7 +69,7 @@
 | 13 | AGENTS.md 被 `.gitignore` 忽略时 `git add` 点名 exclude 会 exit 1 | **真实，已复现** | `check-ignore` 为真时不加 pathspec | **生效**：exit 0 且正确跳过；但 project-skills 的 exclude 仍未加守卫 | 采纳 + 扩展 |
 | 14 | 根级 AGENTS.md 被平台注入，tracked 后集成 merge 冲突 | **真实**：平台每次注入未跟踪文件，tracked 版本会让 `git merge` 拒绝覆盖 | 删 tracked AGENTS.md、忽略之、约定迁 playbook §6 | **生效**：集成冲突根因消除；代价是 fresh clone 少指引 | 采纳 |
 | 15 | 需要一个可复用的「轮次报告生成器」 | **真实需求**；实现只是 R3 一次性打印器 | `scripts/rsi-round-report.sh` 454 行 | **未生效**：硬编码 R3 结论、`--since/--until` 会崩、API 挂时仍 exit 0 | 不采纳为可信工具，重写 |
-| 16 | P-A：`OUROFLOW_HOME` 泄漏进 verify 子进程，污染测试仓库 | **真实（代码+复现）**：`verify.go` 的 `sh -c` 不传 `c.Env`；`paths.go` 优先 `OUROFLOW_HOME` | 文档提议 unset/隔离 | **v2 未实现**；且 R2 fetch-128 根因未能复现 | 采纳方向，补实现与回归测试 |
+| 16 | P-A：`FLOWLOOP_HOME` 泄漏进 verify 子进程，污染测试仓库 | **真实（代码+复现）**：`verify.go` 的 `sh -c` 不传 `c.Env`；`paths.go` 优先 `FLOWLOOP_HOME` | 文档提议 unset/隔离 | **v2 未实现**；且 R2 fetch-128 根因未能复现 | 采纳方向，补实现与回归测试 |
 | 17 | 文档与代码一致 | 约 10 条真、8 条假/陈旧 | 改文档 | 部分 | 逐条修（见 §2.4.9） |
 
 ## 2. 问题清单（证据链问题）
@@ -123,10 +123,10 @@
 
 - **before 树（`112d50f`）**确实 FAIL（rc=1），但红因是 **`codes_test.go:102` 缺码断言**：CDN 返回合法 JSON、缺少 `AW.10000025`，不是 decode 失败。proposal 里的「decode 失败」诊断不准确。
 - CDN 实测 HTTP 200：**zh-cn 543 keys、en-us 351 keys**，两个 locale 都恰好缺 `AW.10000025–30`；23/24 存在；31/32 不在仓库导出范围。
-- HEAD 没有 `OUROFLOW_SKIP_CDN_DRIFT`（v1 `8ca9957` 有，且判断写成 `!= ""` 的 bug）。
+- HEAD 没有 `FLOWLOOP_SKIP_CDN_DRIFT`（v1 `8ca9957` 有，且判断写成 `!= ""` 的 bug）。
 - **修改**：网络不可达、非 200、畸形 body、缺码四条路径全部 `t.Skipf`；缺码 SKIP 时打印 6 个码。
 - **效果与问题**：CI 从红变绿，但**守卫已无 FAIL 路径**。用 200+HTML 的 scratch 验证畸形 body 也走 SKIP。真出现新的 CDN 漂移时测试会静默跳过，等于把「漂移检测器」改成「漂移消音器」。
-- **正确方向**：**默认 strict**（缺码 FAIL），配一个**带过期时间的 allowlist**（当前只放行已知的 6 个码），再加显式开关 `OUROFLOW_SKIP_CDN_DRIFT=1`（判断必须 `== "1"`）；畸形 JSON 可以 SKIP，但要有告警；再加一个定时 strict job。
+- **正确方向**：**默认 strict**（缺码 FAIL），配一个**带过期时间的 allowlist**（当前只放行已知的 6 个码），再加显式开关 `FLOWLOOP_SKIP_CDN_DRIFT=1`（判断必须 `== "1"`）；畸形 JSON 可以 SKIP，但要有告警；再加一个定时 strict job。
 
 #### 2.4.3 P3 非重试白名单（review §3.3）
 
@@ -190,9 +190,9 @@
 
 - **gitignore / AGENTS.md（`ae12054`）**：场景真实且已复现——临时仓库 `.gitignore=AGENTS.md`，`git add -A -- ':(exclude)AGENTS.md'` → exit 1：`The following paths are ignored by one of your .gitignore files: AGENTS.md`；`git add -A --`（无 pathspec）exit 0 并静默跳过被忽略文件。修改正确：`gitAddExcludeArgs` 只在 `check-ignore` 说不被忽略时才加 exclude；不碰 `git add -f`。测试只覆盖「被忽略」分支（`-run GitAddExclude` 才匹配；`-run Gitwork` 匹配不到）。残留同类 bug：project-skills 的 exclude 仍无条件添加（`gitwork.go:187-189`）；若仓库忽略 `.claude/`，`:(exclude).claude/skills` 会触发同样的 exit 1。
 - **AGENTS.md 迁出（`3ac0b1f`）**：tracked 的根 AGENTS.md 会导致「平台注入未跟踪 AGENTS.md + 集成 merge 拒绝覆盖」的冲突；删 tracked、加 `.gitignore`、约定迁 `docs/rsi/self-iter-playbook.md §6` 是正确解法。代价：fresh clone 不再有根指引；平台每 run 还会注入，实际运行不受影响。
-- **link「竞态」（`e31877b`）**：真实问题是**启动顺序/TOCTOU**（reader 先跑、handler 未注册 → method not found），不是 Go data race；`-race` 测不出来（`Peer.handlers/pending` 有 mutex）。提交只给测试加了 `newPeerNoRead`/`StartReadLoop` 和 `NewPeerForTest`；**生产调用点仍是** `NewPeer` → `Handle`：`internal/server/server.go:249`（connect）与 `:512`（/rpc）、`cmd/ouroflow-cli/connect.go:172`、`rpc.go:45`。对生产「method not found」无效，只能算测试稳定性修复。要修就改生产顺序：先注册 handler，再 `startReadLoop`，并加双启动保护。
+- **link「竞态」（`e31877b`）**：真实问题是**启动顺序/TOCTOU**（reader 先跑、handler 未注册 → method not found），不是 Go data race；`-race` 测不出来（`Peer.handlers/pending` 有 mutex）。提交只给测试加了 `newPeerNoRead`/`StartReadLoop` 和 `NewPeerForTest`；**生产调用点仍是** `NewPeer` → `Handle`：`internal/server/server.go:249`（connect）与 `:512`（/rpc）、`cmd/flowloop-cli/connect.go:172`、`rpc.go:45`。对生产「method not found」无效，只能算测试稳定性修复。要修就改生产顺序：先注册 handler，再 `startReadLoop`，并加双启动保护。
 - **报告脚本（`scripts/rsi-round-report.sh`）**：不是「SQL / git add -f」问题（两个怀疑都是假前提）；真实问题：轮次选择正则 `RSI\s*R{n}\b` 匹配不了 playbook 规定的 `RSI 自迭代 R1：基准测量` → ①/④ 空；文档写的 `--since R1 --until R3` 会 `ValueError` 崩，数字 `--until` 是 no-op（输出字节相同）；③ 效果表、② 历史表、④ 叙述、⑤ 候选**全部硬编码 R3 结论**；API 挂时仍 exit 0，并打印 stale “R4 usually in progress”；有 metrics 的轮次里任选 session；空 metrics 无 fallback；声称的 commit+diff 对比链接不存在。
-- **P-A：`OUROFLOW_HOME` 泄漏**：真实——`internal/daemon/verify.go:171-186` 和 `:373-381` 的 `sh -c` 不传 `c.Env`，子进程继承 daemon 环境；`internal/paths/paths.go:29-43` 优先 `OUROFLOW_HOME`。复现：设置 `OUROFLOW_HOME=/tmp/p-a-leak-home` 跑测试，测试通过但仓库写到了 `/tmp/p-a-leak-home/repos/dom-1`，无视 `t.Setenv("HOME")`。**但 R2 fetch-128 的具体机制未复现**：同一 `OUROFLOW_HOME` 下 `TestParallelConsultWorktreeDetaches` 两次都通过（0.145s/0.052s）。所以「P-A 是 R2 失败根因」目前只是强相关假设，不能写成已证实。v2 未实现 P-A：没有 `c.Env`/sanitize，没有测试，也没有对应提交。提案方向对但不完整：要同时覆盖 `runVerifyOutput`，把 `OUROFLOW_HOME` 和 `HOME` 都指向 per-run 临时目录（只 unset 仍会落到真实 HOME），保留 PATH/GOCACHE/proxy 并探测 toolchain，加回归测试。
+- **P-A：`FLOWLOOP_HOME` 泄漏**：真实——`internal/daemon/verify.go:171-186` 和 `:373-381` 的 `sh -c` 不传 `c.Env`，子进程继承 daemon 环境；`internal/paths/paths.go:29-43` 优先 `FLOWLOOP_HOME`。复现：设置 `FLOWLOOP_HOME=/tmp/p-a-leak-home` 跑测试，测试通过但仓库写到了 `/tmp/p-a-leak-home/repos/dom-1`，无视 `t.Setenv("HOME")`。**但 R2 fetch-128 的具体机制未复现**：同一 `FLOWLOOP_HOME` 下 `TestParallelConsultWorktreeDetaches` 两次都通过（0.145s/0.052s）。所以「P-A 是 R2 失败根因」目前只是强相关假设，不能写成已证实。v2 未实现 P-A：没有 `c.Env`/sanitize，没有测试，也没有对应提交。提案方向对但不完整：要同时覆盖 `runVerifyOutput`，把 `FLOWLOOP_HOME` 和 `HOME` 都指向 per-run 临时目录（只 unset 仍会落到真实 HOME），保留 PATH/GOCACHE/proxy 并探测 toolchain，加回归测试。
 
 #### 2.4.8 基准与「收益」结论（review §3.8）
 
@@ -250,16 +250,16 @@
 - R2 的「-50%」「P1/P2/P3 预期均达成」；R3 的「build -7% = P1 收益保持」。
 - P-B 的「加锁/去重」方案（问题真、方案错）。
 
-**合并策略建议**：不建议把 v2 整分支直接 merge 回 `ouroflow-int`：v2 把 R2 的 P1/P2/P3 用**不同 SHA** 重放（`e08cb72`/`e2bda1d` vs `3cf2116`/`8ca9957`/`18a8c3c`），整分支合并会制造重复/冲突历史，且会把坏的门控、报告脚本、指标一起带进去。更稳的做法：**按类别 cherry-pick**——先 P3、P1、gitignore、AGENTS.md 四组；再单独一个 PR 修 depends_on liveness；RSI 分析器作为「实验特性」单独 PR，默认关闭或只读展示，P0 修完再启用。
+**合并策略建议**：不建议把 v2 整分支直接 merge 回 `flowloop-int`：v2 把 R2 的 P1/P2/P3 用**不同 SHA** 重放（`e08cb72`/`e2bda1d` vs `3cf2116`/`8ca9957`/`18a8c3c`），整分支合并会制造重复/冲突历史，且会把坏的门控、报告脚本、指标一起带进去。更稳的做法：**按类别 cherry-pick**——先 P3、P1、gitignore、AGENTS.md 四组；再单独一个 PR 修 depends_on liveness；RSI 分析器作为「实验特性」单独 PR，默认关闭或只读展示，P0 修完再启用。
 
 ## 3. 修复落地方案 / 记录（fix-v2）
 
-### 3.1 提交清单（`ouroflow-int-v2-fix`，基线 `ae12054`）
+### 3.1 提交清单（`flowloop-int-v2-fix`，基线 `ae12054`）
 
 | # | commit | 内容 |
 | --- | --- | --- |
 | 1 | `2a4babe` | RSI 图/指标/规则：CP 扇入、seq 排除、review 隔离、speedup/串行损失/等待/`human_wait`/retry/轮次口径 + 回归测试 |
-| 2 | `2aaa78b` | P2 CDN：缺码默认 FAIL、到期 allowlist、`OUROFLOW_SKIP_CDN_DRIFT=1` 才 skip |
+| 2 | `2aaa78b` | P2 CDN：缺码默认 FAIL、到期 allowlist、`FLOWLOOP_SKIP_CDN_DRIFT=1` 才 skip |
 | 3 | `5dfad20` | gitignore：project-skills 等所有 exclude 先 `check-ignore` |
 | 4 | `90efd88` | link：生产调用点 handler-first + `StartReadLoop` 幂等；16 个 daemon 测试恢复 644 |
 | 5 | `9ab2b65` | 轮次报告脚本重写为数据驱动、fail-loud |
@@ -310,7 +310,7 @@
 
 ### 3.4 合并与使用（fix-v2 §5）
 
-- 分支基于 `ae12054`，可直接以 `ouroflow-int-v2-fix` 合入 `ouroflow-int-v2` 或提 PR 到 `main`（原文：共 13 个提交，含 3 个文档提交，无外部依赖变更）。
+- 分支基于 `ae12054`，可直接以 `flowloop-int-v2-fix` 合入 `flowloop-int-v2` 或提 PR 到 `main`（原文：共 13 个提交，含 3 个文档提交，无外部依赖变更）。
 - 若只取部分：指标/规则必须与 `docs/RSI.md` **同批合入**，否则文档口径超前；gating 与 workflow 指标互不依赖，可分开。
 - 首次启动会跑 store 迁移：`sub_goal.dispatch_comment_id`、`rsi_round` 等；迁移是增量/幂等的，`workflow_edge` 保留。
 - 复盘入口：`docs/rsi/int-v2-review-fix.md`（本文件，合并了原 `fix-v2.md` 与 `review-v2.md`）+ `docs/RSI.md`（最终指标口径）。
@@ -329,7 +329,7 @@
 
 ### 4.2 未修 / 残留风险（fix-v2 §4，不要误以为已解决）
 
-1. **P-A（`OUROFLOW_HOME` 泄漏）未实现**：`internal/daemon/verify.go` 的 `sh -c` 仍继承 daemon 环境；审查确认场景真实但 R2 fetch-128 根因未复现。若要修，需同时覆盖 `runVerifiedCmd`/`runVerifyOutput`，把 `OUROFLOW_HOME`+`HOME` 指向 per-run 临时目录，并保留 PATH/GOCACHE/代理。
+1. **P-A（`FLOWLOOP_HOME` 泄漏）未实现**：`internal/daemon/verify.go` 的 `sh -c` 仍继承 daemon 环境；审查确认场景真实但 R2 fetch-128 根因未复现。若要修，需同时覆盖 `runVerifiedCmd`/`runVerifyOutput`，把 `FLOWLOOP_HOME`+`HOME` 指向 per-run 临时目录，并保留 PATH/GOCACHE/代理。
 2. **link 生产顺序仅单测/-race 验证**，未跑真实 daemon↔server 集成；`-race` 对 ordering 竞态天然不敏感，剩余窗口靠代码审查。
 3. **循环 depends_on 未拒绝**：正常 `CreateSubGoal` 只能依赖已存在节点，构造不出环；历史坏数据仍可能互相等待。
 4. **retry/rework 的 run 仍不带 dispatch 锚点**（既有约定「仅首轮锚定」）；`RetrySubGoal` 恢复后的首个 run 也没有锚点。若要求全链审计，需要把 dispatch id 继续传给 retry enqueue。
@@ -342,7 +342,7 @@
 
 ### 4.3 审查局限与未决（review §8）
 
-1. **生产数据不可得**：`/root/.ouroflow` 无权限，R1–R3 的 run/round 原始行无法独立核对；「12/15」「31 run」等只能引用分析文档。
+1. **生产数据不可得**：`/root/.flowloop` 无权限，R1–R3 的 run/round 原始行无法独立核对；「12/15」「31 run」等只能引用分析文档。
 2. **R2 fetch-128 根因未证实**：P-A 泄漏本身有代码与复现，但「它就是 R2 那 6 个失败的原因」未能复现闭环。
 3. **机器差异**：本机 16 核 amd64 vs 文档 7 vCPU arm64，绝对耗时不可直接对比；本报告只接受同机受控 A/B。
 4. **UI 未做真机截图**：没有对应 daemon，只做了类型/构建/契约验证。
@@ -365,7 +365,7 @@
 
 | 证据 | 位置/命令 |
 | --- | --- |
-| 全量测试 | `cd /home/sinkear/developer/ouroflow-v2-review && GOCACHE=/tmp/gocache-v2-cold go test ./... -count=1` |
+| 全量测试 | `cd /home/sinkear/developer/flowloop-v2-review && GOCACHE=/tmp/gocache-v2-cold go test ./... -count=1` |
 | 冷构建 | `GOCACHE=/tmp/gocache-v2-cold go build ./...`（23.103s） |
 | CP 扇入 | `internal/service/zz_core_probe_test.go`（probe build tag）；日志 `/tmp/probe.log` |
 | 400 次确定性 | probe `TestProbeDeterminism`；结果 sg-a 361 / sg-b 39 |
@@ -373,7 +373,7 @@
 | P2 复现 | `codes_test.go:102`（before）；CDN 543/351 keys；`review-claims.md` |
 | P3 分类 | `goal.go:109-127,1427-1429`；14 例表 |
 | gitignore 复现 | 临时仓库 + `.gitignore=AGENTS.md`；`gitwork.go:185-216` |
-| `OUROFLOW_HOME` 泄漏 | `OUROFLOW_HOME=/tmp/p-a-leak-home go test …`；`verify.go:171-186` |
+| `FLOWLOOP_HOME` 泄漏 | `FLOWLOOP_HOME=/tmp/p-a-leak-home go test …`；`verify.go:171-186` |
 | 报告脚本 | `scripts/rsi-round-report.sh`；DB copy + 两个临时 daemon（47899/47898） |
 | UI 构建 | `web: tsc --noEmit`、`next build`（19/19） |
 | 审计报告 | `review-core.md`、`review-web.md`、`review-claims.md`、`review-process.md`（各 worktree，未提交） |

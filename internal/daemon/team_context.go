@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // ── The engineered context system (决策 6-22) ──
@@ -19,7 +19,7 @@ import (
 // The TEAM (squad roster + playbook + leader protocol) is per-run PERSONA
 // material: it rides the workdir's AGENTS.md (shipped in the dispatch
 // payload, merged by the executor at spawn — see buildTeamProfile), never
-// the prompt. The comment feed is PULLED via `ouroflow goal comments`,
+// the prompt. The comment feed is PULLED via `flowloop goal comments`,
 // never injected wholesale (决策 4-6 revised: the wake line carries the
 // triggering words, the feed is the shared context the agent pulls on
 // demand).
@@ -64,10 +64,10 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	}
 	var b strings.Builder
 	b.WriteString("# Background & Requirements\n")
-	b.WriteString("You are working on ouroflow — a multi-agent collaboration platform.\n")
+	b.WriteString("You are working on flowloop — a multi-agent collaboration platform.\n")
 	b.WriteString("Goals are executed by agents; the platform judges completion at the\n")
 	b.WriteString("goal's 验收级别 checkpoint (hitl = the user approves), and you\n")
-	b.WriteString("coordinate ONLY through the `ouroflow` CLI — structured side effects,\n")
+	b.WriteString("coordinate ONLY through the `flowloop` CLI — structured side effects,\n")
 	b.WriteString("never shell, never file edits to communicate intent.\n")
 	b.WriteString("LANGUAGE: write every comment/report in the SAME language as the goal's\n")
 	b.WriteString("description and the user's messages.\n")
@@ -97,7 +97,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 		// the delivery evidence bundle embeds reports/manifest.json, so a
 		// version/artifact receipt written there is visible at delivery.
 		b.WriteString("REPORTS: write every report, log, and evidence file under reports/\n")
-		b.WriteString("inside the project directory (OUROFLOW_REPORT_DIR). NEVER leave the\n")
+		b.WriteString("inside the project directory (FLOWLOOP_REPORT_DIR). NEVER leave the\n")
 		b.WriteString("deliverable in /tmp — tmp files are lost between runs and cannot be\n")
 		b.WriteString("evidence. If the work has versioned artifacts, also write\n")
 		b.WriteString("reports/manifest.json: {\"versions\":{\"artifact\":\"...\",\"env\":\"...\",\n")
@@ -105,7 +105,7 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 		b.WriteString("It makes the deliverable's versions and files explicit, so a version\n")
 		b.WriteString("mismatch is visible at delivery instead of hidden in a chat log.\n")
 		b.WriteString("ENV LEDGER: whenever your work changes an environment's version or state,\n")
-		b.WriteString("record it with `ouroflow env-change record --env <id> --status\n")
+		b.WriteString("record it with `flowloop env-change record --env <id> --status\n")
 		b.WriteString("started|succeeded|failed --before <v> --after <v>` (add --snapshot,\n")
 		b.WriteString("--manifest-sha256, --error as applicable). The platform ledger is how a\n")
 		b.WriteString("scratch delivery is attributed, audited and rolled back — a change that\n")
@@ -153,23 +153,23 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	b.WriteString("against which you judge — you quote it, you never execute it.\n")
 	b.WriteString("STAY IN ROLE: Do only what your own role contract calls for. If you\n")
 	b.WriteString("find work that belongs to another role — incomplete, defective, or\n")
-	b.WriteString("not yet started — record that finding through the `ouroflow` CLI\n")
+	b.WriteString("not yet started — record that finding through the `flowloop` CLI\n")
 	b.WriteString("(comment / verdict / handoff) and stop. Never step into another\n")
 	b.WriteString("role's work yourself.\n")
 
 	b.WriteString("\n# Tools\n")
 	b.WriteString("- Workspace: your working directory IS the worktree — use your own\n")
 	b.WriteString("  file/terminal tools to read, write, and run commands directly.\n")
-	b.WriteString("- Collaboration: run the `ouroflow` CLI in your terminal (start with\n")
-	b.WriteString("  `ouroflow help`) — comments, consults, sub-goals, waiting, and\n")
+	b.WriteString("- Collaboration: run the `flowloop` CLI in your terminal (start with\n")
+	b.WriteString("  `flowloop help`) — comments, consults, sub-goals, waiting, and\n")
 	b.WriteString("  verdicts are structured side effects through it. NEVER use file\n")
 	b.WriteString("  edits to communicate intent.\n")
-	b.WriteString("- Task progress: `ouroflow goal status` shows the goal's state and\n")
-	b.WriteString("  last run outcome; `ouroflow subgoal list` shows work items and\n")
-	b.WriteString("  their verification state; `ouroflow change list` shows pending\n")
+	b.WriteString("- Task progress: `flowloop goal status` shows the goal's state and\n")
+	b.WriteString("  last run outcome; `flowloop subgoal list` shows work items and\n")
+	b.WriteString("  their verification state; `flowloop change list` shows pending\n")
 	b.WriteString("  Changes. Check these before acting when you are unsure where\n")
 	b.WriteString("  things stand.\n")
-	b.WriteString("- Feed: `ouroflow goal comments [--after <id>]` — the comment feed\n")
+	b.WriteString("- Feed: `flowloop goal comments [--after <id>]` — the comment feed\n")
 	b.WriteString("  is the SHARED context (the owner's reports, consult answers, prior\n")
 	b.WriteString("  review opinions, handoff history). Pull it before acting when you\n")
 	b.WriteString("  lack background; pass the last comment id you saw as --after for\n")
@@ -292,7 +292,7 @@ func (d *Daemon) writeTeamBlock(ctx context.Context, b *strings.Builder, squadID
 	if s := strings.TrimSpace(instructions); s != "" {
 		b.WriteString("\nTeam playbook (written by the owner):\n" + s + "\n")
 	}
-	b.WriteString("\nResolve ids with `ouroflow agent list` / `ouroflow squad list`\n")
+	b.WriteString("\nResolve ids with `flowloop agent list` / `flowloop squad list`\n")
 	b.WriteString("before consults and handoffs.\n")
 }
 
@@ -321,7 +321,7 @@ func (d *Daemon) agentSkillLine(ctx context.Context, agentID string) string {
 }
 
 // roleContract renders the behavioral contract for the run's role — the
-// output rules that used to ride in OUROFLOW.md (决策 6-22).
+// output rules that used to ride in FLOWLOOP.md (决策 6-22).
 func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven bool) string {
 	leader := isLeader || (squadID != "" && runRole == "owner")
 	switch runRole {
@@ -334,17 +334,17 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 			// changes, report, answer questions.
 			s := "You are this goal's owner. The work plan is COMPILED from a\n" +
 				"blueprint: the work items and their execution order come from the\n" +
-				"platform, and `ouroflow subgoal create` is REFUSED for this goal.\n" +
+				"platform, and `flowloop subgoal create` is REFUSED for this goal.\n" +
 				"Your job is the goal level: monitor progress\n" +
-				"(`ouroflow subgoal list` shows the compiled work items and their\n" +
+				"(`flowloop subgoal list` shows the compiled work items and their\n" +
 				"verification state), INTEGRATE ready Changes\n" +
-				"(`ouroflow change integrate <id>`), report progress and results\n" +
-				"to the user with `ouroflow goal comment`, and answer the team's\n" +
+				"(`flowloop change integrate <id>`), report progress and results\n" +
+				"to the user with `flowloop goal comment`, and answer the team's\n" +
 				"questions. Ask the user directly with --ask:\n" +
-				"`ouroflow goal comment --text \"your question\" --ask`.\n" +
+				"`flowloop goal comment --text \"your question\" --ask`.\n" +
 				"Park the goal at a HUMAN-AUTHORIZATION gate when the plan says a\n" +
 				"human must approve before a risky next step:\n" +
-				"`ouroflow goal authorize --statement \"<what>\"`. Do NOT do the\n" +
+				"`flowloop goal authorize --statement \"<what>\"`. Do NOT do the\n" +
 				"work items yourself — each has a compiled assignee; never write\n" +
 				"ids in comments (the feed is read by the user). Completion is\n" +
 				"JUDGED, not declared: the platform counts the blueprint's nodes\n" +
@@ -356,27 +356,27 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 			return s
 		}
 		s := "You are this goal's owner. Break the goal into work items and\n" +
-			"dispatch them: `ouroflow subgoal create --title T --assignee <agent-id>\n" +
+			"dispatch them: `flowloop subgoal create --title T --assignee <agent-id>\n" +
 			"[--description D]` (a sub-goal runs on its own branch with machine\n" +
 			"verification and produces a Change the platform wakes you to\n" +
-			"integrate with `ouroflow change integrate <id>`). Ask teammates\n" +
+			"integrate with `flowloop change integrate <id>`). Ask teammates\n" +
 			"(read-only consult) by commenting a mention:\n" +
-			"`ouroflow goal comment --text \"[@Name](mention://agent/<id>)\"`.\n" +
+			"`flowloop goal comment --text \"[@Name](mention://agent/<id>)\"`.\n" +
 			"Ask the user (the goal creator) a question with --ask:\n" +
-			"`ouroflow goal comment --text \"your question\" --ask` — the\n" +
+			"`flowloop goal comment --text \"your question\" --ask` — the\n" +
 			"platform notifies them; their reply wakes you (NOT a consult), so\n" +
 			"your session and worktree persist across the round-trip. Use --ask\n" +
 			"only when you genuinely need the user's input to proceed.\n" +
 			"Park the goal at a HUMAN-AUTHORIZATION gate (mid-pipeline, when\n" +
 			"the plan says a human must approve before a risky next step):\n" +
-			"`ouroflow goal authorize --statement \"<what the human is\n" +
+			"`flowloop goal authorize --statement \"<what the human is\n" +
 			"authorizing + what happens next>\"` — approve = CONTINUE (no merge,\n" +
 			"no close), reject = back to the drawing board. Use authorize for\n" +
 			"gates and submit-review ONLY for final close-out — their approve\n" +
 			"buttons mean different things.\n" +
-			"Transfer ownership with `ouroflow goal assign <agent-id>`. Members\n" +
+			"Transfer ownership with `flowloop goal assign <agent-id>`. Members\n" +
 			"are NOT auto-dispatched — you delegate explicitly. To communicate\n" +
-			"results or conclusions to the team, use `ouroflow goal comment` —\n" +
+			"results or conclusions to the team, use `flowloop goal comment` —\n" +
 			"your run's output stream is internal, only what you post as a\n" +
 			"comment reaches the feed. never write ids in comments\n" +
 			"(goal/sub-goal/agent/squad ids are system handles, the feed is\n" +
@@ -392,14 +392,14 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 		return s
 	case "subgoal":
 		return "You implement this work item. To communicate results, use\n" +
-			"`ouroflow goal comment` — your run's output stream is internal,\n" +
+			"`flowloop goal comment` — your run's output stream is internal,\n" +
 			"only what you post as a comment reaches the feed. The platform\n" +
 			"machine-verifies your branch and produces a Change; the OWNER\n" +
 			"integrates it. You do not create sub-goals, hand off, or\n" +
 			"integrate — those are the owner's tools.\n"
 	case "consult":
 		return "You are consulted (READ-ONLY): answer the question with\n" +
-			"`ouroflow goal comment` — that is how your answer reaches the\n" +
+			"`flowloop goal comment` — that is how your answer reaches the\n" +
 			"feed. Do not modify files, do not commit, do not execute the task\n" +
 			"itself — your edits are discarded by the platform. The platform\n" +
 			"ENFORCES this at the tool layer: file writes, terminals and\n" +
@@ -407,7 +407,7 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 	case "review":
 		return "You REVIEW ONLY — give your opinion, never do the work.\n" +
 			"BEFORE you form an opinion, pull the goal's comment feed with\n" +
-			"`ouroflow goal comments` (use `--after <id>` with the anchor in\n" +
+			"`flowloop goal comments` (use `--after <id>` with the anchor in\n" +
 			"your wake line for incremental reads; if you do not remember what\n" +
 			"you have seen, pull WITHOUT --after for the full feed). The feed\n" +
 			"is your only source of collaboration context: the owner's\n" +
@@ -419,14 +419,14 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 			"the feed — judge whether the goal was actually fulfilled there,\n" +
 			"and say so explicitly; never report a missing diff as the answer\n" +
 			"itself. If information is still insufficient after pulling the\n" +
-			"feed (e.g. sub-goal or change state unclear), use the `ouroflow`\n" +
+			"feed (e.g. sub-goal or change state unclear), use the `flowloop`\n" +
 			"CLI to fetch more before opining — do not guess. Post your\n" +
-			"opinion with `ouroflow goal comment` — that is how the approver\n" +
+			"opinion with `flowloop goal comment` — that is how the approver\n" +
 			"reads it. Do not modify files, do not commit, do not execute the\n" +
 			"task itself — your edits are discarded by the platform.\n"
 	case "verify":
 		return "You are the verifier for a work item: judge it, then issue\n" +
-			"`ouroflow subgoal verify <id> --verdict passed|rejected [--summary S]\n" +
+			"`flowloop subgoal verify <id> --verdict passed|rejected [--summary S]\n" +
 			"[--evidence E]` ONCE and end your turn. You may RUN tests, but\n" +
 			"never modify files or commit.\n"
 	}
@@ -436,7 +436,7 @@ func roleContract(runRole string, isLeader bool, squadID string, blueprintDriven
 // buildWakeLine renders the per-turn wake statement (决策 6-22): ONE
 // unified shape for every wake path — "You were mentioned by <who>
 // (comment <id>):" + the reason/task. The anchor is the handle the agent
-// passes back to `ouroflow goal comments --after`. English platform text;
+// passes back to `flowloop goal comments --after`. English platform text;
 // materials keep their language.
 func buildWakeLine(anchorCommentID, who, content string) string {
 	anchor := ""

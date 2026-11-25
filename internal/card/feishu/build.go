@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/card"
+	"github.com/Sinkear/flowloop/internal/card"
 )
 
 // BuildCard converts a card.Card into a Feishu interactive card JSON string

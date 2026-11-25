@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/gitutil"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/gitutil"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -217,7 +217,7 @@ var fetchTemplateFiles = fetchTemplateFilesFromGit
 // for registry.yaml and every template/skill file it references. A token,
 // when given, is embedded via gitCloneURL and never logged.
 func fetchTemplateFilesFromGit(ctx context.Context, cfg TemplateRepoConfig, token string) (map[string]string, error) {
-	dir, err := os.MkdirTemp("", "ouroflow-templates-*")
+	dir, err := os.MkdirTemp("", "flowloop-templates-*")
 	if err != nil {
 		return nil, fmt.Errorf("mkdir temp: %w", err)
 	}
@@ -313,8 +313,8 @@ func parseTemplateFiles(files map[string]string) (*templateCache, error) {
 		}
 		switch {
 		case meta.APIVersion == "":
-			meta.APIVersion = "ouroflow/v1"
-		case meta.APIVersion != "ouroflow/v1":
+			meta.APIVersion = "flowloop/v1"
+		case meta.APIVersion != "flowloop/v1":
 			cache.Errors = append(cache.Errors, fmt.Sprintf("template %s: unsupported api_version %q", entry.Path, meta.APIVersion))
 			continue
 		}
@@ -523,7 +523,7 @@ const refreshTimeout = 2 * time.Minute
 var practiceCapabilityRe = regexp.MustCompile(`^[a-z0-9_.-]+$`)
 
 const (
-	practiceAPIVersion   = "ouroflow/v1"
+	practiceAPIVersion   = "flowloop/v1"
 	practiceKindSquad    = "squad"
 	practiceKindProject  = "project"
 	practiceKindWorkflow = "workflow"

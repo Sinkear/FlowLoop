@@ -117,7 +117,7 @@ export function RuntimeModelsDialog({ rt, onClose }: { rt: Runtime; onClose: () 
         <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
           <p className="text-sm text-ink-2">暂无模型目录</p>
           <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-ink-3">
-            机器每次执行 <code className="font-mono">ouroflow connect</code>
+            机器每次执行 <code className="font-mono">flowloop connect</code>
             ，或在探测上报更新时，会自动重新探测；也可以点上方「刷新检测」立即重新探测。
           </p>
         </div>

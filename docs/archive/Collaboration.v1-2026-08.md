@@ -1,4 +1,4 @@
-# OuroFlow Collaboration Mechanism
+# FlowLoop Collaboration Mechanism
 # 协作机制优化与修复设计文档
 
 > **⚠ 已被取代（2026-11 归档）：本文件是 2026-08 的 v1 设计史，不再是协作模型的规范。**
@@ -7,7 +7,7 @@
 
 - Status: **Adopted（2026-08-13 全盘采纳）**，冻结决策记录在 DESIGN.md 决策 5-1 ~ 5-10
 - Version: 1.0
-- Scope: OuroFlow Collaboration / Goal / Run / Comment / Multi-Agent
+- Scope: FlowLoop Collaboration / Goal / Run / Comment / Multi-Agent
 - Purpose: 指导现有代码优化、修复及后续协作能力扩展
 
 > **实现偏差注记**（相对本文档的最终落地差异，以 DESIGN.md 决策 5-x 为准）：
@@ -23,7 +23,7 @@
 
 # 1. 背景
 
-OuroFlow 当前已经具备：
+FlowLoop 当前已经具备：
 
 - Agent
 - Goal
@@ -47,7 +47,7 @@ OuroFlow 当前已经具备：
 8. UI 中不同协作行为都表现为 Comment，导致用户无法理解当前发生了什么
 9. 后续 Kanban / Goal Tree / Approval / Replay / Audit 很难建立稳定语义
 
-本设计不推翻现有 OuroFlow 架构。
+本设计不推翻现有 FlowLoop 架构。
 
 目标是：
 
@@ -57,7 +57,7 @@ OuroFlow 当前已经具备：
 
 # 2. 核心设计原则
 
-OuroFlow 协作最终只保留四种基本行为：
+FlowLoop 协作最终只保留四种基本行为：
 
 | 行为 | 语义 |
 |---|---|
@@ -83,7 +83,7 @@ Sub-goal → New Goal
 ⸻
 
 3. 三种协作流
-整个 OuroFlow Collaboration 可以抽象成三个 Flow：
+整个 FlowLoop Collaboration 可以抽象成三个 Flow：
                   Collaboration
                        |
           +------------+------------+
@@ -128,7 +128,7 @@ Sub-goal
 
 5. Mention / Consult
 5.1 核心语义
-OuroFlow 中：
+FlowLoop 中：
 @Agent
 统一表示：
 Consult。
@@ -754,7 +754,7 @@ C started Goal
 
 09:16
 A resumed
-这会成为 OuroFlow 最重要的协作可视化之一。
+这会成为 FlowLoop 最重要的协作可视化之一。
 
 ⸻
 
@@ -1071,7 +1071,7 @@ Sub-goal
 ⸻
 
 46. 最终模型
-OuroFlow 的协作机制最终应该非常简单：
+FlowLoop 的协作机制最终应该非常简单：
                      Collaboration
 
                            |
@@ -1103,7 +1103,7 @@ create_sub_goal
 ⸻
 
 47. 最终认知模型
-整个 OuroFlow 协作机制可以压缩成四句话：
+整个 FlowLoop 协作机制可以压缩成四句话：
 Comment：我告诉你。
 Consult：我问你。
 Handoff：我把这个 Goal 交给你。
@@ -1158,7 +1158,7 @@ Runtime 必须通过统一 Service / Policy 强制执行以上规则
 ⸻
 
 49. 一句话总结
-OuroFlow 的协作模型最终应该是：
+FlowLoop 的协作模型最终应该是：
                  @mention
                     |
                     v

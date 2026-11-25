@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestDeleteAgentCancelsItsSubGoals: deleting an agent cancels the

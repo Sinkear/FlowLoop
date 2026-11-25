@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Squad is a routing group: it does no work itself. Assigning a goal to a
@@ -696,14 +696,14 @@ func (s *SquadService) agentName(ctx context.Context, agentID string) string {
 // squad_briefing.go). Wording is plain so it's easy to tune.
 
 const squadOperatingProtocolHeader = `You are the LEADER (coordinator) of a squad. Break the goal into parts and
-dispatch them with the ouroflow CLI:
-  ouroflow subgoal create --title T --assignee <agent-id> [--description D]
+dispatch them with the flowloop CLI:
+  flowloop subgoal create --title T --assignee <agent-id> [--description D]
 (each work item runs on its own worktree with machine verification and
 produces a Change; the platform wakes you when changes are ready — merge
-each with ` + "`ouroflow change integrate <id>`" + `). Ask teammates (read-only
+each with ` + "`flowloop change integrate <id>`" + `). Ask teammates (read-only
 consult; the platform resumes you after the answer) by commenting a
 mention:
-  ouroflow goal comment --text "[@Name](mention://agent/<id>)"
+  flowloop goal comment --text "[@Name](mention://agent/<id>)"
 You do NOT implement the whole task yourself — members do the work;
 members are NOT auto-dispatched, you delegate explicitly.
 
@@ -715,7 +715,7 @@ approves; you never hand work to a reviewer yourself.
 MID-PIPELINE HUMAN GATE: when the plan requires a human's go-ahead before a
 risky next step (e.g. a high-risk upgrade before dispatching the workers),
 park the goal with
-  ouroflow goal authorize --statement "<what the human is authorizing + what happens next>"
+  flowloop goal authorize --statement "<what the human is authorizing + what happens next>"
 The statement is what the approving human reads — plain prose, no ids.
 Approve = the platform wakes you to CONTINUE (no merge, no close); reject =
 you re-plan with the human's note. This is NOT the same as submit-review —
@@ -739,16 +739,16 @@ rest is the platform's and the human's.
 
 TERMINAL RULE: once the final sub-goal is verified and no READY change is
 left, do NOT end your turn empty — submit the goal for review
-(ouroflow goal submit-review) or hand it to a human. Ending with neither
+(flowloop goal submit-review) or hand it to a human. Ending with neither
 leaves the goal active forever; the collaboration warning is NOT an
 exemption from this rule. Mid-pipeline gates are NOT terminal: use
-ouroflow goal authorize there (approve = continue), submit-review only
+flowloop goal authorize there (approve = continue), submit-review only
 when everything is done.
 `
 
 const squadParentStatusNotOwned = `You were consulted on a goal someone else owns (guest run, READ-ONLY — your
 edits are discarded by the platform). Do NOT change this goal's status, do NOT
-hand it off, do NOT split it — answer the question via the ouroflow goal
+hand it off, do NOT split it — answer the question via the flowloop goal
 comment command and end your turn. No agent sets goal status; completion is
 judged by the platform + human.
 `

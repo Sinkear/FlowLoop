@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // deliver — the deterministic merge step (DESIGN.md §7). After the human
@@ -222,10 +222,10 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	branchHead, err := gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branchName)
 	if err != nil || strings.TrimSpace(branchHead) == "" {
 		// Machine-executed goals (CLI 分支 Phase 3) pushed their branch to
-		// the remote as ouroflow/<branch> (中转) — the deliver merges THAT
+		// the remote as flowloop/<branch> (中转) — the deliver merges THAT
 		// when the local ref is absent. A local ref wins (daemon-executed
 		// goals still merge their own branch).
-		remoteBranch := "ouroflow/" + branchName
+		remoteBranch := "flowloop/" + branchName
 		if _, terr := gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "origin/"+remoteBranch); terr == nil {
 			if _, berr := gitRun(ctx, repo, "branch", branchName, "origin/"+remoteBranch); berr != nil {
 				d.finishDeliver(ctx, goalID, false, "deliver: adopt remote branch "+remoteBranch+": "+berr.Error())
@@ -315,7 +315,7 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	// it git aborts with
 	// "Committer identity unknown", which this path used to misreport as a
 	// merge conflict (deliver: merge conflict: …identity unknown…).
-	mergeName, mergeEmail := "ouroflow[bot]", "ouroflow@local"
+	mergeName, mergeEmail := "flowloop[bot]", "flowloop@local"
 	if id := d.domainGitIdentity(ctx, domainID); id != "" {
 		if l, r, ok := strings.Cut(id, "<"); ok && strings.Contains(r, ">") {
 			mergeName = strings.TrimSpace(l)
@@ -324,7 +324,7 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	}
 	start = time.Now()
 	logging.Infof("git: deliver %q (%s): merge %s ...", goalTitle, goalID, branchName)
-	mergeOut, err := gitRunCtx(ctx, wt, "-c", "user.name="+mergeName, "-c", "user.email="+mergeEmail, "merge", "--no-ff", branchName, "-m", "Merge "+branchName+" (ouroflow deliver)")
+	mergeOut, err := gitRunCtx(ctx, wt, "-c", "user.name="+mergeName, "-c", "user.email="+mergeEmail, "merge", "--no-ff", branchName, "-m", "Merge "+branchName+" (flowloop deliver)")
 	if err != nil {
 		// Conflict or identity/config error: abort and report — the ephemeral
 		// worktree is removed by the defer; the goal branch stays intact for a
@@ -374,7 +374,7 @@ func (d *Daemon) deliverGoal(ctx context.Context, goalID string) {
 	}
 
 	// Cleanup (决策 7-4): the goal's feat branch is disposable once merged —
-	// delete both the remote 中转 ref (ouroflow/<branch>, machine-executed
+	// delete both the remote 中转 ref (flowloop/<branch>, machine-executed
 	// goals) and the local feat-<id> ref. Best-effort + fault-tolerant inside
 	// cleanupGoalBranches. The domain git creds (loaded at the top of
 	// deliverGoal) are passed so the remote delete can authenticate, though
@@ -458,14 +458,14 @@ func (d *Daemon) cleanupGoalBranches(ctx context.Context, goalID, goalTitle, dom
 	// against concurrent fetch/deliver (决策 2-10); the two ref deletes below
 	// are immediate and need no extra protection.
 
-	// Remote 中转 ref: ouroflow/feat-<id> (machine-executed goals push here,
+	// Remote 中转 ref: flowloop/feat-<id> (machine-executed goals push here,
 	// 决策 6-25). Deleted by pushing an empty ref. Missing is the common case
 	// for daemon-executed goals (they never publish a transfer ref) — git
 	// returns an error, logged and ignored.
-	if out, err := exec.CommandContext(ctx, "git", "-C", repo, "push", "origin", ":refs/heads/ouroflow/"+branchName).CombinedOutput(); err != nil {
-		logging.Infof("git: cleanup %q (%s): remote ouroflow/%s: %v %s", goalTitle, goalID, branchName, err, strings.TrimSpace(string(out)))
+	if out, err := exec.CommandContext(ctx, "git", "-C", repo, "push", "origin", ":refs/heads/flowloop/"+branchName).CombinedOutput(); err != nil {
+		logging.Infof("git: cleanup %q (%s): remote flowloop/%s: %v %s", goalTitle, goalID, branchName, err, strings.TrimSpace(string(out)))
 	} else {
-		logging.Infof("git: cleanup %q (%s): deleted remote ouroflow/%s", goalTitle, goalID, branchName)
+		logging.Infof("git: cleanup %q (%s): deleted remote flowloop/%s", goalTitle, goalID, branchName)
 	}
 	// Local feat-<id> ref. -D forces the delete (the branch may have unmerged
 	// commits relative to default — that is expected: a cancelled goal's WIP

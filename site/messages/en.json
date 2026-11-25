@@ -19,13 +19,13 @@
     "mentalModel": "A goal compiles against an immutable Blueprint graph; the run leaves an execution graph; RSI turns it into findings and patch proposals. The graph proposes — you approve, review and publish.",
     "heroStack": ["Go 1.26", "Next.js 16", "ACP", "SQLite"],
     "terminal": {
-      "title": "ouroflow — zsh",
+      "title": "flowloop — zsh",
       "lines": [
-        { "type": "cmd", "text": "ouroflow connect" },
+        { "type": "cmd", "text": "flowloop connect" },
         { "type": "ok", "text": "linked to daemon (machine=m4.local, 3 agent CLI(s) probed)" },
-        { "type": "cmd", "text": "ouroflow create goal --title \"refactor intake parser\" --assignee claude" },
+        { "type": "cmd", "text": "flowloop create goal --title \"refactor intake parser\" --assignee claude" },
         { "type": "out", "text": "goal g7a3 created → run r9k1 queued" },
-        { "type": "cmd", "text": "ouroflow goal list" },
+        { "type": "cmd", "text": "flowloop goal list" },
         { "type": "out", "text": "  g7a3  active    refactor intake parser     [claude]" },
         { "type": "out", "text": "  g6f2  review    fix feishu streaming       [opencode]" },
         { "type": "ok", "text": "2 goals" },
@@ -48,7 +48,7 @@
       },
       "collab": {
         "title": "Four collaboration behaviors",
-        "desc": "Comment / Consult / Handoff / Sub-goal, exposed as the ouroflow CLI with owner-only permissions enforced server-side."
+        "desc": "Comment / Consult / Handoff / Sub-goal, exposed as the flowloop CLI with owner-only permissions enforced server-side."
       },
       "protocol": {
         "title": "Multi-protocol & transport",
@@ -62,7 +62,7 @@
     "archTeaserTitle": "Architecture at a glance",
     "archTeaserDesc": "Single daemon, single machine, single user, no auth. Local SQLite for state, in-process event bus, Go daemon + Next.js web UI. The bus is a wakeup hint — every transition is a conditional DB transaction, idempotent under replay.",
     "archReadMore": "Read full architecture →",
-    "loopFigureAlt": "The OuroFlow self-iteration loop: compile graph vN, execute, record the execution graph, diagnose with RSI, patch the graph, and let a human publish vN+1.",
+    "loopFigureAlt": "The FlowLoop self-iteration loop: compile graph vN, execute, record the execution graph, diagnose with RSI, patch the graph, and let a human publish vN+1.",
     "loopFigureCaption": "Every execution is evidence for the next workflow graph. The graph proposes; a human signs vN+1.",
     "arch": {
       "web": { "title": "Web UI", "sub": "Next.js · browser", "note": "ACP chat client + live stream" },
@@ -73,7 +73,7 @@
       "scheduler": "per-agent workers · PULL dispatch",
       "link": "/connect · JSON-RPC over WS",
       "pull": "run.poll · chat.*",
-      "machine": { "title": "ouroflow connect", "sub": "machine sidecar", "note": "pulls work · spawns CLI" },
+      "machine": { "title": "flowloop connect", "sub": "machine sidecar", "note": "pulls work · spawns CLI" },
       "runtime": "runtime.Open · acp / jsonl / jsonrpc · stdio / ws / tcp",
       "cli": { "title": "Agent CLI", "sub": "subprocess", "note": "ACP frames relayed unparsed" },
       "deliver": "verify · human gate → merge + re-verify + push"
@@ -87,13 +87,13 @@
     "firstGoal": [
       "Start the daemon and the web UI (see Quick start), then open http://127.0.0.1:47814.",
       "Create a domain: a repo URL or a scratch workspace.",
-      "Run ouroflow connect, then create an agent from the runtime it probes.",
+      "Run flowloop connect, then create an agent from the runtime it probes.",
       "Create a goal, assign it, choose HITL/HOOTL, and watch: execution → review (human) → delivery after approval.",
       "Or chat with any agent from the Agents page — a per-agent ACP session staged fresh every open."
     ]
   },
   "docs": {
-    "sidebarTitle": "ouroflow",
+    "sidebarTitle": "flowloop",
     "sidebarVersion": "docs",
     "groupOverview": "Overview",
     "groupModel": "Model",
@@ -114,15 +114,15 @@
         },
         {
           "title": "Machine executor (PULL)",
-          "desc": "ouroflow connect holds a persistent JSON-RPC link and pulls work (run.poll). It executes runs and hosts the per-agent chat bridge — spawns the CLI, relays ACP frames unparsed.",
+          "desc": "flowloop connect holds a persistent JSON-RPC link and pulls work (run.poll). It executes runs and hosts the per-agent chat bridge — spawns the CLI, relays ACP frames unparsed.",
           "chips": ["run.poll", "pull-model", "JSON-RPC"],
           "example": "machine → daemon:  run.poll\ndaemon → machine:  { run: r9k1, cancels: [] }\nmachine:          runtime.Open(spec) → spawn CLI"
         },
         {
           "title": "Per-run worktrees",
-          "desc": "~/.ouroflow/runs/<runID> ephemeral git worktrees against per-domain bare repos. Crash recovery replays terminal runs and re-derives attention at startup.",
+          "desc": "~/.flowloop/runs/<runID> ephemeral git worktrees against per-domain bare repos. Crash recovery replays terminal runs and re-derives attention at startup.",
           "chips": ["ephemeral", "bare-repo", "recovery"],
-          "example": "~/.ouroflow/runs/r9k1/      # git worktree\n~/.ouroflow/repos/<domain>/  # bare repo (truth)"
+          "example": "~/.flowloop/runs/r9k1/      # git worktree\n~/.flowloop/repos/<domain>/  # bare repo (truth)"
         },
         {
           "title": "Coordinator",
@@ -143,7 +143,7 @@
     },
     "concept": {
       "title": "Core concepts",
-      "intro": "The vocabulary of ouroflow — a goal is the sole holder of state authority; everything else reports up.",
+      "intro": "The vocabulary of flowloop — a goal is the sole holder of state authority; everything else reports up.",
       "groups": [
         {
           "group": "State authority",
@@ -152,19 +152,19 @@
               "name": "Goal",
               "desc": "A work item. The sole holder of state authority — runs report up, never decide.",
               "chips": ["backlog", "active", "review", "done"],
-              "example": "$ ouroflow create goal --title \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
+              "example": "$ flowloop create goal --title \"refactor intake\" --assignee claude\ngoal g7a3 created → run r9k1 queued"
             },
             {
               "name": "Run",
               "desc": "One agent's turn on a goal. No authority — it reports to the goal layer.",
               "chips": ["queued", "running", "completed", "failed"],
-              "example": "$ ouroflow goal list\n  g7a3  active   refactor intake   [claude]\n  g6f2  review   fix feishu stream  [opencode]"
+              "example": "$ flowloop goal list\n  g7a3  active   refactor intake   [claude]\n  g6f2  review   fix feishu stream  [opencode]"
             },
             {
               "name": "Domain",
               "desc": "A repo-backed or scratch workspace. The acceptance level is chosen per goal.",
               "chips": ["repo", "scratch", "hitl/hootl"],
-              "example": "$ ouroflow create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
+              "example": "$ flowloop create domain --name demo --type repo \\\n    --git_url git@github.com:org/repo"
             }
           ]
         },
@@ -181,7 +181,7 @@
               "name": "Agent",
               "desc": "A runtime + persona (system prompt / model / env / MCP servers / concurrency).",
               "chips": ["persona", "model", "mcp"],
-              "example": "$ ouroflow agent create --runtime opencode \\\n    --system-prompt \"You are a careful reviewer\""
+              "example": "$ flowloop agent create --runtime opencode \\\n    --system-prompt \"You are a careful reviewer\""
             },
             {
               "name": "Chat",
@@ -198,19 +198,19 @@
               "name": "Squad",
               "desc": "A routing group that does no work itself — goals route to its leader, who delegates via sub-goals.",
               "chips": ["leader", "delegate", "reviewers"],
-              "example": "$ ouroflow squad create --name review-team \\\n    --leader claude --reviewer opencode"
+              "example": "$ flowloop squad create --name review-team \\\n    --leader claude --reviewer opencode"
             },
             {
               "name": "Sub-goal",
               "desc": "A work item split off a goal (no recursion). Own assignee + optional agent verifier.",
               "chips": ["split", "verifier", "≤3 retries"],
-              "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"add tests\" --assignee opencode"
+              "example": "$ flowloop subgoal create --parent g7a3 \\\n    --title \"add tests\" --assignee opencode"
             },
             {
               "name": "Change",
               "desc": "A sub-goal's logical deliverable. Owner integrates via the integrate_change tool.",
               "chips": ["ready", "integrating", "conflict"],
-              "example": "$ ouroflow change integrate ch9f2\n# conflict → assignee rework → revision N+1"
+              "example": "$ flowloop change integrate ch9f2\n# conflict → assignee rework → revision N+1"
             }
           ]
         },
@@ -233,13 +233,13 @@
               "name": "Mention",
               "desc": "The Consult primitive — a structured URI in a comment pulls an agent into a read-only guest run.",
               "chips": ["consult", "guest", "auto-resume"],
-              "example": "$ ouroflow goal comment --text \\\n    \"[@opencode](mention://agent/a4) is this safe?\""
+              "example": "$ flowloop goal comment --text \\\n    \"[@opencode](mention://agent/a4) is this safe?\""
             },
             {
               "name": "Schedule",
               "desc": "A cron template that clones a goal per firing. Idempotent, timezone-aware.",
               "chips": ["cron", "idempotent", "tz-aware"],
-              "example": "$ ouroflow schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
+              "example": "$ flowloop schedule create --goal g7a3 \\\n    --cron \"0 9 * * 1-5\""
             }
           ]
         }
@@ -247,38 +247,38 @@
     },
     "collab": {
       "title": "Collaboration",
-      "intro": "Agents coordinate exclusively through the ouroflow CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (OUROFLOW_TOKEN), which the daemon resolves to the run's (goal, agent, role) — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side.",
+      "intro": "Agents coordinate exclusively through the flowloop CLI (a shim of the daemon binary, on the agent's PATH at spawn). Every command carries the per-run token (FLOWLOOP_TOKEN), which the daemon resolves to the run's (goal, agent, role) — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side.",
       "behaviors": [
         {
           "name": "Comment",
           "desc": "Say something on a goal — visible to all participants. The baseline interaction; no permission needed.",
           "who": "anyone",
           "chips": ["say", "no-auth"],
-          "example": "$ ouroflow goal comment g7a3 --text \"blocker: tests flaky on CI\""
+          "example": "$ flowloop goal comment g7a3 --text \"blocker: tests flaky on CI\""
         },
         {
           "name": "Consult",
           "desc": "Pull another agent into a read-only guest run via a mention URI. The requester resumes automatically after the answer lands.",
           "who": "owner",
           "chips": ["mention", "guest-run", "auto-resume"],
-          "example": "$ ouroflow goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) is this refactor safe?\""
+          "example": "$ flowloop goal comment g7a3 --text \\\n    \"[@opencode](mention://agent/a4) is this refactor safe?\""
         },
         {
           "name": "Handoff",
           "desc": "Transfer goal ownership to another agent. The owner check is enforced server-side — only the current owner can hand off.",
           "who": "owner",
           "chips": ["transfer", "server-check"],
-          "example": "$ ouroflow goal assign g7a3 opencode --note \"you own the parser now\""
+          "example": "$ flowloop goal assign g7a3 opencode --note \"you own the parser now\""
         },
         {
           "name": "Sub-goal",
           "desc": "Split work off a goal — own assignee, own worktree, optional verifier. Not a child goal (no recursion). Machine retries ≤3.",
           "who": "owner",
           "chips": ["split", "worktree", "verifier"],
-          "example": "$ ouroflow subgoal create --parent g7a3 \\\n    --title \"add integration tests\" --assignee opencode"
+          "example": "$ flowloop subgoal create --parent g7a3 \\\n    --title \"add integration tests\" --assignee opencode"
         }
       ],
-      "tokenNote": "The per-run token (OUROFLOW_TOKEN) is the ONLY identity — self-reported ids are ignored, and the owner check is enforced server-side.",
+      "tokenNote": "The per-run token (FLOWLOOP_TOKEN) is the ONLY identity — self-reported ids are ignored, and the owner check is enforced server-side.",
       "fullModel": "Full model in docs/design/Collaboration.v2.md →"
     }
   },

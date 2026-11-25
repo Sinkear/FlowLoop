@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OuroFlow 架构与设计文档</title>
+<title>FlowLoop 架构与设计文档</title>
 <style>
   :root {
     --bg:#f6f7f9; --card:#fff; --text:#17202a; --muted:#667085;
@@ -47,7 +47,7 @@
 <body>
 <div class="layout">
 <nav>
-  <h1>OuroFlow</h1>
+  <h1>FlowLoop</h1>
   <div class="version">Architecture & Design · v1.0 · 2026-08</div>
   <div class="group">Overview</div>
   <a href="#principles">1. 设计目标与原则</a>
@@ -77,7 +77,7 @@
   <a href="#ui">21. Web UI</a>
   <div class="group">Engineering</div>
   <a href="#structure">22. Repository Structure</a>
-  <a href="#openagent">23. OuroFlow × OpenAgent-go</a>
+  <a href="#openagent">23. FlowLoop × OpenAgent-go</a>
   <a href="#decisions">24. Architecture Decisions</a>
   <a href="#roadmap">25. Roadmap</a>
 </nav>
@@ -85,10 +85,10 @@
 <main>
 <div class="warn callout" style="border-color:#b45309">
 <strong>⚠ 归档文档（2026-08 愿景快照，非现状）：</strong>本文档已归档，<strong>不再维护、不保证链接可用</strong>。它记录的是 Phase A（蓝图）落地之前的产品愿景，其中 <code>blocked</code> 状态、worker lease / claim SQL、<code>OpenAgent-go</code> runtime 等描述均已过时。<br>
-现行全项目说明见 <a href="../OUROFLOW-SPEC.html">OUROFLOW-SPEC.html</a>；决策基线见 <a href="../design/DESIGN.md">design/DESIGN.md</a>；协作模型见 <a href="../design/Collaboration.v2.md">design/Collaboration.v2.md</a>。任何现行事实与本文冲突时，以上述文档与代码为准。
+现行全项目说明见 <a href="../FLOWLOOP-SPEC.html">FLOWLOOP-SPEC.html</a>；决策基线见 <a href="../design/DESIGN.md">design/DESIGN.md</a>；协作模型见 <a href="../design/Collaboration.v2.md">design/Collaboration.v2.md</a>。任何现行事实与本文冲突时，以上述文档与代码为准。
 </div>
 
-<h1>OuroFlow 架构与设计文档</h1>
+<h1>FlowLoop 架构与设计文档</h1>
 <p class="lead">一个面向多种 Agent Runtime 的任务管理、调度、协作、验收与交付控制平面。</p>
 <div class="meta">
   <span class="tag">Status: Vision / 规划愿景（非现状）</span>
@@ -99,7 +99,7 @@
 </div>
 
 <div class="callout">
-<strong>核心定义：</strong>OuroFlow 不是“多 Agent Kanban”，而是一个让 Agent 能够持续、可靠、可验证、可恢复地完成工作的 <strong>Agent Execution Control Plane</strong>。Kanban、Cron、Issue、IM 都是外围入口；Goal、Run、Scheduler、Agent Session、Verification、Review、Delivery 才是核心闭环。
+<strong>核心定义：</strong>FlowLoop 不是“多 Agent Kanban”，而是一个让 Agent 能够持续、可靠、可验证、可恢复地完成工作的 <strong>Agent Execution Control Plane</strong>。Kanban、Cron、Issue、IM 都是外围入口；Goal、Run、Scheduler、Agent Session、Verification、Review、Delivery 才是核心闭环。
 </div>
 
 <div class="warn callout">
@@ -138,7 +138,7 @@
                            │
                            ▼
                     ┌──────────────┐
-                    │  OuroFlow   │
+                    │  FlowLoop   │
                     │ Control Plane│
                     └──────┬───────┘
                            │
@@ -151,7 +151,7 @@
  OpenAgent/Claude       MCP/Tools          Custom Runtime
 </pre></div>
 
-<p>OuroFlow 解决的是“如何可靠地让 Agent 把工作完成”，而不是“如何让模型更聪明”。Agent Runtime 负责执行智能；OuroFlow 负责工作生命周期、资源、状态、验收、审批、恢复和交付。</p>
+<p>FlowLoop 解决的是“如何可靠地让 Agent 把工作完成”，而不是“如何让模型更聪明”。Agent Runtime 负责执行智能；FlowLoop 负责工作生命周期、资源、状态、验收、审批、恢复和交付。</p>
 
 <h2 id="domain">3. 核心领域模型</h2>
 <div class="diagram"><pre>
@@ -305,9 +305,9 @@ Leader Agent
      ├── create child Goal → Agent B
      └── create child Goal → Agent C</code></pre>
 
-<p>Delegation 的本质是创建/更新 Goal，而不是在 OuroFlow 内部偷偷执行一个不可见 Workflow。</p>
+<p>Delegation 的本质是创建/更新 Goal，而不是在 FlowLoop 内部偷偷执行一个不可见 Workflow。</p>
 <div class="warn callout"><strong>本节已更新（决策 5-1 撤销 3-6，6-1 重定义）：</strong>child-goal 委派已以 <strong>sub_goal 实体</strong>落地——不是 child goal：不可递归、依附 goal 生命周期、assignee/verifier 分离、Change+Revision 跨 workspace 交付、owner 集成（详见 docs/design/Collaboration.v2.md）。squad 仍以 leader run + role=reviewer 审查 checkpoint（决策 4-4）运作。</div>
-<p class="small"><strong>交接语义（决策 4-9）：</strong>goal 易主时平台终止旧 owner 的 running run（per-run cancel 注册表）——旧 agent 已交接却不结束 run，会把新 owner 的 run 永远堵在 per-goal 串行队列后（死锁）；OUROFLOW.md 同步引导"交接后立即结束你的 turn"。</p>
+<p class="small"><strong>交接语义（决策 4-9）：</strong>goal 易主时平台终止旧 owner 的 running run（per-run cancel 注册表）——旧 agent 已交接却不结束 run，会把新 owner 的 run 永远堵在 per-goal 串行队列后（死锁）；FLOWLOOP.md 同步引导"交接后立即结束你的 turn"。</p>
 
 <h2 id="runtime">8. Runtime / Agent / Session</h2>
 <h3>8.1 三层模型</h3>
@@ -407,12 +407,12 @@ WHERE id = ?
      │
      │ fs.read / fs.write / terminal / approval...
      ▼
-OuroFlow Client RPC
+FlowLoop Client RPC
      │
      ▼
 Goal Workspace / Runtime Context</code></pre>
 
-<p>Client RPC 是 OuroFlow 的通用执行边界。现状（决策 4-8 已实现）为<strong>双通道</strong>：</p>
+<p>Client RPC 是 FlowLoop 的通用执行边界。现状（决策 4-8 已实现）为<strong>双通道</strong>：</p>
 <ul>
 <li><strong>ACP fs/terminal RPC</strong>——8 个 handler（read/write + terminal×5 + request_permission 自动放行），握手声明 clientCapabilities。</li>
 <li><strong>MCP 工作区 server</strong>——官方 go-sdk，streamable HTTP 挂在 /mcp/{runID}（GET+POST；GET 是 SSE 订阅，缺失会 405 导致工具不注册），session/new 的 McpServers 注入 URL。</li>
@@ -487,7 +487,7 @@ Verification
   ↓
 Review
   ↓
-OuroFlow Delivery
+FlowLoop Delivery
   ├── local merge
   ├── GitHub PR
   ├── GitLab MR
@@ -555,8 +555,8 @@ SQLite</code></pre>
 <p>业务层禁止在任意位置散落 SQL。Repository 负责领域查询与持久化语义，Store 负责底层数据库实现。</p>
 
 <h3>17.3 Memory</h3>
-<p>OuroFlow 的 SQLite 保存权威状态；OpenViking 等语义记忆系统只作为长期上下文和检索层。</p>
-<pre><code>OuroFlow
+<p>FlowLoop 的 SQLite 保存权威状态；OpenViking 等语义记忆系统只作为长期上下文和检索层。</p>
+<pre><code>FlowLoop
  ├── SQLite
  │    └── Goal / Run / Event / Review / Gate
  │
@@ -590,7 +590,7 @@ SQLite</code></pre>
 
 <h2 id="security">19. Security</h2>
 <p>当前单机单用户可以保持轻量模型，但一旦支持远程 Runtime，必须引入 Run-scoped Capability。</p>
-<pre><code>OuroFlow
+<pre><code>FlowLoop
    │
    └── Run Capability Token
           ├── goal.read
@@ -650,10 +650,10 @@ SQLite</code></pre>
 <p>Timeline 的价值高于单纯的 Kanban，因为它能够呈现 Agent 工作的完整因果链。</p>
 
 <h2 id="structure">22. Repository Structure</h2>
-<pre><code>ouroflow/
+<pre><code>flowloop/
 ├── cmd/
-│   ├── ouroflow-daemon/
-│   └── ouroflow-cli/
+│   ├── flowloop-daemon/
+│   └── flowloop-cli/
 ├── internal/
 │   ├── acp/
 │   ├── daemon/
@@ -689,10 +689,10 @@ SQLite</code></pre>
 
 <p>不要求立即机械拆目录，但逻辑上应保持这些边界，避免形成无限膨胀的 service 包。</p>
 
-<h2 id="openagent">23. OuroFlow × OpenAgent-go</h2>
+<h2 id="openagent">23. FlowLoop × OpenAgent-go</h2>
 <p>两个项目必须保持清晰的上下层关系。</p>
 <div class="diagram"><pre>
-                    OuroFlow
+                    FlowLoop
               Orchestration / Control Plane
                          │
        ┌─────────────────┼─────────────────┐
@@ -715,7 +715,7 @@ SQLite</code></pre>
 </pre></div>
 
 <table>
-<tr><th>OpenAgent-go</th><th>OuroFlow</th></tr>
+<tr><th>OpenAgent-go</th><th>FlowLoop</th></tr>
 <tr><td>Agent Loop</td><td>Goal lifecycle</td></tr>
 <tr><td>LLM Adapter</td><td>Scheduling</td></tr>
 <tr><td>Tool Calling</td><td>Run lifecycle</td></tr>
@@ -725,7 +725,7 @@ SQLite</code></pre>
 <tr><td>Skills</td><td>Workspace / Collaboration</td></tr>
 </table>
 
-<p><strong>原则：</strong>OuroFlow 不重新实现 Agent Runtime；OpenAgent-go 也不承担 Goal/Run/Scheduler 等业务编排职责。</p>
+<p><strong>原则：</strong>FlowLoop 不重新实现 Agent Runtime；OpenAgent-go 也不承担 Goal/Run/Scheduler 等业务编排职责。</p>
 
 <h2 id="decisions">24. Architecture Decisions</h2>
 <table>
@@ -867,7 +867,7 @@ Leader Agent
 
 <h2>27. 最终架构原则</h2>
 <div class="callout">
-<p><strong>OuroFlow 的核心不是让更多 Agent 一起工作，而是建立一套可靠的 Agent 工作生命周期。</strong></p>
+<p><strong>FlowLoop 的核心不是让更多 Agent 一起工作，而是建立一套可靠的 Agent 工作生命周期。</strong></p>
 <pre><code>Trigger
   ↓
 Goal
@@ -895,11 +895,11 @@ Outcome
 Event / History
   ↓
 Future Context</code></pre>
-<p>这条链路构成 OuroFlow 的核心闭环。任何新功能都应该回答一个问题：它是在增强 Goal、Execution、Verification、Review、Delivery 这条主链，还是只是外围 Adapter？如果是后者，应尽可能保持与核心领域解耦。</p>
+<p>这条链路构成 FlowLoop 的核心闭环。任何新功能都应该回答一个问题：它是在增强 Goal、Execution、Verification、Review、Delivery 这条主链，还是只是外围 Adapter？如果是后者，应尽可能保持与核心领域解耦。</p>
 </div>
 
 <div class="footer">
-OuroFlow Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="../design/DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）与 <a href="../OUROFLOW-SPEC.html">OUROFLOW-SPEC.html</a>。愿景与现状冲突时以 DESIGN.md、OUROFLOW-SPEC.html 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
+FlowLoop Architecture & Design（愿景） · 2026-08 · 本文档为<strong>目标态愿景</strong>，现状基线见 <a href="../design/DESIGN.md">DESIGN.md</a>（决策 2-x/3-x/4-x）与 <a href="../FLOWLOOP-SPEC.html">FLOWLOOP-SPEC.html</a>。愿景与现状冲突时以 DESIGN.md、FLOWLOOP-SPEC.html 与代码为准；实现偏离愿景处应在 DESIGN.md 记录决策，而非静默修改任一方。
 </div>
 </main>
 </div>

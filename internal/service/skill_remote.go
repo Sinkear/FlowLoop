@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/gitutil"
+	"github.com/Sinkear/flowloop/internal/gitutil"
 )
 
 // ── remote source model ──
@@ -504,11 +504,11 @@ func (s *SkillService) PullRequest(ctx context.Context, id, title, body string) 
 	if _, counts := diffSkillFiles(local, remote); counts.Added+counts.Modified+counts.Removed == 0 {
 		return nil, NewValidationError("no local changes to submit as a pull request")
 	}
-	branch := fmt.Sprintf("ouroflow/skill-%s-%d", firstID8(sk.ID), time.Now().Unix())
+	branch := fmt.Sprintf("flowloop/skill-%s-%d", firstID8(sk.ID), time.Now().Unix())
 	if strings.TrimSpace(title) == "" {
 		title = fmt.Sprintf("Update skill %s", sk.Name)
 	}
-	commit, err := s.git.Push(ctx, cfg, local, branch, fmt.Sprintf("ouroflow: update skill %s", sk.Name))
+	commit, err := s.git.Push(ctx, cfg, local, branch, fmt.Sprintf("flowloop: update skill %s", sk.Name))
 	if err != nil {
 		return nil, fmt.Errorf("push pull-request branch: %w", err)
 	}
@@ -585,7 +585,7 @@ func (s *SkillService) pushRemote(ctx context.Context, sk *Skill, cfg remoteConf
 	if _, counts := diffSkillFiles(local, remote); counts.Added+counts.Modified+counts.Removed == 0 {
 		return nil, NewValidationError("no local changes to push")
 	}
-	commit, err := s.git.Push(ctx, cfg, local, cfg.Branch, fmt.Sprintf("ouroflow: sync skill %s", sk.Name))
+	commit, err := s.git.Push(ctx, cfg, local, cfg.Branch, fmt.Sprintf("flowloop: sync skill %s", sk.Name))
 	if err != nil {
 		return nil, fmt.Errorf("push to remote: %w", err)
 	}
@@ -889,7 +889,7 @@ func (g *gitCLI) git(ctx context.Context, dir string, args ...string) (string, e
 // Fetch shallow-clones the configured branch into a temp dir and returns the
 // skill files under the configured repo path.
 func (g *gitCLI) Fetch(ctx context.Context, cfg remoteConfig) (*remoteState, error) {
-	dir, err := os.MkdirTemp("", "ouroflow-skill-fetch-*")
+	dir, err := os.MkdirTemp("", "flowloop-skill-fetch-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
@@ -931,7 +931,7 @@ func (g *gitCLI) Push(ctx context.Context, cfg remoteConfig, files map[string]st
 	if err != nil {
 		return "", NewValidationError(err.Error())
 	}
-	dir, err := os.MkdirTemp("", "ouroflow-skill-push-*")
+	dir, err := os.MkdirTemp("", "flowloop-skill-push-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
 	}
@@ -972,7 +972,7 @@ func (g *gitCLI) Push(ctx context.Context, cfg remoteConfig, files map[string]st
 	if _, err := g.git(ctx, dir, "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := g.git(ctx, dir, "-c", "user.name=ouroflow", "-c", "user.email=ouroflow@localhost", "commit", "-m", message); err != nil {
+	if _, err := g.git(ctx, dir, "-c", "user.name=flowloop", "-c", "user.email=flowloop@localhost", "commit", "-m", message); err != nil {
 		return "", err
 	}
 	if _, err := g.git(ctx, dir, "push", "origin", "HEAD:refs/heads/"+branch); err != nil {

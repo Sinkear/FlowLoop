@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 func TestCreateSnapshotAndFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("OUROFLOW_HOME", home)
-	dbPath := filepath.Join(home, "ouroflow.db")
+	t.Setenv("FLOWLOOP_HOME", home)
+	dbPath := filepath.Join(home, "flowloop.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)

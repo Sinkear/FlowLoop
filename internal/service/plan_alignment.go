@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // PlanAlignment is the read-only join between the compiled spec (blueprint_node)

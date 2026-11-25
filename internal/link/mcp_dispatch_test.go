@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/flowloop/internal/acp"
 )
 
 // Verifies the agent's configured extra MCP servers survive the dispatch

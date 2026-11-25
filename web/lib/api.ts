@@ -49,7 +49,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Runtime ──
 export const listRuntimes = () => api<Runtime[]>("/runtimes");
-// Remote machines registered via `ouroflow connect` (CLI 分支 Phase 1).
+// Remote machines registered via `flowloop connect` (CLI 分支 Phase 1).
 export const listMachines = () => api<import("./types").Machine[]>("/machines");
 // Skills library (CLI 分支 Phase 4).
 export const listSkills = () => api<import("./types").Skill[]>("/skills");

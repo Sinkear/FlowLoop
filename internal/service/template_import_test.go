@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 func newPracticeImportForTest(c *templateTestCluster) *PracticeImportService {
@@ -22,7 +22,7 @@ func practiceJSON(t *testing.T, body string) json.RawMessage {
 }
 
 const practiceSquadJSON = `{
-  "api_version": "ouroflow/v1",
+  "api_version": "flowloop/v1",
   "kind": "squad",
   "metadata": {"name": "调研小队", "description": "收集资料", "version": "1.0.0"},
   "spec": {
@@ -41,7 +41,7 @@ const practiceSquadJSON = `{
 }`
 
 const practiceProjectJSON = `{
-  "api_version": "ouroflow/v1",
+  "api_version": "flowloop/v1",
   "kind": "project",
   "metadata": {"name": "数据平台", "description": "测试项目", "version": "1.0.0"},
   "spec": {
@@ -197,7 +197,7 @@ func TestPracticeImportWorkflowRequiresOwnerAndRewritesAssignees(t *testing.T) {
 		t.Fatalf("seed squad: %v", err)
 	}
 	pkg := practiceJSON(t, `{
-      "api_version": "ouroflow/v1",
+      "api_version": "flowloop/v1",
       "kind": "workflow",
       "metadata": {"name": "发布流程", "description": "测试工作流"},
       "spec": {
@@ -267,7 +267,7 @@ func TestPracticeImportWorkflowRejectsCrossSquadAndMissingOwner(t *testing.T) {
 		t.Fatalf("seed squad: %v", err)
 	}
 	crossPackage := practiceJSON(t, `{
-      "api_version": "ouroflow/v1", "kind": "workflow",
+      "api_version": "flowloop/v1", "kind": "workflow",
       "metadata": {"name": "跨队流程"},
       "spec": {"graph": {"name": "跨队流程",
         "nodes": [
@@ -286,7 +286,7 @@ func TestPracticeImportWorkflowRejectsCrossSquadAndMissingOwner(t *testing.T) {
 	}
 
 	noOwnerPkg := practiceJSON(t, `{
-      "api_version": "ouroflow/v1", "kind": "workflow",
+      "api_version": "flowloop/v1", "kind": "workflow",
       "metadata": {"name": "无归属流程"},
       "spec": {"graph": {"name": "无归属流程",
         "nodes": [
@@ -319,11 +319,11 @@ func TestPracticeImportValidatesPackage(t *testing.T) {
 		want string
 	}{
 		{"invalid json", `{`, "JSON"},
-		{"unknown field", `{"api_version":"ouroflow/v1","kind":"squad","metadata":{"name":"x"},"spec":{"agents":[]},"extra":true}`, "JSON"},
-		{"bad kind", `{"api_version":"ouroflow/v1","kind":"agent","metadata":{"name":"x"},"spec":{}}`, "不支持"},
-		{"missing metadata name", `{"api_version":"ouroflow/v1","kind":"squad","metadata":{},"spec":{}}`, "metadata.name"},
-		{"repo create rejected", `{"api_version":"ouroflow/v1","kind":"project","metadata":{"name":"x"},"spec":{"domain":{"type":"repo"},"repo":{"create":true}}}`, "不会代建仓库"},
-		{"empty agents", `{"api_version":"ouroflow/v1","kind":"squad","metadata":{"name":"x"},"spec":{"agents":[],"squad":{"name":"x","leader":"y"}}}`, "agents"},
+		{"unknown field", `{"api_version":"flowloop/v1","kind":"squad","metadata":{"name":"x"},"spec":{"agents":[]},"extra":true}`, "JSON"},
+		{"bad kind", `{"api_version":"flowloop/v1","kind":"agent","metadata":{"name":"x"},"spec":{}}`, "不支持"},
+		{"missing metadata name", `{"api_version":"flowloop/v1","kind":"squad","metadata":{},"spec":{}}`, "metadata.name"},
+		{"repo create rejected", `{"api_version":"flowloop/v1","kind":"project","metadata":{"name":"x"},"spec":{"domain":{"type":"repo"},"repo":{"create":true}}}`, "不会代建仓库"},
+		{"empty agents", `{"api_version":"flowloop/v1","kind":"squad","metadata":{"name":"x"},"spec":{"agents":[],"squad":{"name":"x","leader":"y"}}}`, "agents"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,7 +348,7 @@ func TestPracticeImportRequiresGitURLForRepoProject(t *testing.T) {
 	svc := newPracticeImportForTest(c)
 	ctx := context.Background()
 	pkg := practiceJSON(t, `{
-      "api_version": "ouroflow/v1", "kind": "project",
+      "api_version": "flowloop/v1", "kind": "project",
       "metadata": {"name": "仓库项目"},
       "spec": {"domain": {"type": "repo", "git_url": ""}}
     }`)
@@ -377,7 +377,7 @@ func TestPracticeImportMissingAgentFailsClearly(t *testing.T) {
 		t.Fatalf("seed squad: %v", err)
 	}
 	pkg := practiceJSON(t, `{
-      "api_version": "ouroflow/v1", "kind": "workflow",
+      "api_version": "flowloop/v1", "kind": "workflow",
       "metadata": {"name": "缺 Agent"},
       "spec": {"graph": {"name": "缺 Agent",
         "nodes": [

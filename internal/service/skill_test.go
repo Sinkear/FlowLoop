@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/store"
-	"github.com/Sinkear/ouroflow/internal/zipx"
+	"github.com/Sinkear/flowloop/internal/store"
+	"github.com/Sinkear/flowloop/internal/zipx"
 )
 
 // TestParseSkillMarkdown: the skill name/title/description are read from the
@@ -67,8 +67,8 @@ func TestParseSkillMarkdown(t *testing.T) {
 		},
 		{
 			"title present",
-			"---\nname: ouroflow-chat-create\ntitle: 对话式创建\ndescription: x\n---\n",
-			[3]string{"ouroflow-chat-create", "对话式创建", "x"},
+			"---\nname: flowloop-chat-create\ntitle: 对话式创建\ndescription: x\n---\n",
+			[3]string{"flowloop-chat-create", "对话式创建", "x"},
 		},
 		{
 			"closing delimiter at EOF (no trailing newline)",
@@ -343,7 +343,7 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("builtin files: %v", err)
 	}
-	embedded, err := builtinSkillsFS.ReadFile("assets/ouroflow-chat-create/SKILL.md")
+	embedded, err := builtinSkillsFS.ReadFile("assets/flowloop-chat-create/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,11 +428,11 @@ func TestDeleteBuiltinRejected(t *testing.T) {
 // the embedded tree. They must stay byte-identical — editing one without the
 // other means the shipped skill and the reviewed skill differ.
 func TestBuiltinSkillMirror(t *testing.T) {
-	embedded, err := readBuiltinSkillFiles("assets/ouroflow-chat-create")
+	embedded, err := readBuiltinSkillFiles("assets/flowloop-chat-create")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mirrorRoot := filepath.Join("..", "..", "skills", "ouroflow-chat-create")
+	mirrorRoot := filepath.Join("..", "..", "skills", "flowloop-chat-create")
 	mirror := make(map[string]string)
 	err = filepath.WalkDir(mirrorRoot, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

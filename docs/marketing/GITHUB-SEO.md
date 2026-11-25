@@ -1,7 +1,7 @@
-# GitHub SEO Kit — OuroFlow
+# GitHub SEO Kit — FlowLoop
 
 > Scope: repo metadata (`About` description + topics), social preview, README/site
-> discoverability, and off-repo launch checklist for `github.com/Sinkear/ouroflow`.
+> discoverability, and off-repo launch checklist for `github.com/Sinkear/flowloop`.
 > Written 2026-11-23. GitHub topic traffic is the repo count on each `/topics/<name>`
 > page at that date (a demand proxy, not search volume).
 
@@ -30,7 +30,7 @@ volume data behind that choice.
 Paste as one comma-separated line in **repo → About (gear icon) → Topics**. GitHub
 lowercases and hyphenates automatically.
 
-**Website field**: `https://sinkear.github.io/ouroflow/` — but only after the Pages
+**Website field**: `https://sinkear.github.io/flowloop/` — but only after the Pages
 deploy is fixed (§7, P0-1). Today that URL is a 404, and a dead homepage link hurts
 trust more than no link.
 
@@ -53,14 +53,14 @@ trust more than no link.
   demand term; Google/Bing typically truncate around 155–160, so the snippet carries the
   category and the start of the loop instead of cutting mid-claim. GitHub's OG card uses
   the full string.
-- It does **not** repeat the repo name as the first words ("OuroFlow is…"), so the
+- It does **not** repeat the repo name as the first words ("FlowLoop is…"), so the
   description adds information instead of restating the `<title>`.
 - The human-approval claim is evidence-backed: `docs/rsi/self-iter-playbook.md` T6 makes
   human approval mandatory before any platform-code change; `docs/use-cases/2026-11-21-blueprint-self-iteration/timeline.md`
   records `human_wait` 1,735.5m ≈ 28.9h, **78.1%** of wall+wait across 50 runs. Do not
   replace this with "autonomous" or "fully unattended".
 - RPA remains a discovery topic, not a description claim. The repo contains **no RPA
-  feature or docs**; only `ouroflow-rpa-*` sandbox names in use-case records. Leading with
+  feature or docs**; only `flowloop-rpa-*` sandbox names in use-case records. Leading with
   "RPA" would attract UiPath/Power Automate buyers and invite a relevance complaint.
 - **Claude Code is intentionally absent** — see §2, "Deliberately excluded". Add it only
   after a tested ACP adapter is documented in the README; it is the biggest untapped
@@ -137,7 +137,7 @@ opposite — near-zero search demand; it is here for exact-concept discovery, no
 - `claude-code` (128,694): **the largest missed audience, but not supported today.**
   `internal/proto/jsonlbackend/backend.go` says "NOT IMPLEMENTED for MVP … the acp
   backend is the only wired protocol today"; the README never mentions Claude Code;
-  the only reference is an example in `internal/service/assets/ouroflow-chat-create/SKILL.md:32`
+  the only reference is an example in `internal/service/assets/flowloop-chat-create/SKILL.md:32`
   and a test fixture (`claude --acp`). The Claude Code CLI reference has no `--acp`
   flag (checked 2026-11-23). Claiming it invites a broken first-run and issue churn.
   **Unlock:** ship + document a tested ACP adapter (e.g. a wrapper that bridges
@@ -150,7 +150,7 @@ opposite — near-zero search demand; it is here for exact-concept discovery, no
 - `acp` (1,364): ambiguous acronym (also Audio Control Protocol, etc.) and already
   covered by the spelled-out `agent-client-protocol`; hold it until ACP is a known
   search term in this niche.
-- `local-first` (36,342): SQLite state is local, but `ouroflow connect` runs agents on
+- `local-first` (36,342): SQLite state is local, but `flowloop connect` runs agents on
   another machine and the web UI is built separately (`README.md:56-67`). Strict
   local-first readers would call that a stretch; don't spend a slot on it.
 - `task-pipeline` (8) / `ai-task-automation` (8): near-zero traffic and no
@@ -185,7 +185,7 @@ The AI task pipeline OS: open-source and self-hosted, where natural-language acc
 **C. Problem-first (higher CTR on social, slightly less keyword-dense, 244 chars):**
 
 ```text
-Stop babysitting coding agents. Define 'done' once and OuroFlow runs the loop: execute, machine-verify, human gate, merge and push, with squads for parallel work. Open-source, self-hosted Go + Next.js, ACP/MCP, SQLite, GitHub & Feishu triggers.
+Stop babysitting coding agents. Define 'done' once and FlowLoop runs the loop: execute, machine-verify, human gate, merge and push, with squads for parallel work. Open-source, self-hosted Go + Next.js, ACP/MCP, SQLite, GitHub & Feishu triggers.
 ```
 
 **D. RSI-first (differentiation-led; lowest search traffic, 250 chars):**
@@ -202,7 +202,7 @@ hero and social, not for the repo About field.
 **Chinese / GitCode / 公众号 variant:**
 
 ```text
-OuroFlow：开源、自托管的 AI 智能体编排与自迭代工作流平台。用自然语言定义「完成」，编码 Agent 执行、机器验证、合并推送；W-RSI 循环提出下一轮改进，但提案、下一轮目标与人工门都由你审批。支持 RPA 风格的工作流自动化、ACP/MCP、SQLite、Go + Next.js。
+FlowLoop：开源、自托管的 AI 智能体编排与自迭代工作流平台。用自然语言定义「完成」，编码 Agent 执行、机器验证、合并推送；W-RSI 循环提出下一轮改进，但提案、下一轮目标与人工门都由你审批。支持 RPA 风格的工作流自动化、ACP/MCP、SQLite、Go + Next.js。
 ```
 
 ---
@@ -214,12 +214,12 @@ image on every X/Slack/Discord/WeChat share — a plain repo card loses clicks.
 
 Design brief:
 
-- Dark background (`#0B0F14`), OuroFlow wordmark left, tagline right:
+- Dark background (`#0B0F14`), FlowLoop wordmark left, tagline right:
   **“Define ‘done’. Agents run the loop.”**
 - Four-node loop: `Goal → Run → Verify → Gate → Ship`, with `Agent` and `Squad`
   as actors; one accent color for the gate (human approval).
 - Bottom strip: `Go · Next.js · ACP/MCP · SQLite · Self-hosted`, plus
-  `github.com/Sinkear/ouroflow`.
+  `github.com/Sinkear/flowloop`.
 - Export a 1200×630 OG variant for the website (`site/public/og.png`).
 - Add descriptive `alt` text wherever the image appears.
 
@@ -231,23 +231,23 @@ Current state: 222 lines, English, 4 shields badges, **no product image**, no FA
 no CI badge. Fix in this order:
 
 1. **First screen**: badges + one-sentence keyword subtitle under the H1:
-   > OuroFlow is an open-source **AI task pipeline OS**: **multi-agent orchestration**
+   > FlowLoop is an open-source **AI task pipeline OS**: **multi-agent orchestration**
    > for **coding agents** with **human-in-the-loop gates** and a human-gated
    > **workflow RSI** loop.
    Keep it human-readable; don't turn the first paragraph into a keyword list.
 2. **Add 2–3 visuals**: goal board, run/verification timeline, gate approval.
    Use `docs/images/` or `site/public/`; filenames like
-   `ouroflow-goal-board.png`; descriptive alt text.
+   `flowloop-goal-board.png`; descriptive alt text.
 3. **CI badge**: the repo already has `.github/workflows/ci.yml`; add its badge
    next to the existing four. A green build is a trust signal.
 4. **Add an FAQ** (also becomes `FAQPage` JSON-LD on the site):
    - What is an AI task pipeline OS?
-   - How is OuroFlow different from an agent framework (LangGraph, CrewAI)?
+   - How is FlowLoop different from an agent framework (LangGraph, CrewAI)?
    - Which CLI agents work today — and does Claude Code work? (Answer honestly: opencode
      is documented; Claude Code needs a tested ACP adapter first.)
    - Is it really self-hosted / local-first?
    - Can an agent merge without human approval?
-5. **Add a short comparison table** (OuroFlow vs. agent frameworks vs. cloud
+5. **Add a short comparison table** (FlowLoop vs. agent frameworks vs. cloud
    coding agents) on dimensions: acceptance criteria, machine verification,
    human gate, delivery, self-hosted.
 6. **Fix the factual inconsistency**: the heading says "13 concepts" but the table
@@ -263,7 +263,7 @@ no CI badge. Fix in this order:
 
 ## 6. Website SEO (after the Pages deploy is fixed)
 
-The site is a Next.js static export (`output: 'export'`, `basePath: '/ouroflow'`,
+The site is a Next.js static export (`output: 'export'`, `basePath: '/flowloop'`,
 `trailingSlash: true`). Today it has a single root `metadata` object, no OG/Twitter
 image, no canonical, no JSON-LD, no robots/sitemap/llms.txt.
 
@@ -274,25 +274,25 @@ Recommended metadata (per locale, in `site/app/[locale]/layout.tsx` or via
 export const metadata: Metadata = {
   metadataBase: new URL("https://sinkear.github.io"),
   title: {
-    default: "Graph-Driven AI Workflow OS for Coding Agents | OuroFlow", // 56 chars, keyword first
-    template: "%s | OuroFlow",
+    default: "Graph-Driven AI Workflow OS for Coding Agents | FlowLoop", // 56 chars, keyword first
+    template: "%s | FlowLoop",
   },
   description:
     "Graph-driven AI workflow OS: versioned Blueprint graphs, agent execution, RSI-proposed graph patches, human-approved vN+1. Self-hosted Go + Next.js, ACP/MCP.",
-  alternates: { canonical: "/ouroflow/en/" }, // per-locale
+  alternates: { canonical: "/flowloop/en/" }, // per-locale
   openGraph: {
     type: "website",
-    siteName: "OuroFlow",
+    siteName: "FlowLoop",
     title: "Graph-Driven AI Workflow OS for Coding Agents",
     description: "Blueprint goals compile into versioned graphs; agents execute; RSI proposes graph patches; you approve vN+1 and the gates.",
-    url: "https://sinkear.github.io/ouroflow/en/",
-    images: [{ url: "/ouroflow/og.png", width: 1200, height: 630 }],
+    url: "https://sinkear.github.io/flowloop/en/",
+    images: [{ url: "/flowloop/og.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Graph-Driven AI Workflow OS for Coding Agents",
     description: "Blueprint goals compile into versioned graphs. Agents execute. RSI proposes the next graph. You approve vN+1.",
-    images: ["/ouroflow/og.png"],
+    images: ["/flowloop/og.png"],
   },
   robots: { index: true, follow: true },
 };
@@ -308,26 +308,26 @@ Add:
   ```text
   User-agent: *
   Allow: /
-  Sitemap: https://sinkear.github.io/ouroflow/sitemap.xml
+  Sitemap: https://sinkear.github.io/flowloop/sitemap.xml
   ```
 - **`site/app/sitemap.ts`** (static export emits `sitemap.xml`): root, `/en/`,
   `/zh/`, docs pages; `lastModified` from build time.
 - **`site/public/llms.txt`** (GEO — how AI answer engines summarize the project):
   ```markdown
-  # OuroFlow
+  # FlowLoop
   > Open-source, self-hosted multi-agent orchestration for human-gated workflow
   > automation. Define 'done'; coding agents execute, machine-verify, merge and push;
   > a workflow RSI loop proposes the next round, and you approve proposals, goals and
   > gates. Go + Next.js, ACP/MCP, SQLite.
 
   ## Links
-  - GitHub: https://github.com/Sinkear/ouroflow
-  - Docs: https://github.com/Sinkear/ouroflow/tree/main/docs
-  - Site: https://sinkear.github.io/ouroflow/
-  - README (中文): https://github.com/Sinkear/ouroflow/blob/main/README.zh.md
+  - GitHub: https://github.com/Sinkear/flowloop
+  - Docs: https://github.com/Sinkear/flowloop/tree/main/docs
+  - Site: https://sinkear.github.io/flowloop/
+  - README (中文): https://github.com/Sinkear/flowloop/blob/main/README.zh.md
   ```
 - **`hreflang`** for `en` / `zh` via `alternates.languages`.
-- Fix brand casing in the existing root title (`ouroflow` → `OuroFlow`).
+- Fix brand casing in the existing root title (`flowloop` → `FlowLoop`).
 
 ---
 
@@ -354,10 +354,10 @@ Add:
 5. **README has no screenshots/GIF/FAQ/CI badge**; see §5.
 6. **Stale `origin` URL**: local `origin` still points at
    `git@github.com:Sinkear/agentwork.git`. It redirects, but update it to
-   `git@github.com:Sinkear/ouroflow.git` so clones, badges, and canonical links
+   `git@github.com:Sinkear/flowloop.git` so clones, badges, and canonical links
    don't propagate the old name:
    ```bash
-   git remote set-url origin git@github.com:Sinkear/ouroflow.git
+   git remote set-url origin git@github.com:Sinkear/flowloop.git
    ```
 7. **`13 concepts` vs 14 rows** in `README.md:85`; fixed in this working tree.
 8. **No `llms.txt` / sitemap / JSON-LD**; see §6.
@@ -401,7 +401,7 @@ the audit, so two repo counts are marked n/a above.
 
 1. **RPA is the highest-volume term in the pair, but it is the wrong lead.** Use it as
    a qualified modifier ("RPA-style workflow automation") and in comparison content
-   ("OuroFlow vs. RPA: process automation vs. acceptance-driven agent delivery").
+   ("FlowLoop vs. RPA: process automation vs. acceptance-driven agent delivery").
    Never call the product "an RPA platform".
 2. **`AI agents` / `multi-agent orchestration` are the demand terms.** The description
    leads with `multi-agent orchestration` and keeps `AI agents` in the topic set; that
@@ -462,7 +462,7 @@ links to the repo.
   referrers. Record weekly before/after metadata changes.
 - **GitHub search ranking**: check `multi-agent orchestration`, `ai task pipeline`,
   `acp coding agent`, `mcp coding agent`; note page position for the repo.
-- **Google/Bing**: `site:github.com/Sinkear/ouroflow`, plus the brand query; after
+- **Google/Bing**: `site:github.com/Sinkear/flowloop`, plus the brand query; after
   the site deploys, verify with Search Console and submit the sitemap.
 - **Leading indicators**: stars/week, forks, watchers, inbound issues/discussions,
   awesome-list acceptances, referrer domains.
@@ -478,7 +478,7 @@ the failure modes found while checking the current copy against the repo:
 - **Not "webhook-driven issue/PR automation."** Issues are poll + webhook; pull
   requests are poll-only (`README.md:29`).
 - **Not "single process · single machine."** `README.md:18` says it, but
-  `ouroflow connect` runs agents on another machine (`README.md:56-57`) and the web
+  `flowloop connect` runs agents on another machine (`README.md:56-57`) and the web
   UI is built/started separately (`README.md:64-67`). Say "single-user, local SQLite
   state, no cloud" instead.
 - **Not "fully unattended by default."** HITL is the default; HOOTL skips the human
@@ -493,9 +493,9 @@ the failure modes found while checking the current copy against the repo:
   reviewers are pulled into checkpoints (`README.md:95`).
 - **No enterprise/security claims.** `v0.0.1-beta.1`, single user, no auth. Avoid
   "production-ready", "secure", "multi-tenant", "enterprise-grade".
-- **No "first" or "built from scratch".** The README calls OuroFlow an independent
+- **No "first" or "built from scratch".** The README calls FlowLoop an independent
   derivative distribution of agentwork (`README.md:204`).
-- **"RPA-style" is an analogy, not a feature claim.** OuroFlow does not ship desktop
+- **"RPA-style" is an analogy, not a feature claim.** FlowLoop does not ship desktop
   UI bots, recorder/attended RPA, or UiPath/Power Automate connectors. It automates
   software-delivery workflows with coding agents. Keep "RPA-style workflow automation"
   and do not shorten it to "RPA platform".

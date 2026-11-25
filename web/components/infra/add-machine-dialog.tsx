@@ -5,7 +5,7 @@ import { Check, Copy, Terminal } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import { copyText } from "./shared";
 
-const CONNECT_CMD = "ouroflow connect";
+const CONNECT_CMD = "flowloop connect";
 
 // “添加机器”没有后端注册端点：机器是通过在主机上运行 connect 命令完成
 // 自注册的。所以这个弹窗给的是唯一可复制的命令 + 执行步骤，不伪造表单。
@@ -43,7 +43,7 @@ export function AddMachineDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <p className="text-sm leading-relaxed text-ink-2">
-        机器由主机侧主动注册：在目标主机上安装 ouroflow CLI，然后执行下面这条命令并保持进程运行。
+        机器由主机侧主动注册：在目标主机上安装 flowloop CLI，然后执行下面这条命令并保持进程运行。
         连接成功后这台机器会自动出现在左侧列表，探测到的 agent CLI 会自动注册成运行时。
       </p>
 
@@ -76,12 +76,12 @@ export function AddMachineDialog({ onClose }: { onClose: () => void }) {
       <ol className="space-y-1.5 text-xs leading-relaxed text-ink-3">
         <li className="flex gap-2">
           <span className="font-mono text-ink-3">1.</span>
-          在主机安装与平台一致版本的 ouroflow（安装后 <code className="font-mono">ouroflow</code>{" "}
+          在主机安装与平台一致版本的 flowloop（安装后 <code className="font-mono">flowloop</code>{" "}
           在 PATH 上）。
         </li>
         <li className="flex gap-2">
           <span className="font-mono text-ink-3">2.</span>
-          在主机执行 <code className="font-mono">ouroflow connect</code>，保持进程常驻；心跳丢失后机器会标记为离线。
+          在主机执行 <code className="font-mono">flowloop connect</code>，保持进程常驻；心跳丢失后机器会标记为离线。
         </li>
         <li className="flex gap-2">
           <span className="font-mono text-ink-3">3.</span>
