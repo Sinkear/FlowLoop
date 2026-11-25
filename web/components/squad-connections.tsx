@@ -258,7 +258,7 @@ function ConnectionCard({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-3">
             <span>项目</span>
             <Link
-              href="/domains"
+              href="/projects"
               className="min-w-0 truncate text-ink-2 transition-colors hover:text-accent"
               title={domain?.name ?? conn.domain_id}
             >
@@ -541,8 +541,8 @@ function CreateConnectionDialog({
             {eligible.length === 0 ? (
               <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-xs leading-relaxed text-ink-3">
                 没有可接入的仓库：要么还没有 repo 类型且填了「跟踪仓库」的项目，要么本小队已经接入了全部可用仓库。先到{" "}
-                <Link href="/domains" className="text-accent hover:text-accent-dim">
-                  Domains 页
+                <Link href="/projects" className="text-accent hover:text-accent-dim">
+                  项目页
                 </Link>{" "}
                 创建 repo 类型的项目并填写「跟踪仓库」。
               </div>

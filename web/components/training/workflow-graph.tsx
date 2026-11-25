@@ -34,7 +34,7 @@ import {
 // 只读 DAG 的分层布局。不引第三方图库：
 // 横向按拓扑层排列，纵向同层横排；坐标是固定的 CSS 像素，连线用 SVG 画。
 // 卡片尺寸（m04217 视觉统一）：比旧版高一档，为了装下「状态章 + 两行标题 +
-// 元数据脚注」，和蓝本规范图的节点卡共用同一套版式。
+// 元数据脚注」，和工作流规范图的节点卡共用同一套版式。
 const NODE_W = 212;
 const NODE_H = 94;
 const GAP_X = 66;
@@ -49,7 +49,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
   review: Eye,
   consult: MessageSquare,
   integrate: GitMerge,
-  // 蓝本规范图节点（Phase A）；未知 kind 已有 fallback（Waypoints）。
+  // 工作流规范图节点（Phase A）；未知 kind 已有 fallback（Waypoints）。
   task: ListChecks,
   condition: Split,
   router: ForkKnife,
@@ -223,7 +223,7 @@ const STATUS_META: Record<string, StatusMeta> = {
   pending: { label: "待执行", bar: "bg-ink-3/50", chip: "bg-surface-2 text-ink-3", dot: "bg-ink-3" },
   queued: { label: "排队中", bar: "bg-ink-3/50", chip: "bg-surface-2 text-ink-3", dot: "bg-ink-3" },
   cancelled: { label: "已取消", bar: "bg-zinc-400", chip: "bg-zinc-500/10 text-ink-3", dot: "bg-zinc-400" },
-  // 蓝本规范图节点：非执行态，用中性青区分「这是规范，不是执行记录」。
+  // 工作流规范图节点：非执行态，用中性青区分「这是规范，不是执行记录」。
   spec: { label: "计划", bar: "bg-teal-400", chip: "bg-teal-500/10 text-teal-300", dot: "bg-teal-400" },
 };
 
@@ -283,7 +283,7 @@ function NodeCard({
     .filter(Boolean)
     .join("\n");
 
-  // 版式与蓝本规范图节点卡统一（m04217）：左侧状态色条 → 类型章 + 状态章 →
+  // 版式与工作流规范图节点卡统一（m04217）：左侧状态色条 → 类型章 + 状态章 →
   // 两行标题（不再 truncate 成一行，长标题在图上可读）→ 脚注元数据。
   return (
     <div
@@ -392,7 +392,7 @@ function EdgeLine({
   );
 }
 
-// 编排指标行（m04217）：和蓝本列表的 StatStrip 一个版式——小号大写标签 +
+// 编排指标行（m04217）：和工作流列表的 StatStrip 一个版式——小号大写标签 +
 // 等宽大数字，值才是主角。旧版 14px 数值和标签几乎同权重，八格读起来像表格。
 // tone 只在本省得的指标上标警（返工率 > 0、分派失衡 > 1.3×），其余保持中性。
 export function WorkflowMetricsRow({
@@ -526,7 +526,7 @@ function fmtLaneImbalance(v: number | null): string {
 }
 
 // 节点类型图例（m04217）：按 kind 计数渲染彩色章（类型章与节点卡同一套
-// NODE_KIND_META.badge），右侧是结构计数。蓝本规范图与执行编排图共用这一份，
+// NODE_KIND_META.badge），右侧是结构计数。工作流规范图与执行编排图共用这一份，
 // 免得两个页面各写一份、颜色和文案慢慢漂开。
 export function WorkflowKindLegend({
   graph,
@@ -590,7 +590,7 @@ export function WorkflowGraphView({
   heightClass?: string;
   showMetrics?: boolean;
   /**
-   * spec = 蓝本规范图（计划态，未执行）：隐藏执行期概念——冻结横幅、
+   * spec = 工作流规范图（计划态，未执行）：隐藏执行期概念——冻结横幅、
    * 深度、生成时间、节点耗时、执行指标行；图例只列图上真实出现的边类型。
    * 同一渲染器两种“味”（提案 §4.12），不是两套组件。
    */
@@ -655,7 +655,7 @@ export function WorkflowGraphView({
           <Waypoints className="h-5 w-5 text-ink-3" />
           <p className="text-sm text-ink-2">还没有可展示的编排图</p>
           <p className="max-w-md text-xs leading-relaxed text-ink-3">
-            训练会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
+            复盘会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
             分析失败或任务尚未拆解时为空。
           </p>
         </div>
@@ -672,7 +672,7 @@ export function WorkflowGraphView({
   return (
     <div className="space-y-0">
       {/* 工具条（m04217）：第一行只说「这是什么图 + 缩放」，节点类型图例
-          单独一行带计数——和蓝本规范图同一套层级，读者先认图再认结构。 */}
+          单独一行带计数——和工作流规范图同一套层级，读者先认图再认结构。 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[11px] text-ink-3">
         <span className="inline-flex items-center gap-1 text-ink-2">
           <Waypoints className="h-3.5 w-3.5" />

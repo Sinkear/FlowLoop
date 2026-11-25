@@ -1063,6 +1063,9 @@ func TestNormalizeKindFilter(t *testing.T) {
 func TestRefreshWritesSkillFilesWithoutPanic(t *testing.T) {
 	c := newTemplateCluster(t)
 	ctx := context.Background()
+	if err := c.templates.SetRepoConfig(ctx, TemplateRepoConfig{GitURL: "https://example.invalid/templates.git", Branch: "main"}); err != nil {
+		t.Fatalf("set repo: %v", err)
+	}
 
 	orig := fetchTemplateFiles
 	fetchTemplateFiles = func(ctx context.Context, cfg TemplateRepoConfig, token string) (map[string]string, error) {
@@ -1215,6 +1218,9 @@ spec:
 
 func TestRefreshAppliesIndependentTimeout(t *testing.T) {
 	c := newTemplateCluster(t)
+	if err := c.templates.SetRepoConfig(context.Background(), TemplateRepoConfig{GitURL: "https://example.invalid/templates.git", Branch: "main"}); err != nil {
+		t.Fatalf("set repo: %v", err)
+	}
 
 	orig := fetchTemplateFiles
 	// The stub asserts the ctx Refresh passes in carries its OWN deadline —

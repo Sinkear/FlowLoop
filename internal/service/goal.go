@@ -77,6 +77,18 @@ type Goal struct {
 	// transaction, and the finalization guard counts blueprint_node rows so
 	// a skipped node can never silently pass (漏跑 → structural block).
 	BlueprintVersionID string `json:"blueprint_version_id"`
+	// SkipDefaultWorkflow opts a squad task out of the squad's default workflow
+	// (D2: default use, explicit opt-out). It is a creation-time input only —
+	// not persisted; the resolved/pinned version lives in BlueprintVersionID.
+	SkipDefaultWorkflow bool `json:"skip_default_workflow,omitempty"`
+	// BlueprintID/BlueprintName/BlueprintVersion are read-only projections of
+	// BlueprintVersionID (the pin), filled by Get. They exist so the Web can say
+	// which workflow a task ran instead of showing a raw version hash or
+	// re-deriving the name from a version list the page doesn't load. '' / 0
+	// when the goal has no pin (infer mode) or the pinned version was deleted.
+	BlueprintID      string `json:"blueprint_id,omitempty"`
+	BlueprintName    string `json:"blueprint_name,omitempty"`
+	BlueprintVersion int    `json:"blueprint_version,omitempty"`
 }
 
 // goalRunContext is what ReconcileOnRunEnd reasons about. Carried separately
@@ -340,6 +352,11 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 
 	// RSI defaults + validation. An omitted mode is inference, so every old
 	// client keeps working; the trace knobs only apply to training goals.
+	// Remember whether the caller chose a mode explicitly: when an omitted mode
+	// later resolves a squad's default workflow, that workflow is the subject
+	// of the task and must be reviewed (train) for the optimization loop to see
+	// it. An explicit infer stays infer.
+	modeProvided := g.ExecutionMode != ""
 	if g.ExecutionMode == "" {
 		g.ExecutionMode = "infer"
 	}
@@ -366,13 +383,38 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 	if g.SampleRate > 1 {
 		return nil, NewValidationError("sample_rate must be in (0,1]")
 	}
-	// Blueprint pin (Phase A): '' = infer mode, unchanged semantics. A
-	// non-empty pin must reference a PUBLISHED version — a draft can be
-	// edited, so compiling it would let the goal run an unfrozen spec.
+	// Workflow pin (Phase B, D1/D2). An empty pin on a squad task resolves the
+	// squad's default workflow (latest published version) unless the caller
+	// explicitly opted out with skip_default_workflow. A non-empty pin must be
+	// a PUBLISHED version, and an owned workflow must match the task's squad.
+	// Legacy (squad_id='') pins stay readable for already-pinned goals/tests;
+	// new UI never offers them.
+	if g.BlueprintVersionID == "" && g.AssigneeType == "squad" && g.AssigneeID != "" && !g.SkipDefaultWorkflow {
+		var defWorkflow string
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(default_workflow_id,'') FROM squad WHERE id=?`, g.AssigneeID).Scan(&defWorkflow); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("load squad default workflow: %w", err)
+		}
+		if defWorkflow != "" {
+			var defaultPin string
+			if err := s.st.DB().QueryRowContext(ctx,
+				`SELECT bv.id FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id
+				 WHERE b.id=? AND bv.status='published' ORDER BY bv.version DESC LIMIT 1`, defWorkflow).
+				Scan(&defaultPin); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("load squad default workflow version: %w", err)
+			}
+			g.BlueprintVersionID = defaultPin
+			if defaultPin != "" && !modeProvided {
+				g.ExecutionMode = "train"
+			}
+		}
+	}
 	if g.BlueprintVersionID != "" {
-		var status string
+		var status, blueprintID, ownerSquad string
 		err := s.st.DB().QueryRowContext(ctx,
-			`SELECT status FROM blueprint_version WHERE id=?`, g.BlueprintVersionID).Scan(&status)
+			`SELECT bv.status, bv.blueprint_id, b.squad_id FROM blueprint_version bv
+			 JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=?`, g.BlueprintVersionID).
+			Scan(&status, &blueprintID, &ownerSquad)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q not found", g.BlueprintVersionID))
 		}
@@ -381,6 +423,11 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		}
 		if status != "published" {
 			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q is %s — only a published version can be pinned", g.BlueprintVersionID, status))
+		}
+		if ownerSquad != "" {
+			if g.AssigneeType != "squad" || g.AssigneeID != ownerSquad {
+				return nil, NewValidationError("workflow belongs to a different squad — pick one of this task's squad workflows or use auto-decomposition")
+			}
 		}
 	}
 	g.ID = newID()
@@ -507,7 +554,10 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
-		     ELSE 'awaiting_review' END
+		     ELSE 'awaiting_review' END,
+		        COALESCE((SELECT bv.blueprint_id FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT b.name FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),0)
 		 FROM goal g ORDER BY g.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -517,7 +567,7 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	for rows.Next() {
 		var g Goal
 		var domainID, currentAgent sql.NullString
-		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase); err != nil {
+		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase, &g.BlueprintID, &g.BlueprintName, &g.BlueprintVersion); err != nil {
 			return nil, err
 		}
 		g.DomainID = domainID.String
@@ -678,9 +728,12 @@ func (s *GoalService) Get(ctx context.Context, id string) (*Goal, error) {
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
-		     ELSE 'awaiting_review' END
+		     ELSE 'awaiting_review' END,
+		        COALESCE((SELECT bv.blueprint_id FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT b.name FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),0)
 		 FROM goal g WHERE g.id=?`, id).
-		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase)
+		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase, &g.BlueprintID, &g.BlueprintName, &g.BlueprintVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

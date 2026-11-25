@@ -4,15 +4,12 @@ import { useState, type ReactNode } from "react";
 import { FolderOpen, GitBranch } from "lucide-react";
 import { Button, Dialog, Field, inputCls, Segmented } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { WebhookPanel } from "@/components/webhook-panel";
 import {
-  useAgents,
-  useSquads,
   useCreateDomain,
   useUpdateDomain,
   useSetDomainAcceptanceLevel,
 } from "@/lib/queries";
-import type { Agent, Domain, Squad } from "@/lib/types";
+import type { Domain } from "@/lib/types";
 
 type ProjectType = "repo" | "scratch";
 type Acceptance = "" | "hitl" | "hootl";
@@ -75,54 +72,8 @@ function Fold({ summary, hint, children }: { summary: string; hint?: string; chi
   );
 }
 
-// AssigneePicker combines agents and squads in one select; the option value
-// carries the kind ("agent:id" / "squad:id") so both columns stay in sync.
-function AssigneePicker({
-  label,
-  hint,
-  assignee,
-  assigneeType,
-  agents,
-  squads,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  assignee: string;
-  assigneeType: string;
-  agents?: Agent[];
-  squads?: Squad[];
-  onChange: (id: string, type: string) => void;
-}) {
-  const value = assignee ? `${assigneeType || "agent"}:${assignee}` : "";
-  const pick = (raw: string) => {
-    if (!raw) return onChange("", "");
-    const i = raw.indexOf(":");
-    onChange(raw.slice(i + 1), raw.slice(0, i));
-  };
-  return (
-    <Field label={label} hint={hint}>
-      <select value={value} onChange={(e) => pick(e.target.value)} className={inputCls}>
-        <option value="">不自动处理</option>
-        <optgroup label="Agent">
-          {(agents ?? []).map((a) => (
-            <option key={a.id} value={`agent:${a.id}`}>{a.name}</option>
-          ))}
-        </optgroup>
-        <optgroup label="小队">
-          {(squads ?? []).map((s) => (
-            <option key={s.id} value={`squad:${s.id}`}>{s.name}</option>
-          ))}
-        </optgroup>
-      </select>
-    </Field>
-  );
-}
-
-export function ProjectForm({ project, onClose }: { project?: Domain; onClose: () => void }) {
+export function ProjectForm({ project, onClose, onCreated, embedded }: { project?: Domain; onClose: () => void; onCreated?: (domain: Domain) => void; embedded?: boolean }) {
   const isEdit = !!project;
-  const { data: agents } = useAgents();
-  const { data: squads } = useSquads();
   const create = useCreateDomain();
   const update = useUpdateDomain();
   const setLevel = useSetDomainAcceptanceLevel();
@@ -167,7 +118,13 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
     if (!project) {
       create.mutate(
         { ...body, type, acceptance_level: level },
-        { onSuccess: onClose, onError: (err) => setError(String(err)) }
+        {
+          onSuccess: (domain) => {
+            onCreated?.(domain);
+            onClose();
+          },
+          onError: (err) => setError(String(err)),
+        }
       );
       return;
     }
@@ -176,11 +133,15 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
     update.mutate(
       { id: project.id, body },
       {
-        onSuccess: () =>
+        onSuccess: () => {
           setLevel.mutate(
             { id: project.id, level },
-            { onSuccess: onClose, onError: (err) => setError(String(err)) }
-          ),
+            {
+              onSuccess: onClose,
+              onError: (err) => setError(String(err)),
+            }
+          );
+        },
         onError: (err) => setError(String(err)),
       }
     );
@@ -191,6 +152,7 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
       title={project ? `配置项目：${project.name}` : "新建项目"}
       onClose={onClose}
       wide
+      inline={embedded}
       footer={
         <>
           <Button variant="outline" onClick={onClose}>取消</Button>
@@ -201,9 +163,22 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
       }
     >
       <form id="project-form" onSubmit={submit} className="space-y-4">
-        <Field label="名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：ouroflow" required />
-        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="名称">
+            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：ouroflow" required />
+          </Field>
+          <Field label="验收级别" hint={ACCEPTANCE_DESC[level]}>
+            <Segmented
+              value={level}
+              onChange={(v) => setLevelState(v)}
+              options={[
+                { value: "", label: "待定" },
+                { value: "hitl", label: "人工验收 HITL" },
+                { value: "hootl", label: "自动验收 HOOTL" },
+              ]}
+            />
+          </Field>
+        </div>
 
         <Field label="项目类型" hint={project ? "类型创建后不可修改" : undefined}>
           <div
@@ -220,7 +195,9 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
                   type="button"
                   role="radio"
                   aria-checked={active}
-                  onClick={() => setType(t.value)}
+                  onClick={() => { if (!project) setType(t.value); }}
+                  disabled={!!project}
+                  tabIndex={project ? -1 : 0}
                   className={cn(
                     "flex min-h-[92px] items-start gap-2.5 rounded-md border p-3 text-left transition-colors duration-150",
                     active
@@ -247,77 +224,31 @@ export function ProjectForm({ project, onClose }: { project?: Domain; onClose: (
         </Field>
 
         {isRepo && (
-          <Field label="仓库地址">
-            <input value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} className={inputCls} placeholder="https://github.com/you/repo.git" required />
-          </Field>
-        )}
-
-        {isRepo && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <Field label="仓库地址">
+                <input value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} className={inputCls} placeholder="https://github.com/you/repo.git" required />
+              </Field>
+            </div>
             <Field label="默认分支">
               <input value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls} placeholder="main" />
             </Field>
             <Field label="提交身份">
               <input value={identity} onChange={(e) => setIdentity(e.target.value)} className={inputCls} placeholder="ouroflow-bot <bot@example.com>" />
             </Field>
-          </div>
-        )}
-
-        {isRepo && (
-          <Field label="访问令牌" hint="用于 clone / push / webhook / 读写 PR；编辑时留空表示保持原令牌。">
-            <input
-              type="password"
-              value={credentials}
-              onChange={(e) => setCredentials(e.target.value)}
-              className={inputCls}
-              placeholder={project ? "留空 = 保持原令牌" : "GitHub PAT 或 GitCode token"}
-              autoComplete="new-password"
-            />
-          </Field>
-        )}
-
-        <Field label="验收级别" hint={ACCEPTANCE_DESC[level]}>
-          <Segmented
-            value={level}
-            onChange={(v) => setLevelState(v)}
-            options={[
-              { value: "", label: "待定" },
-              { value: "hitl", label: "人工验收 HITL" },
-              { value: "hootl", label: "自动验收 HOOTL" },
-            ]}
-          />
-        </Field>
-
-        {isRepo && (
-          <Fold summary="自动处理 PR / Issue" hint="可选">
-            <p className="text-xs text-ink-3">
-              选定处理方后，仓库 webhook 收到的新 PR / Issue 会自动创建任务（合并 / 关闭仍由人决定）。
-            </p>
-            <AssigneePicker
-              label="处理 PR 的 Agent / 小队"
-              assignee={pullAssignee}
-              assigneeType={pullType}
-              agents={agents}
-              squads={squads}
-              onChange={(id, t) => { setPullAssignee(id); setPullType(t || "agent"); }}
-            />
-            <AssigneePicker
-              label="处理 Issue 的 Agent / 小队"
-              assignee={issueAssignee}
-              assigneeType={issueType}
-              agents={agents}
-              squads={squads}
-              onChange={(id, t) => { setIssueAssignee(id); setIssueType(t || "agent"); }}
-            />
-          </Fold>
-        )}
-
-        {project && project.type === "repo" && gitTarget.repo && (
-          <Fold summary="Webhook 接入" hint={gitTarget.repo}>
-            <div className="rounded-md border border-line p-3">
-              <WebhookPanel domainId={project.id} provider={gitTarget.provider} repo={gitTarget.repo} />
+            <div className="md:col-span-2">
+              <Field label="访问令牌" hint="用于 clone / push / webhook / 读写 PR；编辑时留空表示保持原令牌。">
+                <input
+                  type="password"
+                  value={credentials}
+                  onChange={(e) => setCredentials(e.target.value)}
+                  className={inputCls}
+                  placeholder={project ? "留空 = 保持原令牌" : "GitHub PAT 或 GitCode token"}
+                  autoComplete="new-password"
+                />
+              </Field>
             </div>
-          </Fold>
+          </div>
         )}
 
         {error && <p className="text-sm text-red-400 break-words">{error}</p>}

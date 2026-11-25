@@ -58,7 +58,7 @@ function KVRows({ rows, onChange, keyPlaceholder, valuePlaceholder }: {
 // AgentForm: 新建/编辑 Agent。基础配置平铺，运维项（并发/环境变量/额外
 // MCP 服务器）收进"高级设置"折叠区——env 是键值对行，MCP 服务器是结构化
 // 条目，都不要求手写 JSON。
-export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => void }) {
+export function AgentForm({ agent, onClose, onCreated, embedded }: { agent?: Agent; onClose: () => void; onCreated?: (agent: Agent) => void; embedded?: boolean }) {
   const create = useCreateAgent();
   const update = useUpdateAgent();
   const { data: runtimes } = useRuntimes();
@@ -134,7 +134,7 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
     if (agent) {
       update.mutate({ id: agent.id, ...body }, { onSuccess: onClose });
     } else {
-      create.mutate(body, { onSuccess: onClose });
+      create.mutate(body, { onSuccess: (created) => { onCreated?.(created); onClose(); } });
     }
   };
 
@@ -143,6 +143,7 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
       title={agent ? `编辑 Agent：${agent.name}` : "新建 Agent"}
       onClose={onClose}
       wide
+      inline={embedded}
       footer={
         <>
           <Button variant="outline" onClick={onClose}>取消</Button>
@@ -153,32 +154,75 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
       }
     >
       <form id="agent-form" onSubmit={handleSubmit} className="space-y-4">
-        <Field label="名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} required />
-        </Field>
-
-        <Field label="类型" hint="标准=普通 agent；管家=系统级 agent（team 导入 / 自然语言指令）">
-          <select value={type} onChange={(e) => setType(e.target.value)} className={inputCls}>
-            <option value="standard">标准</option>
-            <option value="steward">管家</option>
-          </select>
-        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="名称">
+            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} required />
+          </Field>
+          <Field label="类型" hint="标准=普通 agent；管家=系统级 agent（team 导入 / 自然语言指令）">
+            <select value={type} onChange={(e) => setType(e.target.value)} className={inputCls}>
+              <option value="standard">标准</option>
+              <option value="steward">管家</option>
+            </select>
+          </Field>
+        </div>
 
         <Field label="描述" hint="一句话说明这个 agent 干什么（列表里展示）；和 System Prompt 不同，这是给人看的">
           <input value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} placeholder="如：前端实现 + UI 审查" />
         </Field>
 
-        <Field label="Runtime">
-          <select value={runtimeId} onChange={(e) => setRuntimeId(e.target.value)} className={inputCls} required>
-            <option value="">选择…</option>
-            {runtimes?.map((rt) => (
-              <option key={rt.id} value={rt.id}>{rt.name}</option>
-            ))}
-          </select>
-        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Runtime">
+            <select value={runtimeId} onChange={(e) => setRuntimeId(e.target.value)} className={inputCls} required>
+              <option value="">选择…</option>
+              {runtimes?.map((rt) => (
+                <option key={rt.id} value={rt.id}>{rt.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Model" hint={modelHint}>
+            <select
+              value={customModel ? CUSTOM_MODEL : model}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === CUSTOM_MODEL) {
+                  setCustomModel(true);
+                  // 回到上次手输的值；没有草稿就沿用当前值（如尚未探测到的旧模型）。
+                  setModel(customDraft || model);
+                } else {
+                  if (customModel) setCustomDraft(model);
+                  setCustomModel(false);
+                  setModel(v);
+                }
+              }}
+              className={inputCls}
+              disabled={!runtimeId}
+            >
+              <option value="">runtime 默认（留空）</option>
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name || m.id}
+                  {detectedModels.some((d) => d.id === m.id) ? "" : "（当前配置）"}
+                </option>
+              ))}
+              <option value={CUSTOM_MODEL}>自定义…</option>
+            </select>
+            {customModel && (
+              <input
+                value={model}
+                onChange={(e) => {
+                  setModel(e.target.value);
+                  setCustomDraft(e.target.value);
+                }}
+                className={`${inputCls} mt-1.5`}
+                placeholder="输入模型 ID，如 claude-opus-4-1"
+                aria-label="自定义模型 ID"
+              />
+            )}
+          </Field>
+        </div>
 
         <Field label="System Prompt">
-          <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className={`${inputCls} font-mono`} rows={3} />
+          <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className={`${inputCls} font-mono`} rows={4} />
         </Field>
 
         <Field label="Skills（平台技能库）" hint="勾选的 skill 会下发到该 agent 所在机器，run 时按原名装入工作目录的项目级 skills">
@@ -222,47 +266,6 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
               )}
             </div>
           </div>
-        </Field>
-
-        <Field label="Model" hint={modelHint}>
-          <select
-            value={customModel ? CUSTOM_MODEL : model}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === CUSTOM_MODEL) {
-                setCustomModel(true);
-                // 回到上次手输的值；没有草稿就沿用当前值（如尚未探测到的旧模型）。
-                setModel(customDraft || model);
-              } else {
-                if (customModel) setCustomDraft(model);
-                setCustomModel(false);
-                setModel(v);
-              }
-            }}
-            className={inputCls}
-            disabled={!runtimeId}
-          >
-            <option value="">runtime 默认（留空）</option>
-            {modelOptions.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name || m.id}
-                {detectedModels.some((d) => d.id === m.id) ? "" : "（当前配置）"}
-              </option>
-            ))}
-            <option value={CUSTOM_MODEL}>自定义…</option>
-          </select>
-          {customModel && (
-            <input
-              value={model}
-              onChange={(e) => {
-                setModel(e.target.value);
-                setCustomDraft(e.target.value);
-              }}
-              className={`${inputCls} mt-1.5`}
-              placeholder="输入模型 ID，如 claude-opus-4-1"
-              aria-label="自定义模型 ID"
-            />
-          )}
         </Field>
 
         <details className="text-xs">

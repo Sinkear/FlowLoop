@@ -23,7 +23,11 @@ type Squad struct {
 	Description  string `json:"description"`
 	LeaderID     string `json:"leader_id"`
 	Instructions string `json:"instructions"`
-	CreatedAt    string `json:"created_at"`
+	// DefaultWorkflowID is a blueprint (workflow) id, not a version. The goal
+	// form resolves its latest published version at creation time and pins it.
+	// '' = no default → the task auto-decomposes.
+	DefaultWorkflowID string `json:"default_workflow_id"`
+	CreatedAt         string `json:"created_at"`
 }
 
 // SquadMember is one member of a squad. Polymorphic: member_type ∈ {agent,human}.
@@ -90,11 +94,17 @@ func (s *SquadService) Create(ctx context.Context, sq Squad) (*Squad, error) {
 	if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, sq.LeaderID, "leader agent"); err != nil {
 		return nil, err
 	}
+	// A brand-new squad cannot own a workflow yet, so default_workflow_id is
+	// only settable after creation (Update validates ownership). Reject early
+	// rather than persisting an unvalidated cross-squad reference.
+	if sq.DefaultWorkflowID != "" {
+		return nil, NewValidationError("default_workflow_id can only be set after the squad is created")
+	}
 	sq.ID = newID()
 	sq.CreatedAt = now()
 	if _, err := s.st.DB().ExecContext(ctx,
-		`INSERT INTO squad (id,name,description,leader_id,instructions,created_at) VALUES (?,?,?,?,?,?)`,
-		sq.ID, sq.Name, sq.Description, sq.LeaderID, sq.Instructions, sq.CreatedAt); err != nil {
+		`INSERT INTO squad (id,name,description,leader_id,instructions,default_workflow_id,created_at) VALUES (?,?,?,?,?,?,?)`,
+		sq.ID, sq.Name, sq.Description, sq.LeaderID, sq.Instructions, sq.DefaultWorkflowID, sq.CreatedAt); err != nil {
 		if ve := dupNameCodedError(err, CodeSquadNameExists, "squad", sq.Name); ve != nil {
 			return nil, ve
 		}
@@ -160,7 +170,7 @@ func (s *SquadService) UpsertByName(ctx context.Context, name, description, lead
 
 func (s *SquadService) List(ctx context.Context) ([]Squad, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,name,description,leader_id,instructions,created_at FROM squad ORDER BY created_at`)
+		`SELECT id,name,description,leader_id,instructions,default_workflow_id,created_at FROM squad ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +178,7 @@ func (s *SquadService) List(ctx context.Context) ([]Squad, error) {
 	out := []Squad{}
 	for rows.Next() {
 		var sq Squad
-		if err := rows.Scan(&sq.ID, &sq.Name, &sq.Description, &sq.LeaderID, &sq.Instructions, &sq.CreatedAt); err != nil {
+		if err := rows.Scan(&sq.ID, &sq.Name, &sq.Description, &sq.LeaderID, &sq.Instructions, &sq.DefaultWorkflowID, &sq.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, sq)
@@ -179,8 +189,8 @@ func (s *SquadService) List(ctx context.Context) ([]Squad, error) {
 func (s *SquadService) Get(ctx context.Context, id string) (*Squad, error) {
 	var sq Squad
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,name,description,leader_id,instructions,created_at FROM squad WHERE id=?`, id).
-		Scan(&sq.ID, &sq.Name, &sq.Description, &sq.LeaderID, &sq.Instructions, &sq.CreatedAt)
+		`SELECT id,name,description,leader_id,instructions,default_workflow_id,created_at FROM squad WHERE id=?`, id).
+		Scan(&sq.ID, &sq.Name, &sq.Description, &sq.LeaderID, &sq.Instructions, &sq.DefaultWorkflowID, &sq.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -208,15 +218,38 @@ func (s *SquadService) Update(ctx context.Context, id string, sq Squad) (*Squad,
 	if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, sq.LeaderID, "leader agent"); err != nil {
 		return nil, err
 	}
+	if sq.DefaultWorkflowID != "" {
+		if err := s.validateDefaultWorkflow(ctx, id, sq.DefaultWorkflowID); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := s.st.DB().ExecContext(ctx,
-		`UPDATE squad SET name=?, description=?, leader_id=?, instructions=? WHERE id=?`,
-		sq.Name, sq.Description, sq.LeaderID, sq.Instructions, id); err != nil {
+		`UPDATE squad SET name=?, description=?, leader_id=?, instructions=?, default_workflow_id=? WHERE id=?`,
+		sq.Name, sq.Description, sq.LeaderID, sq.Instructions, sq.DefaultWorkflowID, id); err != nil {
 		if ve := dupNameCodedError(err, CodeSquadNameExists, "squad", sq.Name); ve != nil {
 			return nil, ve
 		}
 		return nil, fmt.Errorf("update squad: %w", err)
 	}
 	return s.Get(ctx, id)
+}
+
+// validateDefaultWorkflow ensures the chosen default is a workflow owned by
+// this squad. Legacy (squad_id="") workflows can never become a default.
+func (s *SquadService) validateDefaultWorkflow(ctx context.Context, squadID, workflowID string) error {
+	var owner string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT squad_id FROM blueprint WHERE id=?`, workflowID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NewValidationError(fmt.Sprintf("default_workflow_id %q not found", workflowID))
+	}
+	if err != nil {
+		return fmt.Errorf("check default workflow: %w", err)
+	}
+	if squadID == "" || owner != squadID {
+		return NewValidationError("default_workflow_id must be a workflow owned by this squad")
+	}
+	return nil
 }
 
 // RemoveMember detaches a member from the squad (the leader is stored in
@@ -476,6 +509,41 @@ func (s *SquadService) Delete(ctx context.Context, id string) error {
 		return NewCodedErrorDetail(CodeSquadHandlesIssues,
 			fmt.Sprintf("squad %q handles issues for %d domain(s); reassign issue handling first", name, n),
 			map[string]any{"name": name, "count": n})
+	}
+	// Workflow ownership guard (Phase B): a squad owning workflows cannot be
+	// deleted — delete or hand off its workflows first. Legacy workflows
+	// (squad_id='') are not owned by any squad and do not block this.
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint WHERE squad_id=?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check workspace workflows: %w", err)
+	}
+	if n > 0 {
+		var name string
+		_ = tx.QueryRowContext(ctx, `SELECT name FROM squad WHERE id=?`, id).Scan(&name)
+		if name == "" {
+			name = id
+		}
+		return NewCodedErrorDetail(CodeSquadHasGoals,
+			fmt.Sprintf("squad %q owns %d workflow(s); delete or move them first", name, n),
+			map[string]any{"name": name, "count": n})
+	}
+	// A squad joined to projects (project_squad) or with a repo connection is
+	// still in use: the connection would fire webhooks for a deleted squad.
+	// Force the caller to remove it from those projects / delete the
+	// connection first.
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM project_squad WHERE squad_id=?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check project memberships: %w", err)
+	}
+	if n > 0 {
+		return NewValidationError(fmt.Sprintf("squad %q is still joined to %d project(s); remove it from those projects first", id, n))
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM connection WHERE squad_id=?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check connections: %w", err)
+	}
+	if n > 0 {
+		return NewValidationError(fmt.Sprintf("squad %q still has %d repo connection(s); delete them first", id, n))
 	}
 	// Guards passed (zero referencing rows). squad_member.squad_id is ON DELETE
 	// CASCADE; the explicit delete is kept for clarity and ordering.

@@ -266,7 +266,12 @@ export interface Goal {
   content_capture?: string; // none|redacted|full（train 模式）
   budget_usd?: number; // 分析预算（train 模式默认 2）
   sample_rate?: number; // 采样率 0..1（train 模式默认 1）
-  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 蓝本驱动（Activate 编译 + guard 计数）
+  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 工作流驱动（Activate 编译 + guard 计数）
+  // 后端 Get 投影出来的固定版本归属（只读）：让任务页直接说“跑的是哪个工作流”，
+  // 不必再为了一个名字去拉版本列表。''/0 = 没有 pin 或版本已删除。
+  blueprint_id?: string;
+  blueprint_name?: string;
+  blueprint_version?: number;
 }
 
 export interface GateStat {
@@ -338,6 +343,15 @@ export interface WebhookRegisterResult {
 // ── Connection（仓库连接：每条连接一套独立 webhook + secret） ──
 // 镜像 internal/service/connection.go。同一仓库可被多个小队同时接入，
 // 每条 connection 有独立的 webhook 路径，因此互不覆盖。
+// ProjectSquad is the collaboration relation: a squad works for a project.
+// It is separate from Connection (the optional repo/webhook binding), so a
+// scratch project with no repo can still have squads.
+export interface ProjectSquad {
+  domain_id: string;
+  squad_id: string;
+  created_at: string;
+}
+
 export interface Connection {
   id: string;
   squad_id: string;
@@ -419,6 +433,8 @@ export interface Squad {
   description: string;
   leader_id: string;
   instructions: string;
+  /** 默认工作流（blueprint id，不是版本）。'' = 自动拆解。 */
+  default_workflow_id: string;
   created_at: string;
 }
 
@@ -517,6 +533,22 @@ export interface Schedule {
   cron_expression: string;
   timezone: string;
   category: string; // hitl | hootl — 派生 goal 的验收分类
+  // Phase C (WEB-IA-REDESIGN D3/D4): 定时任务是"保存好的任务模板"，所以它和
+  // 新建任务用同一套工作流/复盘字段。pin 在**保存时**固定，触发时原样复制到
+  // 派生 goal —— 每周跑一份"最新版"会让两周的复盘失去可比性。
+  // '' = 自动拆解（不挂工作流）；非空必须是该小队已发布版本。
+  blueprint_version_id: string;
+  // 复盘开关：与 goal.execution_mode 同一套词（infer 不分析 / train 分析）。
+  // 不是第二个概念 —— 后端读的就是 goal 的同一个字段。
+  execution_mode: string; // infer | train
+  content_capture: string; // none | redacted | full
+  sample_rate: number; // 0..1
+  budget_usd: number;
+  // 只读投影（列表/详情接口 join 出来）：pin 指向的工作流与版本号，
+  // 便于列表显示"工作流 W · v3"、编辑框回填选择器。未挂工作流或版本已删 → ''/0。
+  blueprint_id: string;
+  blueprint_name: string;
+  blueprint_version: number;
   enabled: boolean;
   next_run_at: string;
   last_run_at: string;
@@ -801,6 +833,14 @@ export interface RsiSession {
   critical_path_ms: number;
   parallel_speedup: number; // work_sum / critical_path，>=1；1 表示完全串行
   finding_count: number;
+  // Phase C (§8.8): 复盘归属快照（小队 + 工作流版本）。旧会话这两组为空，
+  // 后端读取时回退到 goal 自己的归属/pin —— 历史会话照常显示归属，不造假。
+  squad_id: string;
+  squad_name: string;
+  blueprint_id: string;
+  blueprint_name: string;
+  blueprint_version: number;
+  workflow_version_id: string; // pin 的版本行 id（用于"落后 N 版"比较）
   top_category: string; // '' = 未归因到具体瓶颈
   top_title: string;
   error: string;
@@ -831,6 +871,9 @@ export interface RsiFinding {
   score: number; // 排序权重，越大越值得先看
   status: RsiFindingStatus;
   created_at?: string;
+  // Phase C：这条发现已经转成的提案（'' = 还没有）。复盘详情据此显示"查看提案"
+  // 或"生成提案" —— 不会给一个点下去只会重复建提案的按钮。
+  proposal_id: string;
 }
 
 export interface RsiReport {
@@ -977,6 +1020,9 @@ export interface RsiDetail {
   report: RsiReport | null; // 会话还在 waiting/analyzing 时为 null
   findings: RsiFinding[];
   workflow: WorkflowGraph | null; // 分析失败/跳过时可能为 null
+  // Phase C: 该复盘所属工作流上已存在的提案（发现的 proposal_id 指向其中
+  // 一条）。后端未返回时按空数组处理 —— 面板显示"暂无提案"，不臆造。
+  proposals?: BlueprintProposal[];
 }
 
 // GET /rsi/overview?days=30 —— 列表页顶部概览条。
@@ -993,7 +1039,7 @@ export interface RsiOverview {
   trend?: RsiTrendPoint[];
 }
 
-// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// ── 工作流（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
 // goal.blueprint_version_id 钉住一个 published 版本；Activate 时编译成
 // gated sub_goal（拍 1 建结构，拍 2 释放时填 brief）。规范图经
 // /workflows/blueprints/{versionId} 以 WorkflowGraph 形状渲染。
@@ -1002,6 +1048,8 @@ export interface Blueprint {
   id: string;
   name: string;
   description: string;
+  /** 归属小队；'' = Phase B 之前的历史全局桶（只读、新任务不可选）。 */
+  squad_id: string;
   created_at: string;
   latest_version_id: string; // 最新「已发布」版本 id；'' = 尚未发布任何版本
   version_count: number; // 版本总数（含草稿）
@@ -1028,7 +1076,7 @@ export interface BlueprintDetail {
   versions: BlueprintVersion[];
 }
 
-// ── 蓝本人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
+// ── 工作流人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
 // 只列 OPEN 的门（已持门、等人拍板）；held_since 起超时
 // timeout_after 后 sweeper 自动执行 timeout_action（decided_by=system）。
 export interface HeldGateAction {
@@ -1118,7 +1166,7 @@ export interface PlanAlignment {
   deviations: string[];
 }
 
-// ── 蓝本提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
+// ── 工作流提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
 // 批准 = 开新草稿（changelog=hypothesis），永不自动发布。
 export type BlueprintPatchOp =
   | "add_node"
@@ -1147,7 +1195,11 @@ export interface BlueprintProposal {
   status: "pending" | "approved" | "rejected";
   applied_version_id: string;
   decided_at: string;
+  decided_by_type?: string;
+  decided_by_id?: string;
   created_by_type: string;
+  /** "rsi-translator" = 分析生成；其它值是操作人 id */
+  created_by_id?: string;
   created_at: string;
 }
 

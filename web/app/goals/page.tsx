@@ -3,12 +3,13 @@
 import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useGoals, useAgents, useSquads, useCancelGoal, useReopenGoal, useDeleteGoal, useGoalEvents } from "@/lib/queries";
-import { Badge, AttentionChip, ReviewPhaseBadge, PageBody, PageHeader, SectionCard, Segmented, Toolbar, Empty } from "@/components/ui";
+import { useGoals, useAgents, useSquads, useDomains, useCancelGoal, useReopenGoal, useDeleteGoal, useGoalEvents } from "@/lib/queries";
+import { Badge, AttentionChip, ReviewPhaseBadge, Button, PageBody, PageHeader, SectionCard, Segmented, Toolbar, Empty } from "@/components/ui";
 import { GoalStats } from "@/components/goal-stats";
 import { GoalBoard } from "@/components/goal-board";
 import { GoalBatchBar, GoalSelectCheckbox, CheckIcon } from "@/components/goal-batch-bar";
 import { CategoryBadge } from "@/components/category-badge";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import { cn } from "@/lib/utils";
 import type { Goal, GoalStatus } from "@/lib/types";
 
@@ -48,9 +49,11 @@ export default function GoalsPage() {
 
 function GoalsPageInner() {
   useGoalEvents();
+  const { open } = useCreateDialog();
   const { data: goals, isLoading } = useGoals();
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
+  const { data: domains } = useDomains();
   const cancelGoal = useCancelGoal();
   const reopenGoal = useReopenGoal();
   const deleteGoalMut = useDeleteGoal();
@@ -62,8 +65,24 @@ function GoalsPageInner() {
   const filter = (
     STATUS_TABS.some((t) => t.value === statusParam) ? statusParam : "all"
   ) as GoalStatus | "all";
-  const setFilter = (v: GoalStatus | "all") =>
-    router.replace(v === "all" ? "/goals" : `/goals?status=${v}`, { scroll: false });
+  const projectParam = searchParams.get("project") ?? "";
+  const projectId = (domains ?? []).some((d) => d.id === projectParam) ? projectParam : "";
+  const projectName = (domains ?? []).find((d) => d.id === projectId)?.name ?? "";
+
+  const setFilter = (v: GoalStatus | "all") => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (v === "all") params.delete("status");
+    else params.set("status", v);
+    const qs = params.toString();
+    router.replace(qs ? `/goals?${qs}` : "/goals", { scroll: false });
+  };
+  const setProject = (id: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (!id) params.delete("project");
+    else params.set("project", id);
+    const qs = params.toString();
+    router.replace(qs ? `/goals?${qs}` : "/goals", { scroll: false });
+  };
 
   // 视图：看板（拖拽为主）/ 列表（批量与筛选为主）。选择记在 localStorage，
   // 刷新后保持；默认看板——任务面板的主入口。
@@ -77,14 +96,15 @@ function GoalsPageInner() {
     window.localStorage.setItem("ouroflow-goals-view", v);
   };
 
-  // 已删除 agent 的 goal 仍保留记录：id 非空但查不到时显示「已删除 agent」，
+  // 已删除智能体 的 goal 仍保留记录：id 非空但查不到时显示「已删除智能体」，
   // 不再把 uuid 露给人看。agents 尚未加载时退回 id（这不是"已删除"），空 id
   // 返回 "" 让调用方的 `|| "?"` 继续兜底。
   const agentName = (aid: string) =>
-    agents?.find((a) => a.id === aid)?.name ?? (aid ? (agents ? "已删除 agent" : aid) : "");
+    agents?.find((a) => a.id === aid)?.name ?? (aid ? (agents ? "已删除智能体" : aid) : "");
   const squadName = (sid: string) => squads?.find((s) => s.id === sid)?.name ?? sid;
 
-  const filtered = goals?.filter((g) => filter === "all" || g.status === filter) ?? [];
+  const projectGoals = goals?.filter((g) => !projectId || g.domain_id === projectId) ?? [];
+  const filtered = projectGoals.filter((g) => filter === "all" || g.status === filter);
 
   // 多选批量操作（决策 7-6）：Set<goal id>，跨 tab 切换持久（Gmail 式），
   // 底部浮动批量条对选中项批量执行。batchBusy = 批量执行中（格子禁点）。
@@ -117,8 +137,8 @@ function GoalsPageInner() {
   return (
     <PageBody full={view === "board"}>
       <PageHeader
-        title="任务"
-        desc="拖动卡片改状态，或者切到列表批量处理。"
+        title={projectName ? `任务 · ${projectName}` : "任务"}
+        desc={projectName ? "只看这个项目下的任务。拖动卡片改状态，或者切到列表批量处理。" : "拖动卡片改状态，或者切到列表批量处理。"}
         action={
           <div className="flex items-center gap-2">
             <Segmented
@@ -129,24 +149,42 @@ function GoalsPageInner() {
                 { value: "list", label: "列表" },
               ]}
             />
-            <Link
-              href="/goals/new"
-              className="inline-flex items-center justify-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-dim"
-            >
+            <Button onClick={() => open("task", projectId ? { projectId } : undefined)}>
               + 新建
-            </Link>
+            </Button>
           </div>
         }
       />
 
+      <Toolbar className="mb-3 justify-between">
+        <label className="flex items-center gap-2 text-xs text-ink-3">
+          项目
+          <select
+            value={projectId}
+            onChange={(e) => setProject(e.target.value)}
+            className="h-8 rounded-md border border-line bg-surface-1 px-2 text-xs text-ink-2 outline-none focus:border-accent/60"
+          >
+            <option value="">全部项目</option>
+            {(domains ?? []).map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        {projectId && (
+          <Link href={filter === "all" ? "/goals" : `/goals?status=${filter}`} className="text-xs text-ink-3 hover:text-accent">
+            清除项目筛选
+          </Link>
+        )}
+      </Toolbar>
+
       {/* Stats cards */}
-      <GoalStats goals={goals} loading={isLoading} />
+      <GoalStats goals={projectGoals} loading={isLoading} />
 
       {view === "board" ? (
         isLoading ? (
           <div className="text-sm text-ink-3 py-16 text-center">加载中…</div>
         ) : (
-          <GoalBoard goals={goals ?? []} agents={agents ?? []} squads={squads ?? []} />
+          <GoalBoard goals={filtered} agents={agents ?? []} squads={squads ?? []} domains={domains ?? []} />
         )
       ) : (
         <>
@@ -156,14 +194,10 @@ function GoalsPageInner() {
         <Segmented
           value={filter}
           onChange={setFilter}
-          options={STATUS_TABS.map((t) => ({
-            value: t.value,
-            label: `${t.label}${
-              (t.value === "all" ? goals?.length ?? 0 : goals?.filter((g) => g.status === t.value).length ?? 0) > 0
-                ? ` ${t.value === "all" ? goals?.length ?? 0 : goals?.filter((g) => g.status === t.value).length ?? 0}`
-                : ""
-            }`,
-          }))}
+          options={STATUS_TABS.map((t) => {
+            const count = t.value === "all" ? projectGoals.length : projectGoals.filter((g) => g.status === t.value).length;
+            return { value: t.value, label: count > 0 ? `${t.label} ${count}` : t.label };
+          })}
         />
         {filtered.length > 0 && (
           <button
@@ -191,7 +225,7 @@ function GoalsPageInner() {
         <div className="text-sm text-ink-3 py-16 text-center">加载中…</div>
       ) : filtered.length === 0 ? (
         <Empty>
-          {filter === "all" ? "暂无 Goal，点击「+ 新建」创建第一个。" : "没有符合条件的 Goal。"}
+          {filter === "all" ? "还没有任务。点「新建」派第一条活。" : "没有符合当前筛选条件的任务。"}
         </Empty>
       ) : (
         <div className={cn("grid gap-3 md:grid-cols-2", batchBusy && "pointer-events-none")}>
@@ -233,6 +267,9 @@ function GoalsPageInner() {
                 {g.status === "review" && g.review_request && (
                   <p className="mt-1.5 text-xs text-purple-300 line-clamp-1">{g.review_request}</p>
                 )}
+                <div className="mt-1.5 text-[11px] text-ink-3">
+                  {(domains ?? []).find((d) => d.id === g.domain_id)?.name || "未归属项目"}
+                </div>
                 {/* 元信息：谁在干 / 负责人 · 时间 */}
                 <div className="mt-3 flex items-center gap-x-4 gap-y-1 flex-wrap text-xs text-ink-3">
                   {g.current_agent_id ? (

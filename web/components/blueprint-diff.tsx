@@ -1,6 +1,6 @@
 "use client";
 
-// 蓝本详情页的 diff / A-B 展示组件。
+// 工作流详情页的 diff / A-B 展示组件。
 //
 // 这三个组件只服务「优化提案 → 看 diff」与「同题 A/B」两块版式，抽出来是为了
 // 让 page.tsx 专注在页面编排上（原文件 1300+ 行）。语义（Δ 方向、数值格式）
@@ -115,17 +115,17 @@ export function ABRow({
       : "";
   return (
     <tr className="border-b border-line/60 last:border-b-0">
-      <td className="px-3 py-1.5 text-ink-3" title={metric}>
+      <td className="px-3 py-2 text-[12px] text-ink-3" title={metric}>
         {AB_METRIC_LABELS[metric] ?? metric}
       </td>
-      <td className="px-3 py-1.5 text-right font-mono text-[11px] tabular-nums text-ink-2">
+      <td className="px-3 py-2 text-right font-mono text-[12px] tabular-nums text-ink-2">
         {fmtABValue(metric, a)}
       </td>
-      <td className="px-3 py-1.5 text-right font-mono text-[11px] tabular-nums text-ink-2">
+      <td className="px-3 py-2 text-right font-mono text-[12px] tabular-nums text-ink-2">
         {fmtABValue(metric, b)}
       </td>
       <td
-        className={cn("px-3 py-1.5 text-right text-[11px]", hasBoth ? AB_TONE_TEXT[tone] : "text-ink-3")}
+        className={cn("px-3 py-2 text-right text-[12px]", hasBoth ? AB_TONE_TEXT[tone] : "text-ink-3")}
         title={deltaText}
       >
         {hasBoth ? (

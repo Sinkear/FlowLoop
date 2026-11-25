@@ -1,5 +1,14 @@
 "use client";
 
+// 「新建」独立页：选类型 + 一句话描述 → 管家用 ouroflow CLI 建出来。
+//
+// 2026-11-25 用户明确要求：新建是单独页面，不要弹窗；页面里要有 chat
+// 窗口来创建。这个页面把“描述—管家反馈—追问”放在同一屏，右侧用树和
+// 规则解释每个类型的归属，避免用户不知道自己在建什么。
+//
+// 对话连接/记录/建对象轮询住在模块级 store（web/lib/new-goal-chat.ts）：
+// 切页不中断，刷新能接回；这里只负责视图。
+
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -7,19 +16,26 @@ import {
   ArrowRight,
   Bot,
   Boxes,
+  CalendarClock,
   Check,
+  GitBranch,
+  ListChecks,
   Loader2,
-  PenLine,
   Send,
   Sparkles,
   Square,
-  Target,
   Trash2,
   Users,
-  Waypoints,
 } from "lucide-react";
 import { PageBody, PageHeader, SectionCard, Button, inputCls } from "@/components/ui";
+import { CreateTree } from "@/components/create/create-tree";
+import { CreateSteps, type CreateStep } from "@/components/create/create-steps";
 import { NewGoalForm } from "@/components/new-goal-form";
+import { ProjectForm } from "@/components/project-form";
+import { NewSquadForm } from "@/components/squad-form";
+import { AgentForm } from "@/components/agent-form";
+import { WorkflowCreateForm } from "@/components/workflow-create-form";
+import { ScheduleCreateForm } from "@/components/schedule-create-form";
 import { StewardSetup } from "@/components/steward-setup";
 import {
   adoptSteward,
@@ -34,7 +50,7 @@ import {
   stop,
   subscribeNewGoal,
 } from "@/lib/new-goal-chat";
-import { useAgents, useSquads, useDomains } from "@/lib/queries";
+import { useAgents, useBlueprints, useDomains, useGoals, useMachines, useRuntimes, useSquads } from "@/lib/queries";
 import {
   appendCreateTemplate,
   CREATE_TEMPLATES,
@@ -43,22 +59,6 @@ import {
 } from "@/lib/task-template";
 import { cn } from "@/lib/utils";
 
-// 「新建」页：选类型（任务/项目/团队/智能体/蓝本）+ 一句话描述 → 管家用
-// ouroflow CLI 建出来 → 落库后自动切回对应视图（任务进详情，其余回列表）。
-// 为什么是独立页面而不是弹窗/参数：
-//   1) /goals?new=1 要先把整个任务列表拉起来才弹窗，点侧栏会卡一下，而且 URL 没变化时
-//      二次点击没有任何反馈（用户反馈的“点两次不生效”）。
-//   2) 建任务是要写一段话的，独立页面能把“描述—管家反馈—追问”这条线放得下。
-// 兜底：管家不可用（没有在线机器）时，同一页里能直接手动填表，不是死路。
-//
-// 生命周期（2026-11-16 修复后的架构）：对话连接、记录、建任务轮询全部住在
-// 模块级 store（web/lib/new-goal-chat.ts）里，本组件只是一个「视图」——
-// 切到别的页面（app router 会卸载本组件）不会断开连接、不会丢记录、不会
-// 掐死管家正在跑的建任务命令；回到本页直接续上现场。浏览器刷新/关闭则靠
-// store 的流程快照 + CLI 侧的会话持久化接回原对话（见 store 头注释）。
-
-// 五类可创建对象。这一页从“只建任务”扩成通用创建入口：管家用
-// `ouroflow create <kind>` 落地，建好后按类型回到对应列表/详情。
 const KIND_META: Record<
   CreateKind,
   {
@@ -73,10 +73,9 @@ const KIND_META: Record<
 > = {
   goal: {
     label: "任务",
-    icon: <Target className="h-3.5 w-3.5" />,
-    hint: "一句话说清要做什么，管家补负责人和项目",
-    placeholder:
-      "例如：创建一个任务「对齐 webhook 重试文档」，负责人 AI SHELL，挂在 ouroflow 项目下（Tab 补模板）",
+    icon: <ListChecks className="h-3.5 w-3.5" />,
+    hint: "说清要做什么；项目、负责人、工作流可以交给管家补",
+    placeholder: "例如：把 webhook 投递失败的重试逻辑写成文档，挂在 ouroflow 项目下",
     examples: [
       "把 webhook 投递失败的重试逻辑写成一份文档，放到 webhook 面板旁边",
       "给任务看板加一个按负责人筛选的入口",
@@ -85,30 +84,28 @@ const KIND_META: Record<
     backHref: "/goals",
     backLabel: "任务",
   },
-  domain: {
+  project: {
     label: "项目",
     icon: <Boxes className="h-3.5 w-3.5" />,
-    hint: "仓库型或工作区型，验收级别可先不设",
-    placeholder:
-      "例如：创建一个项目「数据同步」，仓库 https://github.com/you/repo.git，默认分支 main，验收 HOOTL（Tab 补模板）",
+    hint: "仓库型或工作区型；验收级别可先不设",
+    placeholder: "例如：创建项目「数据同步」，仓库 https://github.com/you/sync.git，验收 HOOTL",
     examples: [
       "创建一个项目「数据同步」，仓库 https://github.com/you/sync.git，验收 HOOTL",
       "建一个无仓库项目「资料整理」，验收级别先不设",
       "把 https://github.com/you/site.git 建成项目，默认分支 develop",
     ],
-    backHref: "/domains",
+    backHref: "/projects",
     backLabel: "项目",
   },
   squad: {
-    label: "团队",
+    label: "小队",
     icon: <Users className="h-3.5 w-3.5" />,
-    hint: "指定负责人（agent），成员可以后加",
-    placeholder:
-      "例如：创建一个团队「发版小队」，负责人 release-lead，成员 fixer 和 reviewer（Tab 补模板）",
+    hint: "指定负责人（智能体），成员可以后加；小队是公共资源",
+    placeholder: "例如：创建小队「发版小队」，负责人 release-lead，成员 fixer 和 reviewer",
     examples: [
-      "创建一个团队「发版小队」，负责人 release-lead",
+      "创建小队「发版小队」，负责人 release-lead",
       "创建「调研小队」，两个成员分别做资料和写作",
-      "建一个只有负责人的团队「前端」，我回头再加人",
+      "建一个只有负责人的小队「前端」，我回头再加人",
     ],
     backHref: "/squads",
     backLabel: "小队",
@@ -116,80 +113,223 @@ const KIND_META: Record<
   agent: {
     label: "智能体",
     icon: <Bot className="h-3.5 w-3.5" />,
-    hint: "需要运行时（机器 + CLI）和模型",
+    hint: "需要在线运行时（机器 + CLI）和模型；智能体是公共资源",
     placeholder:
-      "例如：在「发版小队」里创建一个 agent「reviewer」，用 opencode@sinkear-dev，模型 deepseek（Tab 补模板）",
+      "例如：创建智能体「reviewer」，用 opencode@sinkear，模型 deepseek，负责代码审查",
     examples: [
-      "在「发版小队」里创建 agent「reviewer」，用 opencode@sinkear-dev，模型 deepseek",
+      "创建智能体「reviewer」，用 opencode@sinkear，模型 deepseek，负责代码审查",
       "新建一个管家智能体，负责接需求并拆任务",
-      "创建一个只读代码审查 agent，绑 opencode-acp",
+      "创建一个只读代码审查智能体，绑 opencode",
     ],
     backHref: "/agents",
     backLabel: "智能体",
   },
-  blueprint: {
-    label: "蓝本",
-    icon: <Waypoints className="h-3.5 w-3.5" />,
-    hint: "描述步骤和人工确认点，生成草稿后可发布",
+  workflow: {
+    label: "工作流",
+    icon: <GitBranch className="h-3.5 w-3.5" />,
+    hint: "工作流只能属于一支小队；先选小队，再描述步骤和卡点",
     placeholder:
-      "例如：根据「发版检查」场景创建一个蓝本，步骤包括跑测试、查变更、写公告（Tab 补模板）",
+      "例如：给「发版小队」创建工作流「发版检查」：跑测试、查变更、写公告，发布前人工确认",
     examples: [
-      "根据「发版检查」场景创建一个蓝本：跑测试、查变更、写公告",
-      "把现在的代码审查流程沉淀成蓝本，审查通过前要人工确认",
-      "创建一个研究类蓝本：收集资料、交叉验证、输出结论",
+      "给「发版小队」创建工作流「发版检查」：跑测试、查变更、写公告，发布前人工确认",
+      "把现在的代码审查流程沉淀成工作流，审查通过前要人工确认",
+      "创建研究工作流：收集资料、交叉验证、输出结论",
     ],
-    backHref: "/blueprints",
-    backLabel: "蓝本",
+    backHref: "/workflows",
+    backLabel: "工作流",
+  },
+  schedule: {
+    label: "定时任务",
+    icon: <CalendarClock className="h-3.5 w-3.5" />,
+    hint: "按 cron 反复生成任务；需要项目、负责人和时区",
+    placeholder: "例如：每天 9 点给「运维」项目建一条巡检任务，负责人 ops，完成后生成复盘",
+    examples: [
+      "每天 9 点给「运维」项目建一条巡检任务，负责人 ops",
+      "每周一 10 点创建「周报」任务，绑定小队 weekly",
+      "每小时检查一次告警，项目 ops，验收 HOOTL",
+    ],
+    backHref: "/schedules",
+    backLabel: "定时任务",
   },
 };
 
-const KIND_ORDER: CreateKind[] = ["goal", "domain", "squad", "agent", "blueprint"];
+const KIND_ORDER: CreateKind[] = ["goal", "project", "squad", "agent", "workflow", "schedule"];
 
-// 右侧「会被建成什么样」按类型给三条后果说明：不写实现细节，只讲用户
-// 此刻做决定需要的规则（负责人、验收、运行时、发布）。
 const KIND_NOTES: Record<CreateKind, string[]> = {
   goal: [
-    "没指定负责人 → 进「待办」，你回头在看板上拖到「进行中」才开跑。",
-    "说了负责人/项目 → 直接进「进行中」，agent 立刻开始。",
-    "验收级别默认跟随项目；项目和任务都没设时按人工验收（HITL）。",
+    "没指定负责人 → 进「待办」，拖到「进行中」才开跑。",
+    "说了负责人/项目 → 直接进「进行中」，智能体立刻开始。",
+    "小队任务可以套用本队工作流；单干智能体自动拆解。",
   ],
-  domain: [
-    "代码仓库：每个任务一个独立 worktree，可提交 PR；无仓库：持久项目目录。",
+  project: [
+    "代码仓库：每个任务独立 worktree；无仓库：持久项目目录。",
     "验收级别建好后还能改，先不设（待定）也可以。",
-    "仓库地址会用来识别 GitHub / GitCode，并生成 webhook 入口。",
+    "项目是首层归属：任务、定时任务都挂在它下面。",
   ],
   squad: [
-    "负责人必须是已有 agent，团队靠它来分派任务。",
+    "负责人必须是已有智能体，小队靠它分派任务。",
     "成员可以建完再加，第一版只需一个负责人。",
-    "团队不绑定运行时/模型，成员各自用自己的配置。",
+    "小队不绑定运行时/模型，成员各自用自己的配置。",
   ],
   agent: [
     "必须选一个在线运行时（机器 + 对应 CLI）。",
-    "模型下拉来自该运行时的探测结果，也可以稍后改。",
+    "模型下拉来自运行时的探测结果，也可以稍后改。",
     "职责写在 system prompt 里，越具体，执行越稳。",
   ],
-  blueprint: [
+  workflow: [
+    "工作流归属一支小队；跨队只能复制，不能共享。",
     "先生成草稿版本，确认无误后再发布。",
     "人工卡点会让流程停下来等人确认。",
-    "发布后，新建任务时可以选择这个蓝本版本。",
+  ],
+  schedule: [
+    "保存时 pin 住当前工作流版本，之后发布新版本不会偷偷改它。",
+    "可以开启“完成后生成复盘”，让定时任务也进入优化闭环。",
+    "触发时会在项目下生成一条普通任务，沿用项目的验收策略。",
   ],
 };
 
 export default function NewGoalPage() {
   const router = useRouter();
-  const { data: agents } = useAgents();
   const { data: squads } = useSquads();
+  const { data: agents } = useAgents();
   const { data: domains } = useDomains();
-
+  const { data: machines } = useMachines();
+  const { data: runtimes } = useRuntimes();
+  const { data: blueprints } = useBlueprints();
+  const { data: goals } = useGoals();
   useSyncExternalStore(subscribeNewGoal, getNewGoalVersion, getNewGoalServerVersion);
   const st = getNewGoalState();
   const perm = st.perm;
   const busy = st.busy;
 
   const [kind, setKind] = useState<CreateKind>("goal");
+  const [squadId, setSquadId] = useState("");
+  const [manual, setManual] = useState(false);
+  const [initialProject, setInitialProject] = useState("");
+  const [initialBlueprint, setInitialBlueprint] = useState("");
   const meta = KIND_META[kind];
-  // 如果输入框里还只是上一类那一段未改动的模板，切类型时整段换掉；已经
-  // 改过内容就不动（不覆盖用户写的东西）。
+  const machineUp = (machines ?? []).some((m) => m.status === "connected");
+  const runtimeUp = (runtimes ?? []).some((r) => r.status === "active");
+  const steps: CreateStep[] = [
+    {
+      key: "infra",
+      label: "运行环境",
+      desc: "机器在线 + 运行时可用，智能体才能跑",
+      done: machineUp && runtimeUp,
+      count: (runtimes ?? []).filter((r) => r.status === "active").length,
+      href: "/infra",
+    },
+    {
+      key: "project",
+      label: "项目",
+      desc: "任务的归属地，提供仓库与验收策略",
+      done: (domains ?? []).length > 0,
+      count: (domains ?? []).length,
+      kind: "project",
+      href: "/projects",
+    },
+    {
+      key: "agent",
+      label: "智能体",
+      desc: "公共执行者，绑定运行时和模型",
+      done: (agents ?? []).length > 0,
+      count: (agents ?? []).length,
+      kind: "agent",
+      href: "/agents",
+    },
+    {
+      key: "squad",
+      label: "小队",
+      desc: "负责人 + 成员；工作流必须归一支小队",
+      done: (squads ?? []).length > 0,
+      count: (squads ?? []).length,
+      kind: "squad",
+      href: "/squads",
+    },
+    {
+      key: "workflow",
+      label: "工作流",
+      desc: "把流程沉淀成可发布版本，再给任务用",
+      done: (blueprints ?? []).length > 0,
+      count: (blueprints ?? []).length,
+      kind: "workflow",
+      href: "/workflows",
+    },
+    {
+      key: "goal",
+      label: "任务",
+      desc: "挂项目、选小队/工作流，开始干活",
+      done: (goals ?? []).length > 0,
+      count: (goals ?? []).length,
+      kind: "goal",
+      href: "/goals",
+    },
+  ];
+  const [text, setText] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [slow, setSlow] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 深链：?kind= 决定初始类型；?squad= 给工作流预选归属。
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const raw = q.get("kind") ?? "";
+    const normalized = raw === "domain" ? "project" : raw === "blueprint" ? "workflow" : raw;
+    if (KIND_ORDER.includes(normalized as CreateKind)) {
+      setKind(normalized as CreateKind);
+      if (normalized === "workflow") {
+        const squad = q.get("squad") ?? "";
+        if (squad) setSquadId(squad);
+      }
+    }
+    // 从项目/工作流详情进来时，直接落到带上下文的手动表单：这两个上下文
+    // 字段（项目、版本）在聊天里靠自然语言补齐不稳，表单是确定路径。
+    const project = q.get("project") ?? "";
+    const blueprint = q.get("blueprint") ?? "";
+    if (project) setInitialProject(project);
+    if (blueprint) setInitialBlueprint(blueprint);
+    if (project || blueprint) {
+      setKind("goal");
+      setManual(true);
+    }
+    void resumeIfNeeded();
+  }, []);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
+  }, [st.lines, busy]);
+
+  useEffect(() => {
+    if (st.phase !== "running" && st.phase !== "connecting") {
+      setSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlow(true), 60_000);
+    return () => window.clearTimeout(timer);
+  }, [st.phase]);
+
+  // 建成功 → 切回对应视图：任务进详情，其它进详情或列表。
+  useEffect(() => {
+    if (st.phase !== "created" || !st.createdGoal) return;
+    const target = st.createdGoal.id;
+    const dest =
+      st.createdKind === "goal"
+        ? `/goals/${target}`
+        : st.createdKind === "project"
+          ? `/projects/${target}`
+          : st.createdKind === "squad"
+            ? `/squads/${target}`
+            : st.createdKind === "workflow"
+              ? `/workflows/${target}`
+              : KIND_META[st.createdKind].backHref;
+    const timer = window.setTimeout(() => {
+      reset();
+      router.push(dest);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [st.phase, st.createdGoal, st.createdKind, router]);
+
   const changeKind = (k: CreateKind) => {
     setKind(k);
     setText((prev) => {
@@ -198,16 +338,7 @@ export default function NewGoalPage() {
       return untouched ? CREATE_TEMPLATES[k] : prev;
     });
   };
-  const [text, setText] = useState("");
-  const [followUp, setFollowUp] = useState("");
-  const [manual, setManual] = useState(false);
-  // 半死连接提醒：连接在、但机器一直不回应时，别让用户盯着一个无声的转圈。
-  const [slow, setSlow] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 把选中类型的实践模板补到描述末尾；已经补过任意一种就什么都不做
-  //（幂等——用户在类型之间切换时不追加第二段）。
   const insertTemplate = () => {
     setText((prev) => appendCreateTemplate(prev, kind));
     window.setTimeout(() => {
@@ -218,69 +349,101 @@ export default function NewGoalPage() {
     }, 0);
   };
 
-  // 上次刷新/关闭页面留下的未完成流程（快照在 store 里）→ 接回对话并续跑
-  // 「建好了没」的轮询。StrictMode 双挂载安全：store 自己有握手去重。
-  useEffect(() => {
-    void resumeIfNeeded();
-  }, []);
-
-  // 自动滚到最新一条。
-  useEffect(() => {
-    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [st.lines, busy]);
-
-  // 守护：连接在、但 60s 没有任何进展 —— 提示可能是半死连接，别静默转圈。
-  useEffect(() => {
-    if (st.phase !== "running" && st.phase !== "connecting") {
-      setSlow(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setSlow(true), 60_000);
-    return () => window.clearTimeout(timer);
-  }, [st.phase]);
-
-  // 深链：蓝图详情「用此版本新建任务」直达这里。管家对话不吃蓝图参数，
-  // 直接展开手动表单并预选该版本（NewGoalForm 读同一个 ?blueprint= 参数）。
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("blueprint")) setManual(true);
-  }, []);
-
-  // 建成功 → 切回对应视图：任务进详情，项目/团队/智能体/蓝本回各自列表。
-  // phase=created 可能发生在用户不在本页的时候（切去了别的页面，轮询在
-  // store 里继续跑）——回到本页时补上这次跳转，然后 reset 让 store 干净
-  // 地迎接下一段流程。
-  useEffect(() => {
-    if (st.phase !== "created" || !st.createdGoal) return;
-    const target = st.createdGoal.id;
-    const dest =
-      st.createdKind === "goal" ? `/goals/${target}` : KIND_META[st.createdKind].backHref;
-    const timer = window.setTimeout(() => {
-      reset();
-      router.push(dest);
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [st.phase, st.createdGoal, st.createdKind, router]);
+  const send = (say: string) => {
+    if (kind === "workflow" && !squadId) return;
+    void ask(say, true, kind, { squadId: kind === "workflow" ? squadId : undefined });
+  };
 
   return (
     <PageBody>
       <PageHeader
         title="新建"
-        desc="用一句话说要建什么：任务、项目、团队、智能体或蓝本，管家会补齐字段并用 CLI 落地。"
+        desc="用一句话说要建什么。管家会补齐字段、用 CLI 落地；你也可以在对话里继续追问。"
         action={
-          <Link href="/goals" className="text-sm text-ink-3 transition-colors hover:text-ink">
-            回到任务 <ArrowRight className="ml-0.5 inline h-3.5 w-3.5" />
+          <Link href="/" className="text-sm text-ink-3 transition-colors hover:text-ink">
+            回到工作台 <ArrowRight className="ml-0.5 inline h-3.5 w-3.5" />
           </Link>
         }
       />
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <CreateSteps
+        steps={steps}
+        currentKind={kind}
+        disabled={busy || st.phase !== "idle"}
+        onPick={changeKind}
+      />
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
-          {st.phase === "idle" ? (
+          {manual ? (
+            <SectionCard
+              title={`手动填写${meta.label}`}
+              desc="不走对话，直接填字段。创建成功后会带你到对应页面。"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setManual(false)}
+                  className="text-[11px] text-ink-3 underline decoration-dotted underline-offset-2 hover:text-ink"
+                >
+                  回到对话
+                </button>
+              }
+            >
+              <div className="p-4">
+                {kind === "goal" && (
+                  <NewGoalForm
+                    embedded
+                    initialProjectId={initialProject || undefined}
+                    initialBlueprintVersionId={initialBlueprint || undefined}
+                    initialSquadId={squadId || undefined}
+                    onCreated={(goal) => router.push(`/goals/${goal.id}`)}
+                  />
+                )}
+                {kind === "project" && (
+                  <ProjectForm
+                    embedded
+                    onClose={() => setManual(false)}
+                    onCreated={(project) => router.push(`/projects/${project.id}`)}
+                  />
+                )}
+                {kind === "squad" && (
+                  <NewSquadForm
+                    embedded
+                    agents={agents}
+                    onClose={() => setManual(false)}
+                    onCreated={(squad) => router.push(`/squads/${squad.id}?tab=workflows`)}
+                  />
+                )}
+                {kind === "agent" && (
+                  <AgentForm
+                    embedded
+                    onClose={() => setManual(false)}
+                    onCreated={() => router.push("/agents")}
+                  />
+                )}
+                {kind === "workflow" && (
+                  <WorkflowCreateForm
+                    embedded
+                    squadId={squadId || undefined}
+                    onClose={() => setManual(false)}
+                    onCreated={(workflow) => router.push(`/workflows/${workflow.id}`)}
+                  />
+                )}
+                {kind === "schedule" && (
+                  <ScheduleCreateForm
+                    embedded
+                    onClose={() => setManual(false)}
+                    onCreated={() => router.push("/schedules")}
+                  />
+                )}
+              </div>
+            </SectionCard>
+          ) : st.phase === "idle" ? (
             <SectionCard
               title="要创建什么？"
-              desc="选一个类型，写清关键字段就行——管家会按平台的规矩补齐并建出来。"
+              desc="选一个类型，写清关键字段就行——右侧说明这个类型会被建成什么样。"
             >
-              <div className="space-y-3 p-4">
+              <div className="space-y-4 p-4">
                 <div role="radiogroup" aria-label="创建对象类型" className="flex flex-wrap gap-1.5">
                   {KIND_ORDER.map((k) => {
                     const m = KIND_META[k];
@@ -306,19 +469,42 @@ export default function NewGoalPage() {
                   })}
                 </div>
                 <p className="text-[11px] text-ink-3">{meta.hint}</p>
-                <StewardSetup
-                  onCreated={(id) => {
-                    adoptSteward(id);
-                  }}
-                />
+
+                {kind === "workflow" && (
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-ink">归属小队</span>
+                    <select
+                      className={inputCls}
+                      value={squadId}
+                      onChange={(e) => setSquadId(e.target.value)}
+                    >
+                      <option value="">选择一支小队…</option>
+                      {(squads ?? []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    {!squads?.length ? (
+                      <span className="block text-[11px] leading-relaxed text-ink-3">
+                        还没有小队。工作流必须属于一支小队——先去{" "}
+                        <Link href="/squads?new=1" className="underline decoration-dotted text-ink">
+                          创建小队
+                        </Link>
+                        。
+                      </span>
+                    ) : null}
+                  </label>
+                )}
+
+                <StewardSetup onCreated={(id) => adoptSteward(id)} />
+
                 <textarea
                   ref={textareaRef}
                   autoFocus
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => {
-                    // Tab 补全当前类型的实践模板（只在还没补过时拦截，补过以后
-                    // Tab 照常切焦点）。
                     if (
                       e.key === "Tab" &&
                       !e.shiftKey &&
@@ -333,33 +519,26 @@ export default function NewGoalPage() {
                     }
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
-                      void ask(text, true, kind);
+                      send(text);
                     }
                   }}
-                  rows={5}
+                  rows={6}
                   placeholder={meta.placeholder}
                   className={cn(inputCls, "resize-none leading-relaxed")}
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    onClick={() => void ask(text, true, kind)}
-                    disabled={!text.trim()}
-                    className="gap-1.5"
-                  >
+                  <Button onClick={() => send(text)} disabled={!text.trim() || (kind === "workflow" && !squadId)} className="gap-1.5">
                     <Sparkles className="h-3.5 w-3.5" /> 交给管家创建
                   </Button>
-                  {kind === "goal" ? (
-                    <Button variant="outline" onClick={() => setManual(true)} className="gap-1.5">
-                      <PenLine className="h-3.5 w-3.5" /> 手动填写
-                    </Button>
-                  ) : (
-                    <Link
-                      href={meta.backHref}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-surface-3"
-                    >
-                      去{meta.backLabel}页 <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
-                  )}
+                  <Button variant="outline" onClick={() => setManual(true)}>
+                    手动填写
+                  </Button>
+                  <Link
+                    href={meta.backHref}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-surface-3"
+                  >
+                    去{meta.backLabel}页 <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
                   {hasCreateTemplate(text) ? (
                     <span className="text-[11px] text-ink-3">已带模板</span>
                   ) : (
@@ -386,7 +565,7 @@ export default function NewGoalPage() {
                   : st.phase === "running"
                     ? "正在创建…（切去别的页面也不会中断，回来接着看）"
                     : st.phase === "created"
-                      ? `已创建，正在打开${st.createdKind === "goal" ? "任务详情" : "列表"}`
+                      ? "已创建，正在打开"
                       : st.phase === "failed"
                         ? "没建成"
                         : "可以继续补充要求"
@@ -395,7 +574,6 @@ export default function NewGoalPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    // 重来：彻底作废这一轮流程（连接、记录、快照、轮询全清）。
                     reset();
                     setText("");
                     setFollowUp("");
@@ -411,17 +589,14 @@ export default function NewGoalPage() {
                 {st.lines.map((l) => {
                   if (l.role === "system") {
                     return (
-                      <p key={l.id} className="text-[11px] text-ink-3">
+                      <p key={l.id} className="text-[11px] leading-relaxed text-ink-3">
                         {l.text}
                       </p>
                     );
                   }
                   if (l.role === "tool") {
                     return (
-                      <div
-                        key={l.id}
-                        className="rounded-md border border-line bg-surface-0 px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
-                      >
+                      <div key={l.id} className="rounded-md border border-line bg-surface-0 px-2.5 py-1.5 font-mono text-[11px] text-ink-2">
                         <span className="text-ink-3">$ </span>
                         {l.toolName}
                         {l.pending ? (
@@ -454,36 +629,17 @@ export default function NewGoalPage() {
                 {st.phase === "created" && (
                   <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
                     <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      已创建「{st.createdGoal?.title || meta.label}」，正在打开
-                      {st.createdKind === "goal" ? "任务详情" : `${KIND_META[st.createdKind].backLabel}列表`}…
-                    </span>
+                    <span>已创建「{st.createdGoal?.title || meta.label}」，正在打开…</span>
                   </div>
                 )}
                 {slow && st.phase !== "failed" && st.phase !== "created" && (
                   <div className="space-y-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-xs text-ink-2">
                     <p>已经 60 秒没有新的进展——连接可能处于半死状态（socket 还在，但机器那头没回应）。</p>
-                    <div className="flex flex-wrap items-center gap-3">
-                      {st.lastAsk && (
-                        <button
-                          type="button"
-                          onClick={retry}
-                          className="font-medium underline decoration-dotted underline-offset-2 hover:text-ink"
-                        >
-                          断开重试
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (kind === "goal") setManual(true);
-                          else router.push(meta.backHref);
-                        }}
-                        className="underline decoration-dotted underline-offset-2 hover:text-ink"
-                      >
-                        {kind === "goal" ? "改用手动填写" : `去${meta.backLabel}页手动创建`}
+                    {st.lastAsk && (
+                      <button type="button" onClick={retry} className="font-medium underline decoration-dotted underline-offset-2 hover:text-ink">
+                        断开重试
                       </button>
-                    </div>
+                    )}
                   </div>
                 )}
                 {st.error && (
@@ -491,27 +647,11 @@ export default function NewGoalPage() {
                     {st.error.split("\n").map((line, i) => (
                       <p key={i}>{line}</p>
                     ))}
-                    <div className="flex flex-wrap items-center gap-3">
-                      {st.lastAsk && (
-                        <button
-                          type="button"
-                          onClick={retry}
-                          className="font-medium underline decoration-dotted underline-offset-2 hover:text-amber-200"
-                        >
-                          重试（重新连接并再提交一次）
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (kind === "goal") setManual(true);
-                          else router.push(meta.backHref);
-                        }}
-                        className="underline decoration-dotted underline-offset-2 hover:text-amber-200"
-                      >
-                        {kind === "goal" ? "改用手动填写" : `去${meta.backLabel}页手动创建`}
+                    {st.lastAsk && (
+                      <button type="button" onClick={retry} className="font-medium underline decoration-dotted underline-offset-2 hover:text-amber-200">
+                        重试（重新连接并再提交一次）
                       </button>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -520,34 +660,28 @@ export default function NewGoalPage() {
                 <div className="flex gap-2 border-t border-line bg-surface-0/40 px-4 py-3">
                   <input
                     className={cn(inputCls, "flex-1")}
-                    placeholder={
-                      st.phase === "failed"
-                        ? "管家没连上，可以直接手动填…"
-                        : "补充一句：用哪个负责人、挂哪个项目…"
-                    }
+                    placeholder={st.phase === "failed" ? "管家没连上，可以补充后再试…" : "补充一句：用哪个负责人、挂哪个项目…"}
                     value={followUp}
                     onChange={(e) => setFollowUp(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
-                        void ask(followUp, false);
-                        setFollowUp("");
+                        if (followUp.trim()) {
+                          void ask(followUp, false);
+                          setFollowUp("");
+                        }
                       }
                     }}
                     disabled={busy || st.phase === "failed"}
                   />
                   {busy ? (
-                    <Button
-                      variant="danger"
-                      onClick={stop}
-                      className="gap-1.5"
-                      title="中断当前这轮（连接保留，可以继续补充）"
-                    >
+                    <Button variant="danger" onClick={stop} className="gap-1.5" title="中断当前这轮（连接保留，可以继续补充）">
                       <Square className="h-3.5 w-3.5 fill-current" /> 停止
                     </Button>
                   ) : (
                     <Button
                       onClick={() => {
+                        if (!followUp.trim()) return;
                         void ask(followUp, false);
                         setFollowUp("");
                       }}
@@ -564,9 +698,15 @@ export default function NewGoalPage() {
         </div>
 
         <aside className="space-y-5">
+          <SectionCard title="层级与归属" desc="任务挂项目，工作流归小队，智能体是公共资源">
+            <div className="p-3">
+              <CreateTree interactive={false} plain />
+            </div>
+          </SectionCard>
+
           <SectionCard title={`会被建成什么样（${meta.label}）`}>
             <ul className="space-y-2.5 p-4 text-xs leading-relaxed text-ink-2">
-              {(KIND_NOTES[kind] as string[]).map((note) => (
+              {KIND_NOTES[kind].map((note) => (
                 <li key={note} className="flex gap-2">
                   <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent" />
                   {note}
@@ -595,19 +735,6 @@ export default function NewGoalPage() {
           </SectionCard>
         </aside>
       </div>
-
-      {manual && (
-        <NewGoalForm
-          agents={agents}
-          squads={squads}
-          domains={domains}
-          onClose={() => setManual(false)}
-          onCreated={() => {
-            setManual(false);
-            router.push("/goals");
-          }}
-        />
-      )}
 
       {perm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

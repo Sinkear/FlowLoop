@@ -3,8 +3,8 @@
 import { Suspense, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment, useEnvChanges } from "@/lib/queries";
+import { AlertTriangle, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment, useEnvChanges, useRsiSessions } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -72,7 +72,7 @@ function EnvChangesCard({ goalId }: { goalId: string }) {
 }
 
 // ── 计划 vs 实际对账（BUG-4）──
-// 以前「蓝本（计划）」与「编排（实际）」并排，靠人眼比较；这张卡把
+// 以前「工作流（计划）」与「编排（实际）」并排，靠人眼比较；这张卡把
 // blueprint_node ↔ sub_goal ↔ run ↔ consult_request 逐节点 join 出来，
 // 偏离（未物化/计划外子任务/节点无执行/咨询化执行）直接列成文字。
 //
@@ -117,7 +117,7 @@ function PlanAlignmentCard({ goalId }: { goalId: string }) {
         {/* 统计单元：label + 数值 + 一行解释，不再挤成一行小字。 */}
         <StatStrip
           items={[
-            { label: "计划节点", value: fmtInt(data.planned), hint: "蓝本编译产出" },
+            { label: "计划节点", value: fmtInt(data.planned), hint: "工作流编译产出" },
             { label: "已结算", value: fmtInt(data.settled), hint: "settled 或 skipped" },
             {
               label: "已落地",
@@ -291,8 +291,8 @@ export default function GoalDetailPage() {
   );
 }
 
-// ── 蓝本人工门决策卡（B-3，§4.2）──
-// 蓝本里的 gate 节点持门等待时（state=running，held_since 已盖戳），
+// ── 工作流人工门决策卡（B-3，§4.2）──
+// 工作流里的 gate 节点持门等待时（state=running，held_since 已盖戳），
 // 这张卡就是人拍板的入口。每个 action 是一个按钮；拍板后：
 // 服务端落 chosen action + 剪掉未选分支 + 释放选中分支（执行图立刻变化）。
 // 超时无人拍板时 sweeper 自动执行 timeout_action（decided_by=system）。
@@ -322,7 +322,7 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
     <SectionCard
       title="等待你的决策"
       count={gates.length}
-      desc="蓝本人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；声明了自动判定的门会先按上游产出自动决策，超时未决策则按超时策略处理"
+      desc="工作流人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；声明了自动判定的门会先按上游产出自动决策，超时未决策则按超时策略处理"
     >
       <div className="flex flex-col gap-4">
         {gates.map((g) => (
@@ -381,6 +381,93 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
   );
 }
 
+// 终态复盘卡（Phase A + C）：复盘会话只在「训练」模式任务激活时由
+// RSI EnsureSession 创建（internal/service/rsi.go:154）。因此终态却没有
+// 会话 = 本次未开启复盘，而不是“分析失败”。提案有两条生成路径（Phase C）：
+// 分析完成时自动转换一部分，复盘页里也能对单条发现点「生成提案」。这里只说
+// 时机与归属，不编造提案条数——条数在复盘页按真实数据渲染。
+const REVIEW_TERMINAL = new Set(["done", "failed", "cancelled"]);
+
+function ReviewCard({ goal }: { goal: Goal }) {
+  const { data: sessions, isLoading } = useRsiSessions();
+  // 一个 goal 只会有一个会话（EnsureSession 幂等），find 足够；轮询仍由 query 负责。
+  const session = sessions?.find((s) => s.goal_id === goal.id);
+  const terminal = REVIEW_TERMINAL.has(goal.status);
+  // 会话列表还没回来时不能断言「本次未开启复盘」——那会把加载中误报成没有复盘。
+  if (!session && (isLoading || !sessions)) return null;
+  if (!session && !terminal) return null;
+
+  const noBlueprint = !goal.blueprint_version_id;
+  const view = session ? (
+    <Link
+      href={`/training/${session.id}`}
+      className="inline-flex items-center gap-0.5 text-xs text-ink-2 transition-colors hover:text-accent"
+    >
+      查看复盘
+      <ArrowUpRight className="h-3 w-3" />
+    </Link>
+  ) : null;
+
+  return (
+    <SectionCard title="复盘" action={view}>
+      {session ? (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge status={session.status} />
+            {session.status === "ready" ? (
+              <span className="text-sm text-ink-2">
+                复盘已生成：
+                <span className="font-mono tabular-nums text-ink">{fmtInt(session.finding_count)}</span>{" "}
+                个发现
+              </span>
+            ) : session.status === "analyzing" ? (
+              <span className="text-sm text-ink-2">
+                分析中：复盘正在分析编排图，页面会自动刷新；完成后可查看发现。
+              </span>
+            ) : session.status === "waiting" ? (
+              <span className="text-sm text-ink-2">
+                等待中：任务进入终态后才会冻结编排图并开始分析。
+              </span>
+            ) : session.status === "failed" ? (
+              <span className="text-sm text-ink-2">
+                复盘分析失败{session.error ? `：${session.error}` : "，没有可展示的发现"}。
+              </span>
+            ) : (
+              <span className="text-sm text-ink-2">
+                本次复盘被跳过（未开启复盘或采样未命中），没有分析报告。
+              </span>
+            )}
+          </div>
+          {session.status === "ready" && !noBlueprint && (
+            <p className="text-xs leading-relaxed text-ink-3">
+              提案有两处来源：分析完成时会自动转换一部分结构类发现；复盘页里也能对单条发现点「
+              生成提案」，再由人工在
+              <Link href={`/workflows/${session.blueprint_id}#wf-proposals`} className="text-accent hover:underline">
+                工作流
+              </Link>
+              的提案区审阅。
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-sm text-ink-2">
+            本次未开启复盘。适合一次性/探索性任务；不会产生优化提案。
+          </p>
+          <p className="text-xs leading-relaxed text-ink-3">
+            复盘只在勾选「完成后生成复盘」的任务上开启；这次执行没有复盘会话，因此也不会产生提案。
+          </p>
+        </div>
+      )}
+      {noBlueprint && (
+        <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
+          本次没有使用工作流（自动拆解），发现不能转成提案；可在工作流页把这次执行固化成模板。
+        </p>
+      )}
+    </SectionCard>
+  );
+}
+
 function GoalDetailPageInner() {
   useGoalEvents();
   const params = useParams<{ id: string }>();
@@ -396,7 +483,7 @@ function GoalDetailPageInner() {
     isError: workflowError,
     error: workflowErr,
   } = useGoalWorkflow(id);
-  // 蓝本规范图（Phase A）：goal 钉了 published 版本时展示「计划态」——
+  // 工作流规范图（Phase A）：goal 钉了 published 版本时展示「计划态」——
   // 与下面的执行图（实际怎么跑）对照。未钉时 enabled=false 不发请求。
   const {
     data: blueprintGraph,
@@ -418,6 +505,8 @@ function GoalDetailPageInner() {
     : goal.assignee_id
       ? (agentName(goal.assignee_id) || goal.assignee_id)
       : "-";
+  const domain = domains?.find((d) => d.id === goal.domain_id);
+  const projectName = domain?.name || (goal.domain_id ? "未知项目" : "—");
 
   return (
     <PageBody>
@@ -437,13 +526,29 @@ function GoalDetailPageInner() {
           <AttentionChip attention={goal.attention} />
           <GoalStatusBar goalId={id} goalStatus={goal.status} />
         </div>
-        <p className="text-sm text-ink-3 mt-1">
-          分配给：{assigneeLabel}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
+          <span>
+            项目{" "}
+            {goal.domain_id ? (
+              <Link
+                href={`/projects/${goal.domain_id}`}
+                className="text-ink-2 transition-colors hover:text-accent"
+                title={domain?.name || goal.domain_id}
+              >
+                {projectName}
+              </Link>
+            ) : (
+              <span className="text-ink-2">—</span>
+            )}
+          </span>
+          <span>
+            分配给：<span className="text-ink-2">{assigneeLabel}</span>
+            {goal.assignee_type === "squad" ? "（小队）" : goal.assignee_type === "agent" ? "（智能体）" : ""}
+          </span>
+        </div>
         <p className="text-xs text-ink-3 mt-1">
           验收级别优先级：任务级覆盖 &gt; 项目默认 &gt; 平台默认（HITL）。
           {(() => {
-            const domain = domains?.find((d) => d.id === goal.domain_id);
             const source = !domain
               ? "平台默认"
               : domain.acceptance_level === goal.category
@@ -454,10 +559,32 @@ function GoalDetailPageInner() {
             return <span className="ml-1 text-ink-2">当前：{source}</span>;
           })()}
         </p>
-        {goal.blueprint_version_id && (
+        {goal.blueprint_version_id ? (
           <p className="text-xs text-ink-3 mt-1">
-            蓝本：<span className="font-mono">{goal.blueprint_version_id}</span>
-            （激活时按规范图编译；子任务创建被结构拒绝）
+            工作流：
+            {goal.blueprint_id ? (
+              <Link
+                href={`/workflows/${goal.blueprint_id}`}
+                className="text-ink-2 hover:text-accent"
+                title={goal.blueprint_version_id}
+              >
+                {goal.blueprint_name || goal.blueprint_id.slice(0, 8)}
+              </Link>
+            ) : (
+              // 固定版本被删除：不假装任务“自动拆解”，直说工作流已不存在。
+              <span className="text-amber-300" title={goal.blueprint_version_id}>
+                已删除的工作流
+              </span>
+            )}
+            {" "}
+            <span className="font-mono" title={goal.blueprint_version_id}>
+              {goal.blueprint_version ? `v${goal.blueprint_version}` : goal.blueprint_version_id.slice(0, 8)}
+            </span>
+            （激活时编译成固定子任务；子任务创建被结构拒绝）
+          </p>
+        ) : (
+          <p className="text-xs text-ink-3 mt-1">
+            执行方式：自动拆解（未使用工作流）
           </p>
         )}
         {goal.source_ref && (
@@ -476,13 +603,16 @@ function GoalDetailPageInner() {
         )}
       </div>
 
+      {/* 终态复盘：已生成 / 进行中 / 未开启三种情况都在这里说清楚 */}
+      <ReviewCard goal={goal} />
+
       {/* Actions + 执行流入口 */}
       <div className="flex items-start gap-2 flex-wrap">
         <GoalActions goal={goal} />
         <GoalTimeline goalId={id} goalStatus={goal.status} />
       </div>
 
-      {/* 蓝本人工门决策卡（B-3）：有持门的 gate 时出现，没有就不占地方 */}
+      {/* 工作流人工门决策卡（B-3）：有持门的 gate 时出现，没有就不占地方 */}
       <GateDecisionCard goalId={id} />
 
       {/* Comments */}
@@ -494,10 +624,10 @@ function GoalDetailPageInner() {
       {/* Changes（v2：子任务的逻辑交付物 + 修订史——owner 的集成视图） */}
       <GoalChanges goalId={id} />
 
-      {/* 蓝本：规范图（计划态）——只在 goal 钉了蓝图时出现（Phase A） */}
+      {/* 工作流：规范图（计划态）——只在 goal 钉了工作流时出现（Phase A） */}
       {goal.blueprint_version_id && (
         <SectionCard
-          title="蓝本（计划）"
+          title="工作流（计划）"
           count={blueprintGraph?.nodes?.length}
           desc="激活时钉住的规范图：执行顺序由结构保证。与下方执行图对照可看出「计划 vs 实际」"
           bodyClassName="p-0"
@@ -518,17 +648,17 @@ function GoalDetailPageInner() {
         </SectionCard>
       )}
 
-      {/* 计划 vs 实际（BUG-4）：蓝本目标的逐节点对账，偏离直接可见 */}
+      {/* 计划 vs 实际（BUG-4）：工作流目标的逐节点对账，偏离直接可见 */}
       {goal.blueprint_version_id && <PlanAlignmentCard goalId={id} />}
 
       {/* scratch 环境变更账本（BUG-4 P2）：有记录才渲染 */}
       <EnvChangesCard goalId={id} />
 
-      {/* 编排：live DAG（训练分析里冻结的是同一张图的终态版本） */}
+      {/* 编排：live DAG（复盘分析里冻结的是同一张图的终态版本） */}
       <SectionCard
         title="编排"
         count={workflow?.nodes?.length}
-        desc="只读编排图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后训练分析会冻结同一张图"
+        desc="只读编排图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后复盘分析会冻结同一张图"
         bodyClassName="p-0"
       >
         <WorkflowGraphView

@@ -11,7 +11,7 @@ import {
   useResolveGoalReview,
 } from "@/lib/queries";
 import { cn, relTime } from "@/lib/utils";
-import type { Agent, Goal, GoalStatus, Squad } from "@/lib/types";
+import type { Agent, Domain, Goal, GoalStatus, Squad } from "@/lib/types";
 
 // 看板的一列。fundamental 的 6 个 GoalStatus 被折叠成 5 列：
 // failed 与 cancelled 同属「已结束」——它们对使用者是同一件事（不再推进了），
@@ -25,7 +25,7 @@ const COLUMNS: {
   dot: string;
 }[] = [
   { id: "backlog", label: "待办", hint: "排队等开工", dot: "bg-zinc-400" },
-  { id: "active", label: "进行中", hint: "agent 正在跑", dot: "bg-blue-400" },
+  { id: "active", label: "进行中", hint: "智能体正在跑", dot: "bg-blue-400" },
   { id: "review", label: "待审批", hint: "等你拍板", dot: "bg-purple-400" },
   { id: "done", label: "已完成", hint: "验收通过", dot: "bg-emerald-400" },
   { id: "closed", label: "已结束", hint: "失败 · 取消", dot: "bg-zinc-500" },
@@ -76,9 +76,9 @@ function planMove(g: Goal, to: BoardCol): Move | null {
     return {
       kind: "reject",
       drop: "松手打回重做",
-      done: "已打回，agent 继续修",
-      confirmTitle: "打回给 agent 重做？",
-      confirmBody: "任务回到进行中，agent 按你的意见继续修，然后再跑一轮验收。",
+      done: "已打回，智能体继续修",
+      confirmTitle: "打回给智能体重做？",
+      confirmBody: "任务回到进行中，智能体按你的意见继续修，然后再跑一轮验收。",
       confirmCta: "打回",
     };
 
@@ -121,8 +121,8 @@ function describeError(e: unknown): string {
 function refusal(g: Goal, to: BoardCol): string {
   const from = COL_OF[g.status];
   if (to === "backlog") return "不能拖回「待办」：任务只会往前走，要中止请拖到「已结束」。";
-  if (to === "review") return "「待审批」由 agent 跑完把关点自动进入，不能手动放进去。";
-  if (to === "done" && from === "active") return "完成由验收决定：agent 跑完会自己进入「待审批」。";
+  if (to === "review") return "「待审批」由智能体跑完把关点自动进入，不能手动放进去。";
+  if (to === "done" && from === "active") return "完成由验收决定：智能体跑完会自己进入「待审批」。";
   if (to === "done" && from === "backlog") return "先开始执行，验收通过后才会到「已完成」。";
   if (to === "closed" && from === "review") return "待审批只能「通过」或「打回」：先打回，再取消。";
   if (to === "closed" && (from === "done" || from === "closed"))
@@ -167,10 +167,12 @@ export function GoalBoard({
   goals,
   agents,
   squads,
+  domains,
 }: {
   goals: Goal[];
   agents: Agent[];
   squads: Squad[];
+  domains?: Domain[];
 }) {
   const activate = useActivateGoal();
   const cancel = useCancelGoal();
@@ -224,6 +226,12 @@ export function GoalBoard({
     for (const s of squads) m.set(`squad:${s.id}`, s.name);
     return (g: Goal) => m.get(`${g.assignee_type}:${g.assignee_id}`) || g.assignee_type;
   }, [agents, squads]);
+
+  const projectOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of domains ?? []) m.set(d.id, d.name);
+    return (g: Goal) => m.get(g.domain_id) || "";
+  }, [domains]);
 
   const byCol = useMemo(() => {
     const box: Record<BoardCol, Goal[]> = { backlog: [], active: [], review: [], done: [], closed: [] };
@@ -458,7 +466,12 @@ export function GoalBoard({
                     >
                       <div className="flex items-start gap-2">
                         <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3/60" />
-                        <p className="line-clamp-3 text-[13px] font-medium leading-snug text-ink">{g.title}</p>
+                        <div className="min-w-0">
+                          {projectOf(g) && (
+                            <div className="mb-1 truncate text-[10px] text-ink-3">{projectOf(g)}</div>
+                          )}
+                          <p className="line-clamp-3 text-[13px] font-medium leading-snug text-ink">{g.title}</p>
+                        </div>
                       </div>
 
                       {(g.attention || g.review_phase || g.category) && (

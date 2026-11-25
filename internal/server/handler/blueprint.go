@@ -13,13 +13,14 @@ import (
 // spec-graph rendering endpoint that mirrors WorkflowGraph's shape so the
 // frontend renders it with the existing workflow-graph component.
 
-// listBlueprints returns all blueprints.
+// listBlueprints returns workflows, optionally scoped to ?squad_id=. The
+// no-filter view is the global search surface (legacy + every squad).
 func (h *Handlers) listBlueprints(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
 		writeJSON(w, []service.Blueprint{}, nil)
 		return
 	}
-	out, err := h.Blueprint.List(r.Context())
+	out, err := h.Blueprint.ListBySquad(r.Context(), r.URL.Query().Get("squad_id"))
 	if out == nil {
 		out = []service.Blueprint{}
 	}
@@ -29,26 +30,31 @@ func (h *Handlers) listBlueprints(w http.ResponseWriter, r *http.Request) {
 // createBlueprint registers a blueprint with its draft v1 content.
 func (h *Handlers) createBlueprint(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	var body struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Content     string `json:"content"`
+		SquadID     string `json:"squad_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, service.NewValidationError("invalid JSON body"))
 		return
 	}
-	out, err := h.Blueprint.Create(r.Context(), body.Name, body.Description, body.Content, "human", "")
+	if body.SquadID == "" {
+		writeErr(w, http.StatusBadRequest, service.NewFieldRequiredError("squad_id"))
+		return
+	}
+	out, err := h.Blueprint.CreateForSquad(r.Context(), body.SquadID, body.Name, body.Description, body.Content, "human", "")
 	writeJSON(w, out, err)
 }
 
 // getBlueprint returns one blueprint with its versions.
 func (h *Handlers) getBlueprint(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	bp, versions, err := h.Blueprint.Get(r.Context(), r.PathValue("id"))
@@ -78,7 +84,7 @@ func (h *Handlers) listBlueprintVersions(w http.ResponseWriter, r *http.Request)
 // newBlueprintDraft opens version N+1 from the latest version.
 func (h *Handlers) newBlueprintDraft(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	var body struct {
@@ -92,7 +98,7 @@ func (h *Handlers) newBlueprintDraft(w http.ResponseWriter, r *http.Request) {
 // updateBlueprintDraft replaces a draft version's content (validated).
 func (h *Handlers) updateBlueprintDraft(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	var body struct {
@@ -109,7 +115,7 @@ func (h *Handlers) updateBlueprintDraft(w http.ResponseWriter, r *http.Request) 
 // publishBlueprintVersion flips draft → published through the full gate.
 func (h *Handlers) publishBlueprintVersion(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	var body struct {
@@ -125,7 +131,7 @@ func (h *Handlers) publishBlueprintVersion(w http.ResponseWriter, r *http.Reques
 // renders it with zero layout changes (proposal §4.12).
 func (h *Handlers) blueprintVersionGraph(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	out, err := h.Blueprint.SpecWorkflowGraph(r.Context(), r.PathValue("versionId"))
@@ -154,7 +160,7 @@ func statusFor(err error) int {
 // listBlueprintProposals: GET /blueprints/{id}/proposals
 func (h *Handlers) listBlueprintProposals(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	out, err := h.Blueprint.ListProposals(r.Context(), r.PathValue("id"))
@@ -167,7 +173,7 @@ func (h *Handlers) listBlueprintProposals(w http.ResponseWriter, r *http.Request
 // createBlueprintProposal: POST /blueprints/{id}/proposals
 func (h *Handlers) createBlueprintProposal(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	var body struct {
@@ -192,7 +198,7 @@ func (h *Handlers) createBlueprintProposal(w http.ResponseWriter, r *http.Reques
 // getBlueprintProposal: GET /blueprint-proposals/{proposalId}
 func (h *Handlers) getBlueprintProposal(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	out, err := h.Blueprint.GetProposal(r.Context(), r.PathValue("proposalId"))
@@ -203,7 +209,7 @@ func (h *Handlers) getBlueprintProposal(w http.ResponseWriter, r *http.Request) 
 // three-color structured diff, base vs patched (§12.2).
 func (h *Handlers) blueprintProposalDiff(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	out, err := h.Blueprint.ProposalDiff(r.Context(), r.PathValue("proposalId"))
@@ -215,7 +221,7 @@ func (h *Handlers) blueprintProposalDiff(w http.ResponseWriter, r *http.Request)
 // auto-publishes.
 func (h *Handlers) approveBlueprintProposal(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	p, v, err := h.Blueprint.ApproveProposal(r.Context(), r.PathValue("proposalId"), "human", "")
@@ -228,7 +234,7 @@ func (h *Handlers) approveBlueprintProposal(w http.ResponseWriter, r *http.Reque
 // is refused too, with the counts in the error message.
 func (h *Handlers) deleteBlueprintVersion(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	if err := h.Blueprint.DeleteVersion(r.Context(), r.PathValue("versionId")); err != nil {
@@ -243,7 +249,7 @@ func (h *Handlers) deleteBlueprintVersion(w http.ResponseWriter, r *http.Request
 // one of its versions. Terminal goals keep their historical pin.
 func (h *Handlers) deleteBlueprint(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	if err := h.Blueprint.Delete(r.Context(), r.PathValue("id")); err != nil {
@@ -287,7 +293,7 @@ func (h *Handlers) nextRoundFromProposal(w http.ResponseWriter, r *http.Request)
 // rejectBlueprintProposal: POST /blueprint-proposals/{proposalId}/reject
 func (h *Handlers) rejectBlueprintProposal(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
-		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("blueprint service not configured"))
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	out, err := h.Blueprint.RejectProposal(r.Context(), r.PathValue("proposalId"), "human", "")

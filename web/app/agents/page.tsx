@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAgents, useRuntimes, useDeleteAgent, useAgentDeleteImpact, usePinnedAgents, useSetAgentPin, useGoalEvents } from "@/lib/queries";
 import { AgentForm } from "@/components/agent-form";
 import { ChatPanel } from "@/components/chat-panel";
@@ -38,6 +38,10 @@ export default function AgentsPage() {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<AgentScope>("all");
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
+  }, []);
+
   const pinnedSet = new Set(pinnedIds ?? []);
   const runtimeName = (id: string) => runtimes?.find((r) => r.id === id)?.name ?? id;
   const pinnedAgents = (agents ?? []).filter((a) => pinnedSet.has(a.id));
@@ -64,13 +68,13 @@ export default function AgentsPage() {
     <PageBody>
       <PageHeader
         title="智能体"
-        desc="每个 agent 是一名可复用的执行者：绑定运行时、模型与技能，固定后可从左侧快捷栏直接开聊。"
-        action={<Button onClick={() => setShowForm(true)}>+ 新建</Button>}
+        desc="每个智能体是一名可复用的执行者：绑定运行时、模型与技能，固定后可从左侧快捷栏直接开聊。"
+        action={<Button onClick={() => setShowForm(true)}>新建智能体</Button>}
       />
 
       <StatStrip
         items={[
-          { label: "Agent 总数", value: total, hint: `${stewardCount} 个系统管家角色` },
+          { label: "智能体总数", value: total, hint: `${stewardCount} 个系统管家角色` },
           {
             label: "已固定",
             value: pinnedAgents.length,
@@ -93,7 +97,7 @@ export default function AgentsPage() {
           <SectionCard title="固定" count={pinnedAgents.length} bodyClassName="p-0">
             {pinnedAgents.length === 0 ? (
               <Empty icon={<Pin className="h-4 w-4" />}>
-                还没有固定的 agent。在右侧列表点「固定」，即可在此快速对话。
+                还没有固定的智能体。在右侧列表点「固定」，即可在此快速对话。
               </Empty>
             ) : (
               <ul className="divide-y divide-line">
@@ -173,8 +177,8 @@ export default function AgentsPage() {
           ) : visibleAgents.length === 0 ? (
             <Empty icon={<Search className="h-4 w-4" />}>
               {total === 0
-                ? "还没有 agent。点「+ 新建」创建一个。"
-                : "没有匹配当前搜索/筛选条件的 agent。"}
+                ? "还没有智能体。点右上角「新建智能体」创建一个。"
+                : "没有匹配当前搜索/筛选条件的智能体。"}
             </Empty>
           ) : (
             <ul className="divide-y divide-line">

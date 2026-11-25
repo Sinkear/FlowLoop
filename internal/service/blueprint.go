@@ -153,8 +153,12 @@ type SpecEdge struct {
 // ── DB rows (schema.sql §5) ──
 
 type Blueprint struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// SquadID is the owning squad (Phase B, D1). '' is the frozen legacy
+	// bucket: old global workflows keep running for already-pinned goals,
+	// but new tasks cannot select them.
+	SquadID       string `json:"squad_id"`
 	Description   string `json:"description"`
 	CreatedByType string `json:"created_by_type"`
 	CreatedByID   string `json:"created_by_id"`
@@ -858,7 +862,7 @@ func parseSpecContent(v *BlueprintVersion) (*SpecGraph, error) {
 	}
 	var g SpecGraph
 	if err := json.Unmarshal([]byte(v.Content), &g); err != nil {
-		return nil, NewValidationError("blueprint content is not valid JSON: " + err.Error())
+		return nil, NewValidationError("workflow content is not valid JSON: " + err.Error())
 	}
 	return &g, nil
 }
@@ -899,13 +903,13 @@ const reviewerRole = "reviewer"
 func (s *BlueprintService) validateContent(ctx context.Context, content string) (*SpecGraph, error) {
 	var g SpecGraph
 	if err := json.Unmarshal([]byte(content), &g); err != nil {
-		return nil, NewValidationError("blueprint content is not valid JSON: " + err.Error())
+		return nil, NewValidationError("workflow content is not valid JSON: " + err.Error())
 	}
 	if len(g.Nodes) > maxSpecNodes {
-		return nil, NewValidationError(fmt.Sprintf("blueprint has %d nodes (max %d)", len(g.Nodes), maxSpecNodes))
+		return nil, NewValidationError(fmt.Sprintf("workflow has %d nodes (max %d)", len(g.Nodes), maxSpecNodes))
 	}
 	if problems := ValidateSpec(&g); len(problems) > 0 {
-		return nil, NewValidationError("blueprint validation failed:\n  - " + strings.Join(problems, "\n  - "))
+		return nil, NewValidationError("workflow validation failed:\n  - " + strings.Join(problems, "\n  - "))
 	}
 	// V4: every task/spawn assignee resolves — with the Phase B capability
 	// caveat: capability:<slug> names a ROLE, and roles live in
@@ -955,13 +959,59 @@ func (s *BlueprintService) validateContent(ctx context.Context, content string) 
 	return &g, nil
 }
 
-// Create registers a new blueprint with its draft v1.
+// validateSpecAssigneeOwnership enforces D1 for squad-owned workflows: a
+// workflow may assign work to its own squad (squad:<owner>) or to individual
+// agents / role words, but never to a different squad. Legacy unowned
+// workflows keep their historical semantics (ownerSquadID == "").
+func validateSpecAssigneeOwnership(g *SpecGraph, ownerSquadID string) error {
+	if ownerSquadID == "" {
+		return nil
+	}
+	for _, n := range g.Nodes {
+		var assignee string
+		switch n.Type {
+		case "task":
+			if n.Task != nil {
+				assignee = n.Task.Assignee
+			}
+		case "spawn":
+			if n.Spawn != nil {
+				assignee = n.Spawn.Assignee
+			}
+		}
+		if !strings.HasPrefix(assignee, "squad:") {
+			continue
+		}
+		id := strings.TrimPrefix(assignee, "squad:")
+		if id != ownerSquadID {
+			return NewValidationError(fmt.Sprintf("node %q: assignee %q names another squad — a workflow can only assign work to its owning squad (D1); use agent:<id> or capability:<role> instead", n.ID, assignee))
+		}
+	}
+	return nil
+}
+
+// Create registers a legacy (unowned) blueprint with its draft v1. Kept for
+// tests/backfill; new product paths must use CreateForSquad so every workflow
+// has an owning squad (D1).
 func (s *BlueprintService) Create(ctx context.Context, name, description, content, createdByType, createdByID string) (*Blueprint, error) {
+	return s.CreateForSquad(ctx, "", name, description, content, createdByType, createdByID)
+}
+
+// CreateForSquad registers a workflow owned by squadID with its draft v1.
+func (s *BlueprintService) CreateForSquad(ctx context.Context, squadID, name, description, content, createdByType, createdByID string) (*Blueprint, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, NewFieldRequiredError("name")
 	}
+	if squadID != "" {
+		if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, squadID, "squad"); err != nil {
+			return nil, err
+		}
+	}
 	g, err := s.validateContent(ctx, content)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateSpecAssigneeOwnership(g, squadID); err != nil {
 		return nil, err
 	}
 	if description == "" {
@@ -970,6 +1020,7 @@ func (s *BlueprintService) Create(ctx context.Context, name, description, conten
 	bp := Blueprint{
 		ID:            newID(),
 		Name:          name,
+		SquadID:       squadID,
 		Description:   description,
 		CreatedByType: orDefault(createdByType, "human"),
 		CreatedByID:   createdByID,
@@ -981,10 +1032,13 @@ func (s *BlueprintService) Create(ctx context.Context, name, description, conten
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blueprint (id,name,description,created_by_type,created_by_id,created_at) VALUES (?,?,?,?,?,?)`,
-		bp.ID, bp.Name, bp.Description, bp.CreatedByType, bp.CreatedByID, bp.CreatedAt); err != nil {
+		`INSERT INTO blueprint (id,name,squad_id,description,created_by_type,created_by_id,created_at) VALUES (?,?,?,?,?,?,?)`,
+		bp.ID, bp.Name, bp.SquadID, bp.Description, bp.CreatedByType, bp.CreatedByID, bp.CreatedAt); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil, NewConflictError(fmt.Sprintf("blueprint name %q already exists", name))
+			if squadID == "" {
+				return nil, NewConflictError(fmt.Sprintf("legacy workflow name %q already exists", name))
+			}
+			return nil, NewConflictError(fmt.Sprintf("workflow name %q already exists in this squad", name))
 		}
 		return nil, fmt.Errorf("insert blueprint: %w", err)
 	}
@@ -1018,7 +1072,16 @@ func (s *BlueprintService) UpdateDraft(ctx context.Context, versionID, content s
 	if v.Status != "draft" {
 		return nil, NewConflictError(fmt.Sprintf("version %d is %s — only drafts are editable (published versions are immutable; create a new draft instead)", v.Version, v.Status))
 	}
-	if _, err := s.validateContent(ctx, content); err != nil {
+	g, err := s.validateContent(ctx, content)
+	if err != nil {
+		return nil, err
+	}
+	var ownerSquadID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT squad_id FROM blueprint WHERE id=?`, v.BlueprintID).Scan(&ownerSquadID); err != nil {
+		return nil, fmt.Errorf("load workflow owner: %w", err)
+	}
+	if err := validateSpecAssigneeOwnership(g, ownerSquadID); err != nil {
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
@@ -1041,7 +1104,16 @@ func (s *BlueprintService) Publish(ctx context.Context, versionID, changelog str
 	}
 	// The publish gate re-validates the STORED content (not the caller's
 	// memory of it): a drifted row fails the V6 hash check inside.
-	if _, err := s.validateContent(ctx, v.Content); err != nil {
+	g, err := s.validateContent(ctx, v.Content)
+	if err != nil {
+		return nil, err
+	}
+	var ownerSquadID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT squad_id FROM blueprint WHERE id=?`, v.BlueprintID).Scan(&ownerSquadID); err != nil {
+		return nil, fmt.Errorf("load workflow owner: %w", err)
+	}
+	if err := validateSpecAssigneeOwnership(g, ownerSquadID); err != nil {
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
@@ -1170,7 +1242,7 @@ func (s *BlueprintService) GetVersion(ctx context.Context, versionID string) (*B
 // list and the detail page can never disagree about a blueprint's state.
 // Columns: id,name,description,created_by_type,created_by_id,created_at,
 // latest published id, version count, newest version number, newest status.
-const blueprintSelect = `SELECT b.id,b.name,b.description,b.created_by_type,b.created_by_id,b.created_at,
+const blueprintSelect = `SELECT b.id,b.name,b.squad_id,b.description,b.created_by_type,b.created_by_id,b.created_at,
 	COALESCE((SELECT bv.id FROM blueprint_version bv WHERE bv.blueprint_id=b.id AND bv.status='published' ORDER BY bv.version DESC LIMIT 1), ''),
 	(SELECT COUNT(*) FROM blueprint_version bv WHERE bv.blueprint_id=b.id),
 	COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.blueprint_id=b.id ORDER BY bv.version DESC LIMIT 1), 0),
@@ -1180,14 +1252,26 @@ const blueprintSelect = `SELECT b.id,b.name,b.description,b.created_by_type,b.cr
 // scanBlueprint keeps the column order in blueprintSelect and this call in sync.
 func scanBlueprint(row interface{ Scan(dest ...any) error }, b *Blueprint) error {
 	return row.Scan(
-		&b.ID, &b.Name, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt,
+		&b.ID, &b.Name, &b.SquadID, &b.Description, &b.CreatedByType, &b.CreatedByID, &b.CreatedAt,
 		&b.LatestVersionID, &b.VersionCount, &b.LatestVersion, &b.LatestVersionStatus,
 	)
 }
 
 // List returns all blueprints with their version/发布 state summary.
 func (s *BlueprintService) List(ctx context.Context) ([]Blueprint, error) {
-	rows, err := s.st.DB().QueryContext(ctx, blueprintSelect+` ORDER BY b.created_at DESC`)
+	return s.ListBySquad(ctx, "")
+}
+
+// ListBySquad filters to one squad's workflows when squadID is non-empty.
+// Empty means the global search view (legacy + every squad).
+func (s *BlueprintService) ListBySquad(ctx context.Context, squadID string) ([]Blueprint, error) {
+	q := blueprintSelect
+	args := []any{}
+	if squadID != "" {
+		q += ` WHERE b.squad_id=?`
+		args = append(args, squadID)
+	}
+	rows, err := s.st.DB().QueryContext(ctx, q+` ORDER BY b.created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list blueprints: %w", err)
 	}
@@ -1269,7 +1353,13 @@ func (s *BlueprintService) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("count pinned goals: %w", err)
 	}
 	if active > 0 {
-		return NewConflictError(fmt.Sprintf("blueprint is pinned by %d non-terminal goal(s) — resolve them first", active))
+		return NewConflictError(fmt.Sprintf("workflow is pinned by %d non-terminal goal(s) — resolve them first", active))
+	}
+	// A deleted workflow must not leave a dangling squad default. This is a
+	// plain column (no FK) so the explicit clear is required.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE squad SET default_workflow_id='' WHERE default_workflow_id=?`, id); err != nil {
+		return fmt.Errorf("clear squad default workflow: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM blueprint_version WHERE blueprint_id=?`, id); err != nil {
 		return fmt.Errorf("delete blueprint versions: %w", err)
@@ -1398,11 +1488,11 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		return fmt.Errorf("load pinned version: %w", err)
 	}
 	if hashContent(content) != hash {
-		return NewConflictError("pinned blueprint version content_hash mismatch — refusing to compile a drifted spec")
+		return NewConflictError("pinned workflow version content_hash mismatch — refusing to compile a drifted spec")
 	}
 	var g SpecGraph
 	if err := json.Unmarshal([]byte(content), &g); err != nil {
-		return NewValidationError("pinned blueprint content is not valid JSON: " + err.Error())
+		return NewValidationError("pinned workflow content is not valid JSON: " + err.Error())
 	}
 
 	// Goal fields for condition evaluation + {{goal.*}} interpolation.
@@ -1425,6 +1515,19 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		goalID).Scan(&goalSquadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("load goal squad: %w", err)
 	}
+	// Phase B: the workflow's owning squad is the authoritative vocabulary /
+	// briefing scope. Legacy workflows (squad_id='') keep the old
+	// goal-squad semantics so historical pins compile exactly as before.
+	bpSquadID := ""
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(b.squad_id,'') FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=?`, versionID).
+		Scan(&bpSquadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load workflow owner: %w", err)
+	}
+	ownerSquadID := goalSquadID
+	if bpSquadID != "" {
+		ownerSquadID = bpSquadID
+	}
 	// B-3: holder nodes (router/gate) compile to the goal's owner agent —
 	// a squad goal routes decisions to its leader (resolveLeaderTx
 	// semantics, replayed here because the goal-level helper lives on the
@@ -1436,9 +1539,9 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		return fmt.Errorf("load goal owner: %w", err)
 	}
 	if goalOwnerID == "" {
-		if goalSquadID != "" {
+		if ownerSquadID != "" {
 			if err := tx.QueryRowContext(ctx,
-				`SELECT leader_id FROM squad WHERE id=?`, goalSquadID).Scan(&goalOwnerID); err != nil {
+				`SELECT leader_id FROM squad WHERE id=?`, ownerSquadID).Scan(&goalOwnerID); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return NewValidationError("the goal's squad no longer exists — cannot resolve the decision holder")
 				}
@@ -1642,6 +1745,12 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 		resolvedAgent := id
 		switch kind {
 		case "squad":
+			// D1: an owned workflow cannot assign work to a different squad.
+			// Create/update/publish validate this too; the compile-time guard
+			// protects legacy drafts and any path that bypasses those gates.
+			if ownerSquadID != "" && id != ownerSquadID {
+				return NewValidationError(fmt.Sprintf("node %q: assignee %q names another squad — a workflow can only assign work to its owning squad", n.ID, assigneeSpec))
+			}
 			// A squad assignee compiles to its LEADER agent — runs are
 			// claimed per agent (Claim JOINs the agent table), so a squad
 			// id in run.agent_id would queue forever (same semantics as
@@ -1664,15 +1773,15 @@ func (s *GoalService) compileBlueprintTx(ctx context.Context, tx *sql.Tx, goalID
 			// goal-scoped so it can only happen here — fail-closed: a
 			// capability that matches nobody blocks activation with a
 			// diagnostic, never a silently dropped node.
-			if goalSquadID == "" {
-				return NewValidationError(fmt.Sprintf("node %q: assignee %q requires a squad-assigned goal — capability is resolved against the goal's own squad", n.ID, assigneeSpec))
+			if ownerSquadID == "" {
+				return NewValidationError(fmt.Sprintf("node %q: assignee %q requires a squad-assigned goal (or squad-owned workflow) — capability is resolved against the workflow's squad", n.ID, assigneeSpec))
 			}
-			member, err := resolveCapabilityTx(ctx, tx, goalSquadID, id)
+			member, err := resolveCapabilityTx(ctx, tx, ownerSquadID, id)
 			if err != nil {
 				return err
 			}
 			resolvedAgent = member
-			teamSquad = goalSquadID
+			teamSquad = ownerSquadID
 		}
 		verifier := ""
 		if n.Type == "task" && n.Task.Verify != nil && n.Task.Verify.Mode == "agent" {
@@ -3660,7 +3769,7 @@ func jsonMapOf(v any) map[string]any {
 
 // ── 涌现固化 (§12.4): deterministic execution-graph → blueprint translation ──
 
-// emergentDraftName is the auto-draft's unique name (blueprint.name UNIQUE ⇒
+// emergentDraftName is the auto-draft's unique name (UNIQUE(squad_id,name) ⇒
 // the same shape re-triggering does not double-draft). label is "固化" or
 // "近似固化" (§14.1) — the two convergence paths never collide on a name.
 func emergentDraftName(sig string, domainName string, label string) string {
@@ -3686,8 +3795,20 @@ func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, d
 		_ = s.st.DB().QueryRowContext(ctx, `SELECT name FROM domain WHERE id=?`, domainID).Scan(&domainName)
 	}
 	name := emergentDraftName(nameSig, domainName, label)
+	// Emergent drafts are owned by the goal's squad. A single-agent goal has
+	// no squad to own a workflow, so it records its shape but never drafts one
+	// (D5: no ownerless new workflows).
+	var goalSquadID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(assignee_id,'') FROM goal WHERE id=? AND assignee_type='squad'`, goalID).Scan(&goalSquadID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("load goal squad for draft: %w", err)
+	}
+	if goalSquadID == "" {
+		logging.Infof("blueprint: goal %s has no owning squad — emergent draft skipped", goalID[:8])
+		return nil, nil
+	}
 	var exists int
-	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint WHERE name=?`, name).Scan(&exists); err != nil {
+	if err := s.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint WHERE name=? AND squad_id=?`, name, goalSquadID).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("check emergent draft existence: %w", err)
 	}
 	if exists > 0 {
@@ -3764,7 +3885,7 @@ func (s *BlueprintService) DraftFromGoalExecution(ctx context.Context, goalID, d
 	if err != nil {
 		return nil, err
 	}
-	bp, err := s.Create(ctx, name,
+	bp, err := s.CreateForSquad(ctx, goalSquadID, name,
 		"自动起草（"+label+"）：同域连续 3 个 infer 执行图"+map[bool]string{true: "工作骨架同构（细节有差异）", false: "结构相同"}[label == "近似固化"]+"，由平台确定性翻译生成（"+map[bool]string{true: "§14.1 L0 骨架收敛", false: "§12.4 精确同构"}[label == "近似固化"]+"）。请审查后发布；发布前不影响任何任务。",
 		string(content), "agent", "rsi-emergent")
 	if err != nil {

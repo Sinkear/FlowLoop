@@ -61,6 +61,9 @@ type Handlers struct {
 	// Connection is the first-class squad ↔ repo binding: each row owns its
 	// own webhook path + secret (contract: 仓库连接).
 	Connection *service.ConnectionService
+	// ProjectSquad is the collaboration membership (squad works for a
+	// project), independent of the optional repo connection.
+	ProjectSquad *service.ProjectSquadService
 	// RSI is the training-session / trace-analysis service (训练分析).
 	RSI *service.RSIService
 	// Blueprint is the spec-graph service (Phase A, docs/BLUEPRINT-PROPOSAL.md):
@@ -128,6 +131,8 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /rsi/sessions/{id}/rounds", h.listRsiRounds)
 	mux.HandleFunc("GET /rsi/overview", h.rsiOverview)
 	mux.HandleFunc("PATCH /rsi/findings/{id}", h.patchRsiFinding)
+	// Phase C: turn one finding into a pending proposal on the pinned workflow.
+	mux.HandleFunc("POST /rsi/findings/{id}/proposal", h.draftProposalFromFinding)
 	mux.HandleFunc("POST /rsi/sessions/{id}/retry", h.retryRsiSession)
 
 	// W-RSI 编排图: live workflow graph for a goal / compact summaries for a
@@ -220,6 +225,8 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /templates/squads/{id}/apply", h.applySquadTemplate)
 	mux.HandleFunc("POST /templates/projects/{id}/apply", h.applyProjectTemplate)
 	mux.HandleFunc("POST /templates/agents/{id}/apply", h.applyAgentTemplate)
+	mux.HandleFunc("POST /templates/import/preview", h.previewTemplateImport)
+	mux.HandleFunc("POST /templates/import", h.importTemplate)
 	mux.HandleFunc("POST /intake", h.sendIntake)
 	mux.HandleFunc("POST /intake/dispatch", h.intakeCreate)
 	mux.HandleFunc("GET /intake/{runId}", h.getIntakeResult)
@@ -227,6 +234,9 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /domains/{id}", h.getDomain)
 	mux.HandleFunc("PUT /domains/{id}", h.updateDomain)
 	mux.HandleFunc("DELETE /domains/{id}", h.deleteDomain)
+	mux.HandleFunc("GET /domains/{id}/squads", h.listProjectSquads)
+	mux.HandleFunc("POST /domains/{id}/squads", h.addProjectSquad)
+	mux.HandleFunc("DELETE /domains/{id}/squads/{squadID}", h.removeProjectSquad)
 	// Repository-level webhook setup panel (contract §2): read the effective
 	// secret source + host hook registrations + recent deliveries, register
 	// the hook, and rebind the routing assignees straight from the squad page

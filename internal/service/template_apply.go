@@ -1023,17 +1023,18 @@ func (s *TemplateApplyService) ApplyProject(ctx context.Context, templateID stri
 		res.Items = append(res.Items, sqRes.Items...)
 	}
 	// Issue assignee: resolve the template's agent/squad NAME to an id now
-	// (after the team section) and patch the domain. Skipped when unresolved
-	// (validateIssueTracking would reject a phantom id).
+	// (after the team section). Routing is owned by SetAssignees (not the
+	// generic Update, which deliberately preserves stored routing), so a squad
+	// is joined to the project first and then the routing is written.
 	if dType == "repo" && spec.Domain.IssueAssignee != "" {
 		if id := s.resolveIssueAssignee(ctx, spec.Domain.IssueAssignee, spec.Domain.IssueAssigneeType); id != "" {
-			updated, err := s.domainSvc.Update(ctx, createdDomain.ID, Domain{
-				GitURL: createdDomain.GitURL, DefaultBranch: createdDomain.DefaultBranch,
-				GitIdentity: createdDomain.GitIdentity, GitCredentials: ov.GitCredentials,
-				IssueRepo: createdDomain.IssueRepo, IssueAssignee: id,
-				IssueAssigneeType: spec.Domain.IssueAssigneeType,
-				IssueProvider:     createdDomain.IssueProvider,
-			})
+			if spec.Domain.IssueAssigneeType == "squad" {
+				if _, err := NewProjectSquadService(s.st).Add(ctx, createdDomain.ID, id); err != nil {
+					res.Items = append(res.Items, ApplyItem{Kind: "domain.issue_assignee", Name: spec.Domain.IssueAssignee, Action: "failed", Error: err.Error()})
+					return res, err
+				}
+			}
+			updated, err := s.domainSvc.SetAssignees(ctx, createdDomain.ID, id, spec.Domain.IssueAssigneeType, "", "")
 			if err != nil {
 				res.Items = append(res.Items, ApplyItem{Kind: "domain.issue_assignee", Name: spec.Domain.IssueAssignee, Action: "failed", Error: err.Error()})
 			} else {

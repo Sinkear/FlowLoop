@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1367,4 +1368,179 @@ func (t *translateCtx) freeNodeID(base string) string {
 		id = base + suffix
 	}
 	return id
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Manual generation (Phase C, WEB-IA-REDESIGN §4.9)
+// ─────────────────────────────────────────────────────────────────────
+
+// DraftProposalFromFinding is the MANUAL counterpart of draftAutoProposals:
+// a human picks one finding on a review and asks for a proposal from it. It
+// reuses the same deterministic translators and the same CreateProposal
+// validator, but deliberately bypasses the rails that would make a button
+// press look successful while doing nothing:
+//
+//   - no "one transform per analysis" rule (the human asked for THIS finding,
+//     not for the category's best-scoring one);
+//   - no rsi.max_auto_rounds budget and no translatorMaxPerRun batch cap —
+//     those bound UNATTENDED production, not a reviewed click;
+//   - no silent dedup: an existing proposal for the finding is returned as-is
+//     (idempotent), and every refusal comes back as a real error with its
+//     reason, because the user is waiting on this one request.
+//
+// The base version is the version the GOAL pinned, exactly like the auto path:
+// a manual proposal patches the same spec the run executed, never "latest".
+func (s *RSIService) DraftProposalFromFinding(ctx context.Context, findingID string) (*BlueprintProposal, error) {
+	if strings.TrimSpace(findingID) == "" {
+		return nil, NewValidationError("finding id is required")
+	}
+	if s.blueprintSvc == nil {
+		return nil, fmt.Errorf("blueprint service not wired — proposals are unavailable")
+	}
+	var f RsiFinding
+	var evidence, goalID, versionID, goalStatus, sessionID string
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT f.id,f.report_id,f.category,f.severity,f.confidence,f.title,f.explanation,f.suggestion,f.evidence_json,f.score,f.status,f.created_at,
+		        rp.session_id, g.id, COALESCE(g.blueprint_version_id,''), COALESCE(g.status,'')
+		 FROM rsi_finding f
+		 JOIN rsi_report rp ON rp.id=f.report_id
+		 JOIN training_session ts ON ts.id=rp.session_id
+		 JOIN goal g ON g.id=ts.goal_id
+		 WHERE f.id=?`, findingID).
+		Scan(&f.ID, &f.ReportID, &f.Category, &f.Severity, &f.Confidence, &f.Title, &f.Explanation, &f.Suggestion,
+			&evidence, &f.Score, &f.Status, &f.CreatedAt, &sessionID, &goalID, &versionID, &goalStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load finding %s: %w", findingID, err)
+	}
+	f.Evidence = decodeStrings(evidence)
+	// Idempotency: one finding can only ever own one proposal. Returning the
+	// existing one makes a double click harmless and lets the UI link to it.
+	var existingID, blueID string
+	err = s.st.DB().QueryRowContext(ctx,
+		`SELECT p.id, p.blueprint_id FROM blueprint_proposal p WHERE p.finding_id=? ORDER BY p.created_at DESC LIMIT 1`,
+		findingID).Scan(&existingID, &blueID)
+	if err == nil && existingID != "" {
+		if p, err := s.findProposal(ctx, blueID, existingID); err == nil {
+			return p, nil
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("check existing proposal for finding %s: %w", findingID, err)
+	}
+	// The three "no spec to patch" refusals are product states, not bugs: say
+	// which one it is instead of failing with a generic message, because the UI
+	// must explain why there is nothing to propose.
+	if versionID == "" {
+		return nil, NewValidationError("本次任务没有固定工作流（自动拆解），发现不能转成提案")
+	}
+	var nodeCount int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM blueprint_node WHERE goal_id=?`, goalID).Scan(&nodeCount); err != nil {
+		return nil, fmt.Errorf("count blueprint_node for goal %s: %w", goalID, err)
+	}
+	if nodeCount == 0 {
+		return nil, NewValidationError("本次任务的工作流没有编译（blueprint_node=0），没有可修改的节点")
+	}
+	translate, ok := findingTranslators[f.Category]
+	if !ok {
+		return nil, NewValidationError(fmt.Sprintf("类别 %q 没有确定性转换，这条发现只能人工处理", f.Category))
+	}
+	t, err := s.buildTranslateCtx(ctx, goalID, versionID)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned spec: %w", err)
+	}
+	// The translators read the execution graph; the FROZEN copy from the report
+	// is what the analysis actually saw, so a proposal is never derived from a
+	// graph that drifted after the run.
+	var wfJSON string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(workflow_json,'') FROM rsi_report WHERE session_id=?`, sessionID).Scan(&wfJSON); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("load frozen workflow: %w", err)
+	}
+	t.g = decodeWorkflow(wfJSON)
+	if t.g == nil {
+		if t.g, err = s.BuildGoalWorkflow(ctx, goalID); err != nil {
+			return nil, fmt.Errorf("rebuild goal workflow: %w", err)
+		}
+	}
+	t.remaining = -1
+	t.seen = map[string]bool{}
+	t.touched = map[string]bool{}
+	t.cats = map[string]bool{}
+	// Nodes/edges already claimed by a pending or approved proposal: patching
+	// them again would stack conflicting edits on the same base version. The
+	// auto path drops the draft silently; a manual request must be told.
+	if prow, err := s.st.DB().QueryContext(ctx,
+		`SELECT p.patches_json FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
+		 WHERE v.blueprint_id=? AND p.status IN ('pending','approved')`, t.version.BlueprintID); err == nil {
+		for prow.Next() {
+			var raw string
+			if err := prow.Scan(&raw); err != nil {
+				break
+			}
+			var patches []BlueprintPatch
+			if err := json.Unmarshal([]byte(raw), &patches); err != nil {
+				continue
+			}
+			for k := range patchKeys(patches) {
+				t.touched[k] = true
+			}
+		}
+		prow.Close()
+	}
+	draft, err := translate(ctx, s, t, f)
+	if err != nil {
+		return nil, fmt.Errorf("translate finding: %w", err)
+	}
+	if draft == nil || len(draft.Patches) == 0 || strings.TrimSpace(draft.Title) == "" {
+		return nil, NewValidationError("这条发现没有可安全转换的结构改动，无法生成提案")
+	}
+	keys := patchKeys(draft.Patches)
+	conflict := ""
+	for k := range keys {
+		if t.touched[k] {
+			conflict = k
+			break
+		}
+	}
+	if conflict != "" {
+		return nil, NewConflictError(fmt.Sprintf("提案会改动节点 %q，而已有待审提案占用了它 — 先处理那条提案", conflict))
+	}
+	// Exact-title dedup: the same transform from a re-run would produce a
+	// byte-identical title. Returning that proposal is truthful (it IS the
+	// patch), and it keeps the review from stacking twin proposals.
+	var twinID string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT p.id FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
+		 WHERE v.blueprint_id=? AND p.title=? ORDER BY p.created_at DESC LIMIT 1`,
+		t.version.BlueprintID, draft.Title).Scan(&twinID); err == nil && twinID != "" {
+		if p, err := s.findProposal(ctx, t.version.BlueprintID, twinID); err == nil {
+			return p, nil
+		}
+	}
+	p, err := s.blueprintSvc.CreateProposal(ctx, t.version.BlueprintID, versionID, draft.Title, draft.Hypothesis,
+		draft.Metric, draft.Direction, draft.Patches, f.ID, translatorCreatedByType, translatorCreatedByID)
+	if err != nil {
+		return nil, err // ErrValidation → 400 with the validator's own reason
+	}
+	logging.Infof("[rsi] manual proposal drafted from finding %s (goal %s, status %s): %s", findingID, goalID, goalStatus, p.Title)
+	return p, nil
+}
+
+// findProposal resolves one proposal inside its blueprint's list. The service
+// exposes no single-proposal read, and the list is small (one blueprint's
+// proposals), so a linear scan keeps the code path identical to the UI's.
+func (s *RSIService) findProposal(ctx context.Context, blueprintID, proposalID string) (*BlueprintProposal, error) {
+	list, err := s.blueprintSvc.ListProposals(ctx, blueprintID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].ID == proposalID {
+			return &list[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }

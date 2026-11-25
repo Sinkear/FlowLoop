@@ -1,4 +1,4 @@
-import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
+import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ProjectSquad, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
 
 // 默认走同源 /backend/*（Next rewrites 转发到本机 daemon 47813）——反代出
 // 去时浏览器无需直连 daemon。本地直连场景可显式设置 NEXT_PUBLIC_API_URL。
@@ -170,8 +170,11 @@ export interface CreateGoalBody {
   content_capture?: "none" | "redacted" | "full";
   budget_usd?: number;
   sample_rate?: number; // 0..1（不是百分数）
-  // Phase A：钉住一个 published 蓝本版本——''/缺省 = infer 模式（动态拆解）。
+  // 钉住一个 published 工作流版本；''/缺省 = 按小队默认解析，解析不到则自动拆解。
   blueprint_version_id?: string;
+  // 显式“不使用默认工作流”：小队任务默认会自动 pin 该队默认工作流，
+  // 勾选此项才走自动拆解。
+  skip_default_workflow?: boolean;
 }
 export const createGoal = (body: CreateGoalBody) =>
   api<Goal>("/goals", { method: "POST", body: JSON.stringify(body) });
@@ -252,7 +255,7 @@ export const deleteSquad = (id: string) =>
   api<void>(`/squads/${id}`, { method: "DELETE" });
 export const updateSquad = (
   id: string,
-  body: { name: string; description: string; leader_id: string; instructions: string }
+  body: { name: string; description: string; leader_id: string; instructions: string; default_workflow_id?: string }
 ) => api<Squad>(`/squads/${id}`, { method: "PUT", body: JSON.stringify(body) });
 
 export const removeSquadMember = (squadId: string, memberId: string) =>
@@ -344,6 +347,17 @@ export const setDomainWebhookSecret = (id: string, secret: string) =>
 // ── Connection（仓库连接：per-connection webhook 地址与 secret） ──
 // 同一仓库可以被多个小队各建一条 connection，各自有独立的
 // /webhooks/{provider}/{id} 端点，注册 hook 时互不覆盖。
+// ── ProjectSquad（小队加入项目：不依赖仓库/webhook） ──
+export const listProjectSquads = (domainId: string) =>
+  api<ProjectSquad[]>(`/domains/${domainId}/squads`);
+export const addProjectSquad = (domainId: string, squadId: string) =>
+  api<ProjectSquad>(`/domains/${domainId}/squads`, {
+    method: "POST",
+    body: JSON.stringify({ squad_id: squadId }),
+  });
+export const removeProjectSquad = (domainId: string, squadId: string) =>
+  api<void>(`/domains/${domainId}/squads/${squadId}`, { method: "DELETE" });
+
 export const listConnections = (squadId?: string) =>
   api<Connection[]>(`/connections${squadId ? `?squad_id=${encodeURIComponent(squadId)}` : ""}`);
 // Create returns the connection with a one-time plaintext `secret` field.
@@ -416,7 +430,10 @@ export const savePlatformSettings = (body: PlatformSettings) =>
 
 // ── Schedule ──
 export const listSchedules = () => api<Schedule[]>("/schedules");
-export const createSchedule = (body: {
+// ScheduleBody is the full "saved task template" a schedule carries (Phase C):
+// the same workflow/analysis fields a hand-created goal uses. The pin is
+// resolved at SAVE time ('' = auto-decompose), never re-resolved at fire time.
+export interface ScheduleBody {
   name: string;
   title_template: string;
   description?: string;
@@ -426,18 +443,18 @@ export const createSchedule = (body: {
   cron_expression: string;
   timezone?: string;
   category?: string; // hitl | hootl
-}) => api<Schedule>("/schedules", { method: "POST", body: JSON.stringify(body) });
-export const updateSchedule = (id: string, body: {
-  name: string;
-  title_template: string;
-  description?: string;
-  assignee_type?: string;
-  assignee_id: string;
-  domain_id: string;
-  cron_expression: string;
-  timezone?: string;
-  category?: string; // hitl | hootl
-}) => api<Schedule>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  blueprint_version_id?: string; // '' = 自动拆解（不挂工作流）
+  execution_mode?: string; // infer | train（train = 执行后生成复盘）
+  content_capture?: string; // none | redacted | full
+  sample_rate?: number; // 0..1
+  budget_usd?: number;
+}
+export const createSchedule = (body: ScheduleBody) =>
+  api<Schedule>("/schedules", { method: "POST", body: JSON.stringify(body) });
+// The API is a full replacement: send the complete body, including the Phase C
+// fields — omitting them would clear the saved pin/mode ('' is a real value).
+export const updateSchedule = (id: string, body: ScheduleBody) =>
+  api<Schedule>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
 export const deleteSchedule = (id: string) =>
   api<void>(`/schedules/${id}`, { method: "DELETE" });
 export const listScheduleRuns = (id: string) =>
@@ -492,6 +509,14 @@ export const updateRsiFinding = (id: string, status: Exclude<RsiFindingStatus, "
   });
 export const retryRsiSession = (id: string) =>
   api<{ ok: true }>(`/rsi/sessions/${id}/retry`, { method: "POST" });
+// Phase C: 把一条发现变成待审提案（只对已钉版本且已编译的任务有效）。后端
+// 对不可转的情况返回真实原因（无工作流/未编译/节点已被占用/校验拒绝），
+// 调用方必须把错误显示出来，不做乐观成功。
+export const draftProposalFromFinding = (findingId: string) =>
+  api<{ proposal: import("./types").BlueprintProposal }>(
+    `/rsi/findings/${findingId}/proposal`,
+    { method: "POST" },
+  );
 
 // ── 编排图（W-RSI v2） ──
 // goal 详情读 live 图（未冻结，随子任务/验证推进变化）；squad 详情读最近
@@ -504,27 +529,30 @@ export const listSquadWorkflows = (squadId: string, limit = 10) =>
     `/workflows/squads/${squadId}?limit=${Math.max(1, Math.min(50, Math.trunc(limit)))}`
   );
 
-// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md §5）：结构化编排权威 ──
+// ── 工作流（Phase A，docs/BLUEPRINT-PROPOSAL.md §5）：结构化编排权威 ──
 // 规范图与执行图共用 WorkflowGraph 形状（§4.12），前端零布局改动复用
 // workflow-graph 组件渲染。goal.blueprint_version_id 钉 published 版本，
 // Activate 时编译成 gated sub_goal。
-export const listBlueprints = () =>
-  api<import("./types").Blueprint[]>("/blueprints");
+export const listBlueprints = (squadId?: string) =>
+  api<import("./types").Blueprint[]>(
+    squadId ? `/blueprints?squad_id=${encodeURIComponent(squadId)}` : "/blueprints",
+  );
 
-// 创建（web 蓝图编辑器唯一后门之外的正规入口）：content 是完整的规范 JSON
+// 创建（web 工作流编辑器唯一后门之外的正规入口）：content 是完整的规范 JSON
 // 字符串，保存即过 V1–V6 校验，失败 400 带逐条原因。
 export const createBlueprint = (body: {
   name: string;
   description?: string;
   content: string;
+  squad_id: string;
 }) =>
   api<import("./types").Blueprint>("/blueprints", {
     method: "POST",
     body: JSON.stringify(body),
   });
 
-// ── 蓝本人工门（B-3，§4.2）：goal 运行中等待人拍板的决策卡 ──
-// held gates = 蓝本节点 type=gate 且已持门（state=running）：只列 OPEN 的，
+// ── 工作流人工门（B-3，§4.2）：goal 运行中等待人拍板的决策卡 ──
+// held gates = 工作流节点 type=gate 且已持门（state=running）：只列 OPEN 的，
 // 已决策/被剪掉的不会出现。resolve 即拍板：落库 chosen action + 剪掉未选
 // 分支 + 释放选中分支。
 export const listHeldGates = (goalId: string) =>
@@ -552,7 +580,7 @@ export const getEnvChanges = (goalId: string) =>
 export const getBlueprint = (id: string) =>
   api<import("./types").BlueprintDetail>(`/blueprints/${id}`);
 
-// 删除蓝本（连带其版本与提案）。非终态目标仍钉住它的某个版本时服务端 409，
+// 删除工作流（连带其版本与提案）。非终态目标仍钉住它的某个版本时服务端 409，
 // 错误消息原样展示；终态目标保留历史 pin，不会被改写。
 export const deleteBlueprint = (id: string) =>
   api<void>(`/blueprints/${id}`, { method: "DELETE" });
@@ -569,7 +597,7 @@ export const updateBlueprintDraft = (versionId: string, content: string) =>
     body: JSON.stringify({ content }),
   });
 
-// 删除一个草稿版本（乱填草稿的清理口）：已发布版本是蓝本的权威与历史，服务端 409；
+// 删除一个草稿版本（乱填草稿的清理口）：已发布版本是工作流的权威与历史，服务端 409；
 // 被目标钉住或被提案引用的草稿同样 409，错误消息原样展示。
 export const deleteBlueprintVersion = (versionId: string) =>
   api<void>(`/blueprint-versions/${versionId}`, { method: "DELETE" });
@@ -583,7 +611,7 @@ export const publishBlueprintVersion = (versionId: string, changelog: string) =>
 export const getBlueprintGraph = (versionId: string) =>
   api<WorkflowGraph>(`/workflows/blueprints/${versionId}`);
 
-// ── 蓝本提案（Phase C，§12）：结构化补丁 → 人工批准 → 新草稿 ──
+// ── 工作流提案（Phase C，§12）：结构化补丁 → 人工批准 → 新草稿 ──
 export const listBlueprintProposals = (blueprintId: string) =>
   api<{ proposals: import("./types").BlueprintProposal[] }>(
     `/blueprints/${blueprintId}/proposals`

@@ -219,7 +219,7 @@ export default function SettingsPage() {
                   <Link href="/im" className="text-accent hover:underline">
                     IM
                   </Link>
-                  <Link href="/domains" className="text-accent hover:underline">
+                  <Link href="/projects" className="text-accent hover:underline">
                     项目
                   </Link>
                 </dd>

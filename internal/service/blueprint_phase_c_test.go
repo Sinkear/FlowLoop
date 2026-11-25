@@ -190,11 +190,29 @@ func TestBlueprintProposalDiffListsTouched(t *testing.T) {
 // runInferGoalToEnd creates an infer goal with one worker sub-goal, runs it to
 // done, and returns the goal id. Shape: goal + 1 agent + 1 sub_goal (verified
 // machine) — always the same signature.
+func workflowSquadForDomain(t *testing.T, st *store.Store, domainID, leader string) string {
+	t.Helper()
+	name := "wf-sq-" + domainID
+	var id string
+	err := st.DB().QueryRowContext(context.Background(), `SELECT id FROM squad WHERE name=?`, name).Scan(&id)
+	if err == nil {
+		return id
+	}
+	id = newID()
+	if _, err := st.DB().ExecContext(context.Background(),
+		`INSERT INTO squad (id,name,description,leader_id,instructions,default_workflow_id,created_at)
+		 VALUES (?,?,?,?,?,?,?)`, id, name, "", leader, "", "", now()); err != nil {
+		t.Fatalf("seed squad: %v", err)
+	}
+	return id
+}
+
 func runInferGoalToEnd(t *testing.T, gs *GoalService, rs *RunService, st *store.Store, domainID string) string {
 	t.Helper()
 	worker := seedAgent(t, st, "w-"+newID()[:8])
+	squadID := workflowSquadForDomain(t, st, domainID, worker)
 	g, err := gs.Create(context.Background(), Goal{
-		Title: "t", AssigneeType: "agent", AssigneeID: worker,
+		Title: "t", AssigneeType: "squad", AssigneeID: squadID,
 		Status: "active", DomainID: domainID, Category: "hootl",
 	})
 	if err != nil {

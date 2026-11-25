@@ -22,7 +22,7 @@ import {
   SessionInfo,
   formatAcpClose,
 } from "./acp";
-import { listAgents, listBlueprints, listDomains, listGoals, listSquads } from "./api";
+import { listAgents, listBlueprints, listDomains, listGoals, listSchedules, listSquads } from "./api";
 import type { CreateKind } from "./task-template";
 import { describeStewardFailure } from "./steward";
 
@@ -40,7 +40,7 @@ const CREATE_INTENTS: Record<
     fields: "负责人/项目",
     backView: "任务视图",
   },
-  domain: {
+  project: {
     label: "项目",
     cliKind: "domain（项目）",
     cli: 'ouroflow create domain --name "..."',
@@ -48,8 +48,8 @@ const CREATE_INTENTS: Record<
     backView: "项目列表",
   },
   squad: {
-    label: "团队",
-    cliKind: "squad（团队）",
+    label: "小队",
+    cliKind: "squad（小队）",
     cli: 'ouroflow create squad --name "..."',
     fields: "负责人/成员/职责",
     backView: "小队列表",
@@ -58,15 +58,22 @@ const CREATE_INTENTS: Record<
     label: "智能体",
     cliKind: "agent",
     cli: 'ouroflow create agent --name "..."',
-    fields: "所属团队/运行时/模型/职责",
+    fields: "运行时/模型/职责（智能体是公共资源，不挂小队）",
     backView: "智能体列表",
   },
-  blueprint: {
-    label: "蓝本",
-    cliKind: "blueprint",
+  workflow: {
+    label: "工作流",
+    cliKind: "blueprint（工作流）",
     cli: 'ouroflow create blueprint --name "..."',
-    fields: "步骤/人工卡点/适用场景",
-    backView: "蓝本列表",
+    fields: "所属小队/步骤/人工卡点/适用场景",
+    backView: "工作流列表",
+  },
+  schedule: {
+    label: "定时任务",
+    cliKind: "schedule",
+    cli: 'ouroflow create schedule --name "..."',
+    fields: "项目/cron/负责人/验收分类/是否生成复盘",
+    backView: "定时任务列表",
   },
 };
 
@@ -98,9 +105,11 @@ let lines: NewGoalLine[] = [];
 let error = "";
 let lastAsk: { say: string; first: boolean } | null = null;
 let createdGoal: { id: string; title: string } | null = null;
-// 这一轮在创建什么：任务 / 项目 / 团队 / 智能体 / 蓝本。决定管家指令的
+// 这一轮在创建什么：任务 / 项目 / 小队 / 智能体 / 工作流。决定管家指令的
 // 措辞，也决定「建好了没」去轮询哪张表。
 let flowKind: CreateKind = "goal";
+// 工作流必须挂在某个小队下：聊天创建时把页面选中的 owner 钉进 CLI 参数。
+let flowSquadId = "";
 let perm: NewGoalState["perm"] = null;
 
 let stewardId: string | null = null;
@@ -249,14 +258,16 @@ async function listKindRows(
   kind: CreateKind
 ): Promise<{ id: string; name: string; created_at?: string }[]> {
   switch (kind) {
-    case "domain":
+    case "project":
       return (await listDomains()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
     case "squad":
       return (await listSquads()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
     case "agent":
       return (await listAgents()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
-    case "blueprint":
+    case "workflow":
       return (await listBlueprints()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
+    case "schedule":
+      return (await listSchedules()).map((d) => ({ id: d.id, name: d.name, created_at: d.created_at }));
     default:
       return (await listGoals()).map((d) => ({ id: d.id, name: d.title, created_at: d.created_at }));
   }
@@ -446,12 +457,15 @@ async function ensureClient(): Promise<AcpChatClient> {
 
 // 跟管家说一句话：first=true 把「要做什么」包成一条建任务的指令（让 CLI
 // 直接建，缺字段问我要）；first=false 原文追问。
-export async function ask(say: string, first: boolean, kind: CreateKind = "goal"): Promise<void> {
+export async function ask(say: string, first: boolean, kind: CreateKind = "goal", opts: { squadId?: string } = {}): Promise<void> {
   const body = say.trim();
   if (!body || inFlight) return;
   inFlight = true;
   const myAttempt = ++attempt;
-  if (first) flowKind = kind;
+  if (first) {
+    flowKind = kind;
+    flowSquadId = opts.squadId ?? "";
+  }
   lastAsk = { say: body, first };
   error = "";
   emit();
@@ -473,6 +487,8 @@ export async function ask(say: string, first: boolean, kind: CreateKind = "goal"
         emit();
       }
       const spec = CREATE_INTENTS[flowKind];
+      const squadFlag = flowKind === "workflow" && flowSquadId ? ` --squad "${flowSquadId}"` : "";
+      const cli = `${spec.cli}${squadFlag}`;
       push({ role: "user", text: body });
       push({
         role: "system",
@@ -487,7 +503,7 @@ export async function ask(say: string, first: boolean, kind: CreateKind = "goal"
           "",
           body,
           "",
-          `请用 \`${spec.cli}\` 建出来（${spec.fields}；能判断就一起带上，缺字段就问我要）。`,
+          `请用 \`${cli}\` 建出来（${spec.fields}；能判断就一起带上，缺字段就问我要）。`,
           `建完后用一句话告诉我${spec.label}名称，不要做别的改动。`,
         ].join("\n")
       );
@@ -538,7 +554,7 @@ export function retry(): void {
     setPhase("idle");
     return;
   }
-  void ask(last.say, last.first, flowKind);
+  void ask(last.say, last.first, flowKind, { squadId: flowSquadId });
 }
 
 // 「重来」/创建成功跳转后的复位：彻底清空这一轮流程（连接、记录、快照、
@@ -558,6 +574,7 @@ export function reset(): void {
   error = "";
   createdGoal = null;
   flowKind = "goal";
+  flowSquadId = "";
   perm = null;
   setPhase("idle");
 }

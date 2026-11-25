@@ -1,164 +1,228 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Target,
-  MessageSquare,
-  Plus,
   Bot,
-  Users,
-  Terminal,
-  Monitor,
-  Sparkles,
-  Boxes,
+  FolderGit2,
+  LayoutDashboard,
   LayoutTemplate,
-  Webhook,
-  Clock,
-  ScrollText,
-  Settings,
+  Menu,
+  MessageSquare,
   MessagesSquare,
-  BarChart3,
-  Waypoints,
+  Plus,
+  ScrollText,
+  Server,
+  Settings,
+  Sparkles,
+  Users,
+  Webhook,
+  X,
 } from "lucide-react";
+import { useDomains } from "@/lib/queries";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import { cn } from "@/lib/utils";
 
-// 导航按“我现在要做什么”排序，而不是按代码里的资源类型排：
-//   开始（动手）→ 工作台（回看/管理）→ 组织（谁在干活）→ 运行环境（在哪跑）→ 资源（用什么）。
-// 「系统」不进主列表——日志和设置是低频、排障时才来的地方，压到左下角的角标上，
-// 主列表就只留下日常要点的东西。
+// 一级入口只回答“我平时在哪干活”：工作台 / 项目 / 小队 / 智能体 / 资源 / 运行环境 / 设置。
+// 智能体是公共执行者，紧跟“小队”之后；工作流不在全局导航里（它归小队）；技能、Hooks、实践库退到“资源”下；
+// IM 渠道属于运行环境的接入配置；日志压到左下角。任务板不再是首屏，而是项目、工作台和“新建任务”共同的落点。
 type NavItem = {
   href: string;
   label: string;
-  icon: typeof Target;
-  newTask?: boolean;
+  icon: typeof LayoutDashboard;
+  note?: string;
 };
 
-export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
-  {
-    // 最上面只放两个动作：开始干活。任务/蓝本等“回看和管理”的入口退到下一组。
-    title: "开始",
-    items: [
-      { href: "/goals/new", label: "新建任务", icon: Plus, newTask: true },
-      { href: "/chat", label: "对话", icon: MessageSquare },
-    ],
-  },
-  {
-    title: "工作台",
-    items: [
-      { href: "/goals", label: "任务", icon: Target },
-      // 蓝本（Phase A）：结构化编排权威——goal 钉住 published 版本，Activate
-      // 时编译成 gated sub_goal。放工作台：定义「任务怎么跑」的日常面。
-      { href: "/blueprints", label: "蓝本", icon: Waypoints },
-      // 训练分析与任务平级：它是“回看任务怎么跑”的入口，不做二级菜单。
-      { href: "/training", label: "训练分析", icon: BarChart3 },
-      { href: "/schedules", label: "定时任务", icon: Clock },
-    ],
-  },
-  {
-    // 组织：先有项目，再有人——顺序即项目-小队-智能体-IM。
-    title: "组织",
-    items: [
-      { href: "/domains", label: "项目", icon: Boxes },
-      { href: "/squads", label: "小队", icon: Users },
-      { href: "/agents", label: "智能体", icon: Bot },
-      { href: "/im", label: "IM", icon: MessagesSquare },
-    ],
-  },
-  {
-    title: "运行环境",
-    items: [
-      { href: "/runtimes", label: "运行时", icon: Terminal },
-      { href: "/machines", label: "机器", icon: Monitor },
-    ],
-  },
-  {
-    title: "资源",
-    items: [
-      { href: "/templates", label: "模板", icon: LayoutTemplate },
-      { href: "/skills", label: "技能", icon: Sparkles },
-      { href: "/hooks", label: "Hooks", icon: Webhook },
-    ],
-  },
+const MAIN_ITEMS: NavItem[] = [
+  { href: "/", label: "工作台", icon: LayoutDashboard },
+  { href: "/projects", label: "项目", icon: FolderGit2 },
+  { href: "/squads", label: "小队", icon: Users },
+  { href: "/agents", label: "智能体", icon: Bot },
 ];
 
-// 左下角角标：低频入口，做成小方块而不是和主列表一样的长条，
-// 视觉上退到角落，但仍保持 44px 的可点面积与中文标签。
+const RESOURCE_ITEMS: NavItem[] = [
+  { href: "/templates", label: "实践库", icon: LayoutTemplate },
+  { href: "/skills", label: "技能", icon: Sparkles },
+  { href: "/hooks", label: "Hooks", icon: Webhook },
+];
+
 const SYSTEM_ITEMS: NavItem[] = [
+  { href: "/chat", label: "对话", icon: MessageSquare },
   { href: "/logs", label: "日志", icon: ScrollText },
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
+
+
 export function Nav() {
   const pathname = usePathname();
+  const { data: domains } = useDomains();
+  const { openMenu } = useCreateDialog();
+  const onCreatePage = pathname === "/goals/new";
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+
 
   const isActive = (item: NavItem) => {
-    if (item.newTask) return pathname === "/goals/new";
-    if (item.href === "/goals") {
-      return pathname === "/goals" || (pathname.startsWith("/goals/") && pathname !== "/goals/new");
+    if (item.href === "/") return pathname === "/";
+    // 工作流归小队：/workflows 与 /workflows/<id> 都应把小队列为当前区。
+    if (item.href === "/squads") {
+      return pathname === "/squads" || pathname.startsWith("/squads/")
+        || pathname === "/workflows" || pathname.startsWith("/workflows/");
     }
-    return pathname.startsWith(item.href);
+    return pathname === item.href || pathname.startsWith(`${item.href}/`);
   };
 
-  return (
-    <nav className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-line bg-surface-1/60 p-3 backdrop-blur">
-      {/* Logo：等宽字体 + 绿色状态点，终端产品名而不是渐变字。点它回任务板。 */}
-      <Link
-        href="/goals"
-        title="返回任务"
-        className="flex items-center gap-2 rounded-md px-3 pb-4 pt-2 transition-colors hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-      >
-        <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-        <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
-      </Link>
+  const recentProjects = (domains ?? []).slice(0, 3);
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-      {NAV_GROUPS.map((group) => (
-        <div key={group.title} className="mb-3">
-          <div className="select-none px-3 pb-1 text-[11px] font-medium text-ink-3">{group.title}</div>
-          <div className="flex flex-col gap-0.5">
-            {group.items.map((item) => {
-              const active = isActive(item);
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "group relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors duration-150",
-                    item.newTask && "mt-0.5 text-accent-dim hover:bg-accent/10 hover:text-accent",
-                    // 停在这一页时也给个底：否则从侧栏看不出“我现在在新建任务”。
-                    item.newTask && active && "bg-accent/10 text-accent",
-                    !item.newTask && active && "bg-surface-3 text-ink",
-                    !item.newTask && !active && "text-ink-2 hover:bg-surface-2 hover:text-ink"
-                  )}
-                >
-                  {/* active 指示：左侧一道 2px 绿条，比整块染色更 IDE。 */}
-                  {active && !item.newTask && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent" />
-                  )}
-                  <Icon
-                    className={cn(
-                      "h-4 w-4 shrink-0",
-                      item.newTask
-                        ? "text-accent/80 group-hover:text-accent"
-                        : active
-                          ? "text-accent"
-                          : "text-ink-3 group-hover:text-ink-2"
-                    )}
-                  />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
+  return (
+    <nav className="sticky top-0 z-50 flex h-12 w-full shrink-0 items-center border-b border-line bg-surface-1/95 backdrop-blur md:h-screen md:w-60 md:flex-col md:items-stretch md:border-b-0 md:border-r md:p-3">
+      <div className="flex w-full items-center gap-2 px-3 md:hidden">
+        <Link href="/" className="flex min-w-0 items-center gap-2">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+          <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
+        </Link>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={openMenu}
+            aria-current={onCreatePage ? "page" : undefined}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium",
+              onCreatePage
+                ? "border-accent/40 bg-accent/15 text-accent"
+                : "border-line bg-surface-2/50 text-ink-2 hover:text-ink",
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" /> 新建
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileOpen((open) => !open)}
+            aria-expanded={mobileOpen}
+            aria-label={mobileOpen ? "关闭导航" : "打开导航"}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-2 hover:bg-surface-2"
+          >
+            {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          </button>
         </div>
-      ))}
       </div>
 
-      {/* 左下角角标：日志 / 设置。钉在底部，不随中间分组滚动消失。 */}
-      <div className="shrink-0 border-t border-line px-1 pt-2 mt-2">
-        <div className="grid grid-cols-2 gap-1.5">
+      {mobileOpen && (
+        <div className="absolute inset-x-0 top-full z-50 max-h-[calc(100vh-3rem)] overflow-y-auto border-b border-line bg-surface-1 p-3 shadow-2xl md:hidden">
+          <MobileGroup
+            title="常用"
+            items={[
+              { href: "/", label: "工作台" },
+              { href: "/goals", label: "任务" },
+              { href: "/projects", label: "项目" },
+              { href: "/squads", label: "小队" },
+              { href: "/agents", label: "智能体" },
+            ]}
+            onNavigate={() => setMobileOpen(false)}
+          />
+          <MobileGroup
+            title="资源"
+            items={RESOURCE_ITEMS.map((item) => ({ href: item.href, label: item.label }))}
+            onNavigate={() => setMobileOpen(false)}
+          />
+          <MobileGroup
+            title="运行与复盘"
+            items={[
+              { href: "/infra", label: "运行环境" },
+              { href: "/im", label: "IM 渠道" },
+              { href: "/schedules", label: "定时任务" },
+              { href: "/training", label: "复盘" },
+            ]}
+            onNavigate={() => setMobileOpen(false)}
+          />
+          <MobileGroup
+            title="其他"
+            items={SYSTEM_ITEMS.map((item) => ({ href: item.href, label: item.label }))}
+            onNavigate={() => setMobileOpen(false)}
+          />
+        </div>
+      )}
+
+      <div className="hidden min-h-0 flex-1 flex-col md:flex">
+      <div className="mb-4">
+        <Link
+          href="/"
+          title="返回工作台"
+          className="flex items-center gap-2 rounded-md px-3 pb-3 pt-2 transition-colors hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+          <span className="font-mono text-sm font-semibold tracking-tight text-ink">ouroflow</span>
+        </Link>
+
+        <button
+          type="button"
+          onClick={openMenu}
+          aria-current={onCreatePage ? "page" : undefined}
+          className={cn(
+            "flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+            onCreatePage
+              ? "border-accent/40 bg-accent/15 text-accent"
+              : "border-line bg-surface-2/50 text-ink-2 hover:border-line hover:bg-surface-2 hover:text-ink",
+          )}
+        >
+          <span className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            新建
+          </span>
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-0.5">
+          {MAIN_ITEMS.map((item) => (
+            <div key={item.href}>
+              <NavLink item={item} active={isActive(item)} />
+              {item.href === "/projects" && recentProjects.length > 0 && (
+                <div className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2">
+                  {recentProjects.map((project) => (
+                    <Link
+                      key={project.id}
+                      href={`/projects/${project.id}`}
+                      className={cn(
+                        "truncate rounded px-2 py-0.5 text-[11px] transition-colors",
+                        pathname === `/projects/${project.id}`
+                          ? "bg-surface-2 text-ink"
+                          : "text-ink-3 hover:bg-surface-2/60 hover:text-ink-2"
+                      )}
+                      title={project.name}
+                    >
+                      {project.name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mb-2 mt-4">
+          <div className="select-none px-3 pb-1 text-[11px] font-medium text-ink-3">资源</div>
+          <div className="flex flex-col gap-0.5">
+            {RESOURCE_ITEMS.map((item) => (
+              <NavLink key={item.href} item={item} active={isActive(item)} />
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-0.5 border-t border-line/70 pt-2">
+          <NavLink item={{ href: "/infra", label: "运行环境", icon: Server }} active={pathname.startsWith("/infra")} />
+          <NavLink item={{ href: "/im", label: "IM 渠道", icon: MessagesSquare }} active={isActive({ href: "/im", label: "IM 渠道", icon: MessagesSquare })} />
+        </div>
+      </div>
+
+      <div className="mt-2 shrink-0 border-t border-line px-1 pt-2">
+        <div className="grid grid-cols-3 gap-1">
           {SYSTEM_ITEMS.map((item) => {
             const active = isActive(item);
             const Icon = item.icon;
@@ -169,9 +233,7 @@ export function Nav() {
                 title={item.label}
                 className={cn(
                   "flex flex-col items-center gap-1 rounded-md py-2 text-[11px] transition-colors duration-150",
-                  active
-                    ? "bg-surface-3 text-ink"
-                    : "text-ink-3 hover:bg-surface-2 hover:text-ink-2"
+                  active ? "bg-surface-3 text-ink" : "text-ink-3 hover:bg-surface-2 hover:text-ink-2"
                 )}
               >
                 <Icon className={cn("h-4 w-4", active && "text-accent")} />
@@ -181,6 +243,53 @@ export function Nav() {
           })}
         </div>
       </div>
+      </div>
     </nav>
+  );
+}
+
+function MobileGroup({
+  title,
+  items,
+  onNavigate,
+}: {
+  title: string;
+  items: { href: string; label: string }[];
+  onNavigate: () => void;
+}) {
+  return (
+    <div className="mb-3">
+      <div className="px-1 pb-1 text-[11px] font-medium text-ink-3">{title}</div>
+      <div className="grid grid-cols-2 gap-1">
+        {items.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            className="rounded-md px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            {item.label}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        "group relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors duration-150",
+        active ? "bg-surface-3 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"
+      )}
+    >
+      {active && <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-accent" />}
+      <Icon className={cn("h-4 w-4 shrink-0", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")} />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {item.note && <span className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-3">{item.note}</span>}
+    </Link>
   );
 }

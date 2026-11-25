@@ -1,4 +1,4 @@
-// 蓝本模板（Phase A 起步，Phase B 扩充）：新蓝图页的起步预设。
+// 工作流模板（Phase A 起步，Phase B 扩充）：新工作流页的起步预设。
 // 每份 content 都是能直接通过 V1–V6 校验的完整规范 JSON——用户点一下
 // 就有一个能保存、能发布、能绑定任务的起点，而不是面对一片空白 JSON。
 //
@@ -93,7 +93,7 @@ const SPAWN = `{
 
 const CAPABILITY = `{
   "name": "按角色派工",
-  "description": "节点派给小队里角色词匹配的成员（负载最轻者优先）。绑定此蓝图的任务必须是【小队任务】。角色词应体现岗位差异（技能不同=不同岗位词，如 design-implementer / proprietary-implementer），在小队详情页的角色词汇表里注册维护",
+  "description": "节点派给小队里角色词匹配的成员（负载最轻者优先）。绑定此工作流的任务必须是【小队任务】。角色词应体现岗位差异（技能不同=不同岗位词，如 design-implementer / proprietary-implementer），在小队详情页的角色词汇表里注册维护",
   "nodes": [
     {"id": "n1", "type": "task", "title": "执行工作",
      "task": {"assignee": "capability:implementer", "brief": "围绕目标「{{goal.title}}」完成本角色职责内的工作"}},
@@ -196,7 +196,7 @@ export const BLUEPRINT_TEMPLATES: BlueprintTemplate[] = [
     title: "按角色派工",
     desc: "派给小队里角色词匹配的成员（负载最轻者优先）。要求任务绑小队、成员带角色词。技能差异请编码进角色词。",
     name: "按角色派工",
-    description: "节点派给小队里角色为 implementer 的成员（谁空闲给谁）。绑定此蓝图的任务必须是【小队任务】，且小队成员的 role 里有该角色词",
+    description: "节点派给小队里角色为 implementer 的成员（谁空闲给谁）。绑定此工作流的任务必须是【小队任务】，且小队成员的 role 里有该角色词",
     content: CAPABILITY,
   },
   {

@@ -161,19 +161,29 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	}
 
 	// Insight-panel ledger: one optimization round per analysis run, numbered
-	// across the DOMAIN (each R<n> is a new goal/session, so a per-session MAX
-	// always produced round_no=1 and an empty delta). Delta compares against
-	// the previous round anywhere in the domain; a session's first analysis
-	// is "terminal", later runs are "manual_retry".
-	var domainID string
+	// across a comparable cohort (each R<n> is a new goal/session, so a
+	// per-session MAX always produced round_no=1 and an empty delta).
+	//
+	// Phase C (D3/§8.8): a workflow's rounds are numbered per OWNING SQUAD, so
+	// a delta compares the same workflow's topology across projects. An
+	// auto-decomposed session has no workflow, so its cohort stays the project
+	// — grouping those by squad would compare unrelated shapes.
+	var squadID, workflowID, domainID string
 	_ = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(g.domain_id,'') FROM training_session t JOIN goal g ON g.id=t.goal_id WHERE t.id=?`, sessionID).Scan(&domainID)
+		`SELECT `+squadSnapshotSQL+`, `+workflowSnapshotSQL+`, COALESCE(g.domain_id,'')
+		 FROM training_session ts JOIN goal g ON g.id=ts.goal_id
+		 LEFT JOIN blueprint_version gbv ON gbv.id=g.blueprint_version_id
+		 WHERE ts.id=?`, sessionID).Scan(&squadID, &workflowID, &domainID)
+	scope, scopeArgs := roundScope(squadID, workflowID, domainID)
 	var prevNo, sessionRounds int
-	_ = tx.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(r.round_no),0) FROM rsi_round r
-		 JOIN training_session t ON t.id=r.session_id
-		 JOIN goal g ON g.id=t.goal_id
-		 WHERE COALESCE(g.domain_id,'')=?`, domainID).Scan(&prevNo)
+		 JOIN training_session ts ON ts.id=r.session_id
+		 JOIN goal g ON g.id=ts.goal_id
+		 LEFT JOIN blueprint_version gbv ON gbv.id=g.blueprint_version_id
+		 WHERE `+scope, scopeArgs...).Scan(&prevNo); err != nil {
+		return fmt.Errorf("round scope: %w", err)
+	}
 	_ = tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM rsi_round WHERE session_id=?`, sessionID).Scan(&sessionRounds)
 	roundNo := prevNo + 1
@@ -185,9 +195,10 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	if prevNo > 0 {
 		_ = tx.QueryRowContext(ctx,
 			`SELECT r.metrics_json FROM rsi_round r
-			 JOIN training_session t ON t.id=r.session_id
-			 JOIN goal g ON g.id=t.goal_id
-			 WHERE COALESCE(g.domain_id,'')=? ORDER BY r.created_at DESC LIMIT 1`, domainID).Scan(&prevMetrics)
+			 JOIN training_session ts ON ts.id=r.session_id
+			 JOIN goal g ON g.id=ts.goal_id
+			 LEFT JOIN blueprint_version gbv ON gbv.id=g.blueprint_version_id
+			 WHERE `+scope+` ORDER BY r.created_at DESC LIMIT 1`, scopeArgs...).Scan(&prevMetrics)
 	}
 	criticalCount := 0
 	for _, f := range findings {
@@ -240,6 +251,20 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 // computeRoundDelta compares the insight-panel headline metrics between two
 // consecutive rounds: {key: {from, to, pct}} for every key present in both.
 // pct is omitted when from == 0 (a 0→x jump has no meaningful percentage).
+// roundScope builds the WHERE clause (and args) that defines which earlier
+// rounds this one is comparable to: same owning squad AND same workflow when
+// the run used a workflow; the project when it auto-decomposed. Historical
+// rounds keep the round_no assigned under the old per-domain rule — a
+// renumbering would silently rewrite history the review already showed.
+func roundScope(squadID, workflowID, domainID string) (string, []any) {
+	if workflowID != "" {
+		return squadSnapshotSQL + `=? AND ` + workflowSnapshotSQL + `=?`,
+			[]any{squadID, workflowID}
+	}
+	return `COALESCE(g.domain_id,'')=? AND ` + workflowSnapshotSQL + `=''`,
+		[]any{domainID}
+}
+
 func computeRoundDelta(prev, cur map[string]any) map[string]any {
 	out := map[string]any{}
 	if len(prev) == 0 {
@@ -264,15 +289,35 @@ func computeRoundDelta(prev, cur map[string]any) map[string]any {
 
 // ── helpers over metrics ────────────────────────────────────────────────
 
+// mi/mf read a metric that may have come from two places: the in-memory graph
+// built during analysis (int64/float64 as computed) or a json.Marshal'd graph
+// re-read later (rsi_report.workflow_json, rsi_round.delta_json) where every
+// number comes back as float64. Accepting only one shape made the same metric
+// silently read as 0 on the other path — proposals derived from a frozen graph
+// then looked like "no measurable signal".
 func mi(m map[string]any, k string) int64 {
-	if v, ok := m[k].(int64); ok {
+	switch v := m[k].(type) {
+	case int64:
 		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case float32:
+		return int64(v)
 	}
 	return 0
 }
 func mf(m map[string]any, k string) float64 {
-	if v, ok := m[k].(float64); ok {
+	switch v := m[k].(type) {
+	case float64:
 		return v
+	case float32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
 	}
 	return 0
 }

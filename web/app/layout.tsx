@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Nav } from "@/components/nav";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { CreateDialogProvider } from "@/components/create/create-dialog";
 
 const plexSans = IBM_Plex_Sans({
   variable: "--font-plex-sans",
@@ -41,12 +42,14 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
-      <body className="min-h-full flex flex-row bg-surface-0">
+      <body className="min-h-full flex flex-col bg-surface-0 md:flex-row">
         <Providers>
-          <Nav />
-          <main className="flex-1 overflow-auto">
-            <ErrorBoundary>{children}</ErrorBoundary>
-          </main>
+          <CreateDialogProvider>
+            <Nav />
+            <main className="flex-1 overflow-auto">
+              <ErrorBoundary>{children}</ErrorBoundary>
+            </main>
+          </CreateDialogProvider>
         </Providers>
       </body>
     </html>
