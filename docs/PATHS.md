@@ -115,6 +115,7 @@ Web 只通过 `FLOWLOOP_SERVER_URL` / Next rewrite 访问 daemon，不在本地�
 | `FLOWLOOP_GIT_URL` / `FLOWLOOP_GIT_CREDENTIALS` / `FLOWLOOP_DEFAULT_BRANCH` | 机器端 git 上下文 | 无 |
 | `FLOWLOOP_ISSUE_REPO` / `FLOWLOOP_ISSUE_NUMBER` / `FLOWLOOP_SOURCE_KIND` | issue / PR 触发上下文 | 无 |
 | `FLOWLOOP_COMPILE_VERSION` | 构建版本号注入 | `0.0.1-beta.1` |
+| `FLOWLOOP_ALLOWED_ORIGINS` | CSRF allowlist（逗号分隔，支持 `https://*.域名`）；用于反代终结 TLS 的场景，旧名 `OUROFLOW_ALLOWED_ORIGINS` 兼容 | 无（只认 loopback + 同源） |
 | `FLOWLOOP_DAEMON_PORT` | 打包期 Next 反代 daemon 的端口（`DAEMON_PORT=... ./package.sh` 时注入） | `47813` |
 
 > 注意：daemon 与机器端 CLI 是两套独立的数据根，可以不同。daemon 的 `FLOWLOOP_HOME` 决定服务端数据；每台执行机上的 CLI 默认用自己的 `~/.flowloop`。如果显式设置了 `FLOWLOOP_HOME`，要确保每个需要它的进程/执行机都能看到，否则会各自落到默认目录。
