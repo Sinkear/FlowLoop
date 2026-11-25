@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,7 +95,7 @@ func (s *TemplateExportService) Export(ctx context.Context, opts TemplateExportO
 	if err != nil {
 		return nil, err
 	}
-	meta.APIVersion = "ouroflow/v1"
+	meta.APIVersion = "flowloop/v1"
 
 	// Validate the generated YAML with the SAME strict parser the apply path
 	// uses, before touching the output directory.
@@ -723,7 +723,7 @@ func marshalTemplate(meta TemplateMeta, spec any) ([]byte, error) {
 		} `yaml:"metadata"`
 		Spec any `yaml:"spec"`
 	}{
-		APIVersion: "ouroflow/v1",
+		APIVersion: "flowloop/v1",
 		Kind:       meta.Kind,
 		Spec:       spec,
 	}

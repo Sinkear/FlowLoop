@@ -45,7 +45,7 @@ export function MachineList({
       ) : machines.length === 0 ? (
         <Empty icon={<Monitor className="h-5 w-5" />}>
           <span className="block">
-            还没有注册的机器。在主机执行 <code className="font-mono">ouroflow connect</code>{" "}
+            还没有注册的机器。在主机执行 <code className="font-mono">flowloop connect</code>{" "}
             后，这台机器会自动出现在这里。
           </span>
           <span className="mt-3 block">

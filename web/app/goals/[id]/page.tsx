@@ -20,7 +20,7 @@ import type { Goal, HeldGate } from "@/lib/types";
 
 // ── scratch 环境变更账本（BUG-4 P2）──
 // 作业环境是 scratch 域的「交付物」：没有 git 分支/change 行。执行者用
-// ouroflow env-change record 记账（前/后版本、快照、manifest），这里把它
+// flowloop env-change record 记账（前/后版本、快照、manifest），这里把它
 // 列出来，让一次交付能被归因、回滚与审计。
 function EnvChangesCard({ goalId }: { goalId: string }) {
   const { data, isLoading } = useEnvChanges(goalId);
@@ -30,7 +30,7 @@ function EnvChangesCard({ goalId }: { goalId: string }) {
     <SectionCard
       title="环境变更账本"
       count={changes.length}
-      desc="执行者对作业环境的实变记录（ouroflow env-change record）；含前/后版本、快照引用与 manifest sha256"
+      desc="执行者对作业环境的实变记录（flowloop env-change record）；含前/后版本、快照引用与 manifest sha256"
     >
       <div className="overflow-x-auto">
         <table className="w-full text-xs">

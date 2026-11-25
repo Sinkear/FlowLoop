@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
 	"github.com/google/uuid"
 )
 

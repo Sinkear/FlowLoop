@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/link"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/link"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
-// Machine is one remote execution host registered via `ouroflow connect`
+// Machine is one remote execution host registered via `flowloop connect`
 // (CLI 分支 Phase 1). The probed agent CLIs ride ProbedCLIs (raw JSON) —
 // they become runtime rows once remote execution lands (Phase 2).
 type Machine struct {

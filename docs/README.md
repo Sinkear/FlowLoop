@@ -1,15 +1,15 @@
-# OuroFlow 文档索引
+# FlowLoop 文档索引
 
 项目入口仍是根目录的 [README.md](../README.md)（英文）与 [README.zh.md](../README.zh.md)（中文）。
 本目录集中存放产品/架构说明、设计与协作决策、专题指南、调研、基准与 RSI 记录、真实用例复盘；根目录不再散放文档。
 
-> **先读这一行**：想知道「项目现在怎么工作」，读 [OUROFLOW-SPEC.html](OUROFLOW-SPEC.html)；想知道「为什么这样设计、边界在哪」，读 [design/DESIGN.md](design/DESIGN.md) 与 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
+> **先读这一行**：想知道「项目现在怎么工作」，读 [FLOWLOOP-SPEC.html](FLOWLOOP-SPEC.html)；想知道「为什么这样设计、边界在哪」，读 [design/DESIGN.md](design/DESIGN.md) 与 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
 
 ## 文档角色地图
 
 | 角色 | 文件 | 地位 |
 | --- | --- | --- |
-| **全项目详细说明（现行正本）** | [OUROFLOW-SPEC.html](OUROFLOW-SPEC.html) | 产品、架构、运行、协作、交付、蓝图与 RSI 的总入口；**当前行为与流程以此为准** |
+| **全项目详细说明（现行正本）** | [FLOWLOOP-SPEC.html](FLOWLOOP-SPEC.html) | 产品、架构、运行、协作、交付、蓝图与 RSI 的总入口；**当前行为与流程以此为准** |
 | **产品与架构决策基线** | [design/DESIGN.md](design/DESIGN.md) | 决策 2-x~8-x、状态机、验收与不变量；代码注释的 `DESIGN.md §N` 指向它 |
 | **协作模型终稿** | [design/Collaboration.v2.md](design/Collaboration.v2.md) | 8 对象、四原语、16 条 runtime invariants；取代 v1 |
 | **蓝图设计依据与 schema 存档** | [BLUEPRINT-PROPOSAL.md](BLUEPRINT-PROPOSAL.md) | Phase A–D + §14 的设计原文；schema/节点语义的正式记录 |
@@ -38,8 +38,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| [assets/ouroflow-self-iteration-en.svg](assets/ouroflow-self-iteration-en.svg) | 根 README 首页主流程图（英文）：编译图 vN → 执行 → 留痕 → RSI 诊断 → 图补丁 → 人批准发布 vN+1 |
-| [assets/ouroflow-self-iteration-zh.svg](assets/ouroflow-self-iteration-zh.svg) | 同上，中文版（README.zh.md 首页使用） |
+| [assets/flowloop-self-iteration-en.svg](assets/flowloop-self-iteration-en.svg) | 根 README 首页主流程图（英文）：编译图 vN → 执行 → 留痕 → RSI 诊断 → 图补丁 → 人批准发布 vN+1 |
+| [assets/flowloop-self-iteration-zh.svg](assets/flowloop-self-iteration-zh.svg) | 同上，中文版（README.zh.md 首页使用） |
 
 ## 设计与协作（design/）
 
@@ -52,10 +52,10 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| [rsi/self-iter-playbook.md](rsi/self-iter-playbook.md) | 自迭代手册：用 OuroFlow 迭代 OuroFlow——跑基准、量化编排开销、提案、批准、复测 |
+| [rsi/self-iter-playbook.md](rsi/self-iter-playbook.md) | 自迭代手册：用 FlowLoop 迭代 FlowLoop——跑基准、量化编排开销、提案、批准、复测 |
 | [rsi/r1-proposals.md](rsi/r1-proposals.md) | RSI R1 两套提案汇编：A 组编排层（`critical_path_ms=293,501`）与 B 组测试层 P1/P2/P3，分列来源与状态 |
 | [rsi/r3-report.md](rsi/r3-report.md) | R3 轮次报告：S1–S4 问题清单、R1→R3 演进与效果数字、P-A/P-B/P-C 提案与遗留（合并 analysis + round-report） |
-| [rsi/int-v2-review-fix.md](rsi/int-v2-review-fix.md) | `ouroflow-int-v2` 审查与修复落地：17 场景、P0/P1/P2、`ae12054` → fix 分支 10 commits、验证与残留 |
+| [rsi/int-v2-review-fix.md](rsi/int-v2-review-fix.md) | `flowloop-int-v2` 审查与修复落地：17 场景、P0/P1/P2、`ae12054` → fix 分支 10 commits、验证与残留 |
 
 ## 调研（research/）
 
@@ -85,7 +85,7 @@
 
 ## 归档（archive/）
 
-归档区只放「被取代但仍具历史价值 / 代码锚点价值」的文档：**不再维护、不保证链接可用，任何现行事实以 [OUROFLOW-SPEC.html](OUROFLOW-SPEC.html) 为准。**
+归档区只放「被取代但仍具历史价值 / 代码锚点价值」的文档：**不再维护、不保证链接可用，任何现行事实以 [FLOWLOOP-SPEC.html](FLOWLOOP-SPEC.html) 为准。**
 
 | 文件 | 说明 |
 | --- | --- |
@@ -98,7 +98,7 @@
 
 ## 维护约定
 
-1. **全项目详细说明只有一个入口**：[OUROFLOW-SPEC.html](OUROFLOW-SPEC.html)。任何行为、架构、流程、接口、配置、运维或里程碑变更，**必须在同一个 PR 内更新 SPEC 对应章节**；只改代码不改文档视为未完成。
+1. **全项目详细说明只有一个入口**：[FLOWLOOP-SPEC.html](FLOWLOOP-SPEC.html)。任何行为、架构、流程、接口、配置、运维或里程碑变更，**必须在同一个 PR 内更新 SPEC 对应章节**；只改代码不改文档视为未完成。
 2. 决策级变更（新的工程不变量、状态机或边界取舍）同时写入 [design/DESIGN.md](design/DESIGN.md) 决策记录（编号顺延）；协作模型变更同时更新 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
 3. 蓝图 schema 或节点语义变更，除 SPEC 外还必须同步 [BLUEPRINT-PROPOSAL.md](BLUEPRINT-PROPOSAL.md)。
 4. 新增文档按主题归入上述子目录，并在本索引补一行说明；根目录只保留 README 入口。

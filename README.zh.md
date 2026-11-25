@@ -1,6 +1,6 @@
 <div align="center">
 
-# OuroFlow
+# FlowLoop
 
 **图驱动的 AI 工作流，会自我迭代。**<br>
 蓝本驱动的 goal 编译成一张有版本的图。agent 执行它，平台记录真实发生的执行图。RSI 把证据变成结构性 finding 和具体的图补丁；**你批准下一个版本**——下一个 goal 就跑在更好的图上。
@@ -9,7 +9,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/ouroflow/releases)
+[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/flowloop/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)](#-快速开始)
 
 [English](README.md) · [简体中文](README.zh.md)
@@ -21,7 +21,7 @@
 </div>
 
 <div align="center">
-<img src="docs/assets/ouroflow-self-iteration-zh.svg" alt="自迭代闭环：编译图 vN，执行，记录真实执行图，用 RSI 诊断结构问题，产出图补丁，由人批准图 vN+1 交给下一个 goal。" width="100%">
+<img src="docs/assets/flowloop-self-iteration-zh.svg" alt="自迭代闭环：编译图 vN，执行，记录真实执行图，用 RSI 诊断结构问题，产出图补丁，由人批准图 vN+1 交给下一个 goal。" width="100%">
 </div>
 
 <div align="center">
@@ -30,7 +30,7 @@
 
 ## 🔁 会自我迭代的工作流图
 
-多数 agent 工具调 prompt、调模型、调聊天。OuroFlow 调的是 agent 外面的**工作流图**：有哪些节点、谁依赖谁、谁跑哪条 lane、工作卡在哪、哪些门必须由人打开。
+多数 agent 工具调 prompt、调模型、调聊天。FlowLoop 调的是 agent 外面的**工作流图**：有哪些节点、谁依赖谁、谁跑哪条 lane、工作卡在哪、哪些门必须由人打开。
 
 一个蓝本驱动的 goal 编译在一张**不可变的 Blueprint 版本**上——由 `task`、`condition`、`router`、`gate`、`spawn`、`end` 六类节点组成的 DAG。执行后又留下一张图：**执行图**，记录真实节点、边、等待、重试、咨询和人工门。RSI 读这张图，计算结构指标，产出 finding——串行链、丢失并行、可合并、派错人、重试放大、ping-pong、brief 质量、重复咨询等。finding 变成结构化的**图补丁**：增删改节点、增删边，附带预期效果和复测计划。
 
@@ -49,7 +49,7 @@
 
 版本链就是审计轨迹：`v1 → v2 → v3` 可 diff、不可变、可回滚。七个指标做 A/B——关键路径、墙钟时间、并行加速、返工率、验证通过率、验证开销、人工等待——判断新图是不是真的更好。
 
-> 这**不是**模型训练，也**不是** prompt 自编辑。OuroFlow 只优化编排图。它从不自批提案、不自己发布版本：`decided_by` 由人填，发布由人做，下一轮 RSI 由人触发。当前分析器是确定性规则 + 统计（没有 LLM 归因），Phase E 的评测集 / best-checkpoint 闭环尚未实现。
+> 这**不是**模型训练，也**不是** prompt 自编辑。FlowLoop 只优化编排图。它从不自批提案、不自己发布版本：`decided_by` 由人填，发布由人做，下一轮 RSI 由人触发。当前分析器是确定性规则 + 统计（没有 LLM 归因），Phase E 的评测集 / best-checkpoint 闭环尚未实现。
 
 ## 🧭 底座：一条交付流水线
 
@@ -57,7 +57,7 @@
 
 它自动化流水线：入队、派发、重试、worktree、完成记账、评审路由、批准后的合并/复验/推送，以及通知。它把决定留给人：**HITL/HOOTL** 的选择、评审批准、图补丁采纳、版本发布，以及下一轮 RSI。
 
-> OuroFlow **不**承诺“无人值守的软件团队”。图负责提案；你负责评审、签字和发布。
+> FlowLoop **不**承诺“无人值守的软件团队”。图负责提案；你负责评审、签字和发布。
 
 ### 三个需要你的位置
 
@@ -70,10 +70,10 @@
 - **工作流自迭代** — 执行图就是反馈回路：RSI findings → 结构化图补丁 → 人批准的 `vN+1` → 下一个 goal 跑在新图上。优化的是编排，模型权重不变。
 - **版本链，不是 prompt 堆** — Blueprint 版本不可变、可 diff、可回滚；七个指标让每轮可做 A/B，版本链就是 checkpoint。
 - **证据来自执行，不靠猜** — 节点、边、关键路径、并行度、重试、返工、咨询和人工等待都作为事实记录；九类 finding 从图里推导。
-- **状态不随聊天消失，执行彼此隔离** — goal、run、子任务和 change 都存在 SQLite；每次 run 在 `$OUROFLOW_HOME/runs/<runID>` 下有自己的 worktree。重启 daemon 不会丢掉闭环。
+- **状态不随聊天消失，执行彼此隔离** — goal、run、子任务和 change 都存在 SQLite；每次 run 在 `$FLOWLOOP_HOME/runs/<runID>` 下有自己的 worktree。重启 daemon 不会丢掉闭环。
 - **真实的评审卡点** — HITL goal 停在 `review` 等你决定。批准后平台才合并、复验、推送。HOOTL 跳过卡点；仓库型 HOOTL **不会自动合入**，分支留给你。
 - **子任务 + 变更** — owner 把活拆成有独立执行者和 worktree 的子任务。子任务完成后产出带修订的 **Change**，owner 负责整合；冲突会唤醒执行者返修。
-- **不靠共享聊天室协作** — Comment / Consult / Handoff / Sub-goal，通过 `ouroflow` CLI 暴露。per-run token 是唯一身份，owner 权限在服务端强制。
+- **不靠共享聊天室协作** — Comment / Consult / Handoff / Sub-goal，通过 `flowloop` CLI 暴露。per-run token 是唯一身份，owner 权限在服务端强制。
 - **自带 agent 栈 + 控制台** — ACP / JSONL / JSON-RPC × stdio / ws / tcp，可挂额外 MCP server；支持 GitHub/GitCode/cron/飞书触发和远程技能同步；实时时间线、子任务/变更/验证面板、每 agent 的 ACP 聊天。
 
 ## 🚀 快速开始
@@ -85,18 +85,18 @@ Go 1.26+、Node.js 20+/npm 10+、Git，以及执行机器上一个 ACP-capable a
 ### 从源码启动
 
 ```bash
-./build.sh                                  # 产出 build/ouroflow + build/ouroflow-daemon
-./build/ouroflow-daemon                     # 终端 1：控制面 :47813
+./build.sh                                  # 产出 build/flowloop + build/flowloop-daemon
+./build/flowloop-daemon                     # 终端 1：控制面 :47813
 
 cd web && npm install && npm run dev        # 终端 2：Web :47814
 
-./build/ouroflow connect \
+./build/flowloop connect \
   --server http://127.0.0.1:47813           # 终端 3：执行面
 ```
 
 打开 **<http://127.0.0.1:47814>**。
 
-- `ouroflow connect` 是**执行面**：拉取 run、spawn agent CLI、托管聊天。daemon 从不自己 spawn agent；请在有 agent CLI 的机器上保持 `connect` 运行。
+- `flowloop connect` 是**执行面**：拉取 run、spawn agent CLI、托管聊天。daemon 从不自己 spawn agent；请在有 agent CLI 的机器上保持 `connect` 运行。
 - Web 是独立的 Next.js 应用。生产构建用 `npm run build && npm start`；`./package.sh` 会打出带 `start-all.sh` 的 tarball，一条命令同时拉起 daemon 和 Web。
 - 首次打开 Web 会引导你登记一个域（仓库 URL 或 `scratch`）和一个 agent。`connect` 探测到本机 CLI 后，对应的 runtime 才会出现。
 
@@ -110,9 +110,9 @@ cd web && npm install && npm run dev        # 终端 2：Web :47814
 也可以直接用 CLI：
 
 ```bash
-ouroflow create domain --name demo --type scratch
-ouroflow create agent  --name dev --runtime <runtime-id>
-ouroflow create goal   --title "把这件事做出来" --domain demo --assignee dev
+flowloop create domain --name demo --type scratch
+flowloop create agent  --name dev --runtime <runtime-id>
+flowloop create goal   --title "把这件事做出来" --domain demo --assignee dev
 ```
 
 ## 🧩 核心概念
@@ -148,12 +148,12 @@ ouroflow create goal   --title "把这件事做出来" --domain demo --assignee 
 
 | 行为 | CLI 命令 | 权限 |
 |---|---|---|
-| **Comment**（说） | `ouroflow goal comment --text T` | 任何人 |
+| **Comment**（说） | `flowloop goal comment --text T` | 任何人 |
 | **Consult**（问） | `goal comment` 里 mention：`[@Name](mention://agent/<id>)` | goal 的 owner |
-| **Handoff**（接力） | `ouroflow goal assign <to-agent-id> [--note N]` | goal 的 owner |
-| **Sub-goal**（拆活） | `ouroflow subgoal create --title T --assignee A` / `subgoal cancel <id>` | goal 的 owner |
+| **Handoff**（接力） | `flowloop goal assign <to-agent-id> [--note N]` | goal 的 owner |
+| **Sub-goal**（拆活） | `flowloop subgoal create --title T --assignee A` / `subgoal cancel <id>` | goal 的 owner |
 
-agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进 agent 的 PATH）协作。每条命令携带 per-run token（`OUROFLOW_TOKEN`），守护进程 `/rpc` 端点将其解析为 run 的 `(goal, agent, role)`——token 是唯一身份，自报 id 被忽略，handoff 的 owner 校验在服务端强制。另有 `subgoal verify`、`change integrate` 及 `*_list` 命令。完整模型见 [Collaboration.v2.md](docs/design/Collaboration.v2.md)。
+agent 只通过 `flowloop` CLI（守护进程二进制的 shim，spawn 时放进 agent 的 PATH）协作。每条命令携带 per-run token（`FLOWLOOP_TOKEN`），守护进程 `/rpc` 端点将其解析为 run 的 `(goal, agent, role)`——token 是唯一身份，自报 id 被忽略，handoff 的 owner 校验在服务端强制。另有 `subgoal verify`、`change integrate` 及 `*_list` 命令。完整模型见 [Collaboration.v2.md](docs/design/Collaboration.v2.md)。
 
 </details>
 
@@ -173,7 +173,7 @@ agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进
         SQLite（真相） ── daemon 调度器 ────────────────┤
                              │ run.poll / chat.*        │
                              ▼                           ▼
-                      ouroflow connect   ◄──  /connect（JSON-RPC）
+                      flowloop connect   ◄──  /connect（JSON-RPC）
                              │  runTask、聊天桥（spawn + 中继）
                              ▼
                       runtime.Open(spec)
@@ -181,7 +181,7 @@ agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进
                              ▼
                       agent CLI 子进程 ◄── ACP 帧原样中继
                        （stdio/ws/tcp）
-                       └─ fs/terminal RPC + ouroflow CLI（/rpc）
+                       └─ fs/terminal RPC + flowloop CLI（/rpc）
                           （worktree、协作命令）
              ┌───────────────┬─────────────────────────────┐
              ▼               ▼
@@ -190,8 +190,8 @@ agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进
 ```
 
 - **Event ≠ 真相** — 事件总线只是唤醒提示；一切状态转移都是条件化 DB 事务，重放幂等。
-- **两个平面** — daemon 管状态、调度和交付，从不 spawn agent；`ouroflow connect` 管执行：持有一条常驻 JSON-RPC 链接，拉取工作（`run.poll`），spawn CLI，托管每个 agent 的聊天桥，并原样中继 ACP 帧。
-- **run 级 worktree** — `$OUROFLOW_HOME/runs/<runID>`（默认 `~/.ouroflow`）临时 git worktree，基于每域 bare 仓；崩溃恢复在启动时重放未仲裁的终态 run 并重推导 attention。
+- **两个平面** — daemon 管状态、调度和交付，从不 spawn agent；`flowloop connect` 管执行：持有一条常驻 JSON-RPC 链接，拉取工作（`run.poll`），spawn CLI，托管每个 agent 的聊天桥，并原样中继 ACP 帧。
+- **run 级 worktree** — `$FLOWLOOP_HOME/runs/<runID>`（默认 `~/.flowloop`）临时 git worktree，基于每域 bare 仓；崩溃恢复在启动时重放未仲裁的终态 run 并重推导 attention。
 - **Coordinator** — 派生的 OwnerAttention（integration / recovery / user_action）在有活干时才唤醒 owner。
 
 </details>
@@ -201,28 +201,28 @@ agent 只通过 `ouroflow` CLI（守护进程二进制的 shim，spawn 时放进
 <details>
 <summary><b>机器执行器 + 人用调试工具</b></summary>
 
-`ouroflow` 既是**机器执行器**，也是人调试用的工具（agent 走 `ouroflow` CLI shim 协作）：
+`flowloop` 既是**机器执行器**，也是人调试用的工具（agent 走 `flowloop` CLI shim 协作）：
 
 ```bash
-ouroflow connect --server http://127.0.0.1:47813   # 执行面：拉取 run、执行、托管聊天
-ouroflow status                                    # machine id、探测到的 CLI、心跳
-ouroflow goal list --limit 5                       # 调试命令
+flowloop connect --server http://127.0.0.1:47813   # 执行面：拉取 run、执行、托管聊天
+flowloop status                                    # machine id、探测到的 CLI、心跳
+flowloop goal list --limit 5                       # 调试命令
 ```
 
-CLI 默认连 `http://localhost:47813`，可用 `OUROFLOW_SERVER_URL` 覆盖。
+CLI 默认连 `http://localhost:47813`，可用 `FLOWLOOP_SERVER_URL` 覆盖。
 
 </details>
 
 ## 📚 数据、升级与模板
 
-- **[OuroFlow 项目详细说明](docs/OUROFLOW-SPEC.html)** — 全项目总入口：产品、架构、调度、协作、交付、蓝图与 RSI
+- **[FlowLoop 项目详细说明](docs/FLOWLOOP-SPEC.html)** — 全项目总入口：产品、架构、调度、协作、交付、蓝图与 RSI
 - **[文档索引](docs/README.md)** — 其余全部文档，按角色分组（决策、指南、调研、报告、真实用例、归档）
 - [蓝图与 RSI 设计](docs/BLUEPRINT-PROPOSAL.md) — 图 schema、节点语义、阶段历史与收敛规则；当前行为事实以项目详细说明为准
 - [路径与数据布局](docs/PATHS.md) — 每个目录/环境变量，以及升级时哪些必须保留
 - [保留数据的升级](docs/UPGRADE.md) — stop → 备份 → 只换 bin/web → start，含 JEM 方案
 - [Run 身份与指令归属](docs/IDENTITY.md) — run 的身份只由本次 run 定义：共用 workdir 身份劫持复盘与三层修复
-- [把最佳实践做成模板](docs/TEMPLATES.md) — 用 `ouroflow-daemon export-template` 导出并复用
-- [制品替换 skill](skills/ouroflow-artifact-swap/SKILL.md) — 同一套"不丢数据"流程，可拷到目标机器直接用
+- [把最佳实践做成模板](docs/TEMPLATES.md) — 用 `flowloop-daemon export-template` 导出并复用
+- [制品替换 skill](skills/flowloop-artifact-swap/SKILL.md) — 同一套"不丢数据"流程，可拷到目标机器直接用
 - [设计基线](docs/design/DESIGN.md) — 产品与架构的决策、不变量与边界（当前行为事实以项目详细说明为准）
 - [协作模型](docs/design/Collaboration.v2.md) — 完整的 owner / 角色 / 权限模型
 
@@ -244,7 +244,7 @@ CLI 默认连 `http://localhost:47813`，可用 `OUROFLOW_SERVER_URL` 覆盖。
 
 ## 🙏 致谢
 
-OuroFlow 是 [agentwork](https://github.com/yusheng-g/agentwork) 的独立衍生发行版，由 [Sinkear](https://github.com/Sinkear) 维护。
+FlowLoop 是 [agentwork](https://github.com/yusheng-g/agentwork) 的独立衍生发行版，由 [Sinkear](https://github.com/Sinkear) 维护。
 
 | | |
 |---|---|
@@ -256,9 +256,9 @@ OuroFlow 是 [agentwork](https://github.com/yusheng-g/agentwork) 的独立衍生
 
 <div align="center">
 
-**OuroFlow** — 图负责提案，你负责签字。每一轮都跑在更好的工作流上。
+**FlowLoop** — 图负责提案，你负责签字。每一轮都跑在更好的工作流上。
 
-[⬆ 回到顶部](#ouroflow)
+[⬆ 回到顶部](#flowloop)
 
 MIT © 2026 Sinkear
 

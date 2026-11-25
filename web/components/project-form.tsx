@@ -165,7 +165,7 @@ export function ProjectForm({ project, onClose, onCreated, embedded }: { project
       <form id="project-form" onSubmit={submit} className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="名称">
-            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：ouroflow" required />
+            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="如：flowloop" required />
           </Field>
           <Field label="验收级别" hint={ACCEPTANCE_DESC[level]}>
             <Segmented
@@ -234,7 +234,7 @@ export function ProjectForm({ project, onClose, onCreated, embedded }: { project
               <input value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls} placeholder="main" />
             </Field>
             <Field label="提交身份">
-              <input value={identity} onChange={(e) => setIdentity(e.target.value)} className={inputCls} placeholder="ouroflow-bot <bot@example.com>" />
+              <input value={identity} onChange={(e) => setIdentity(e.target.value)} className={inputCls} placeholder="flowloop-bot <bot@example.com>" />
             </Field>
             <div className="md:col-span-2">
               <Field label="访问令牌" hint="用于 clone / push / webhook / 读写 PR；编辑时留空表示保持原令牌。">

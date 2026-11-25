@@ -1,6 +1,6 @@
 // 模板仓验证器：用与服务层完全相同的严格解析器（parseTemplate）
-// 解析 ../ouroflow-templates/ 全部登记模板，并在内存库上实际跑一遍两个 apply 路径。
-// 用法：go run ./cmd/validate-templates（在仓库根目录；模板仓在同级 ../ouroflow-templates）
+// 解析 ../flowloop-templates/ 全部登记模板，并在内存库上实际跑一遍两个 apply 路径。
+// 用法：go run ./cmd/validate-templates（在仓库根目录；模板仓在同级 ../flowloop-templates）
 package main
 
 import (
@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/service"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/service"
+	"github.com/Sinkear/flowloop/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,7 +24,7 @@ func (localTester) TestDomainGit(context.Context, string, string, string) *servi
 }
 
 func main() {
-	root := "../ouroflow-templates"
+	root := "../flowloop-templates"
 	st, err := store.Open(":memory:")
 	if err != nil {
 		panic(err)

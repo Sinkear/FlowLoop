@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // SubGoal is a work item split off a goal (v2 model, 决策 6-1) — NOT a child

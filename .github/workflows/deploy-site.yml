@@ -36,7 +36,7 @@ jobs:
         working-directory: site
 
       - name: Build static export
-        # next build → site/out/（output:'export'）。basePath /ouroflow 已
+        # next build → site/out/（output:'export'）。basePath /flowloop 已
         # 在 next.config.ts 配好，产物可直接服在 gh-pages 根。
         run: npm run build
         working-directory: site

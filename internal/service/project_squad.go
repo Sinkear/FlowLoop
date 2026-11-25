@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // ProjectSquad is a squad's membership in a project. It is intentionally

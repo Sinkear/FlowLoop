@@ -1,6 +1,6 @@
 <div align="center">
 
-# OuroFlow
+# FlowLoop
 
 **Graph-driven AI workflows that iterate on themselves.**<br>
 A blueprint-driven goal compiles into a versioned graph. Agents execute it. The platform records what actually happened. RSI turns that evidence into structural findings and a concrete graph patch. **You approve the next version** — and the next goal runs on a better graph.
@@ -9,7 +9,7 @@ A blueprint-driven goal compiles into a versioned graph. Agents execute it. The 
 
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/ouroflow/releases)
+[![Version](https://img.shields.io/badge/version-v0.0.1--beta.1-blue)](https://github.com/Sinkear/flowloop/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)](#-quick-start)
 
 [English](README.md) · [简体中文](README.zh.md)
@@ -21,7 +21,7 @@ A blueprint-driven goal compiles into a versioned graph. Agents execute it. The 
 </div>
 
 <div align="center">
-<img src="docs/assets/ouroflow-self-iteration-en.svg" alt="The self-iteration loop: compile graph vN, execute it, record the real execution graph, diagnose structural waste with RSI, produce a graph patch, and let a human approve graph vN+1 for the next goal." width="100%">
+<img src="docs/assets/flowloop-self-iteration-en.svg" alt="The self-iteration loop: compile graph vN, execute it, record the real execution graph, diagnose structural waste with RSI, produce a graph patch, and let a human approve graph vN+1 for the next goal." width="100%">
 </div>
 
 <div align="center">
@@ -30,7 +30,7 @@ A blueprint-driven goal compiles into a versioned graph. Agents execute it. The 
 
 ## 🔁 A workflow graph that iterates on itself
 
-Most agent tools tune the prompt, the model, or the chat. OuroFlow tunes the **workflow graph around the agents**: which nodes exist, how they depend on each other, who gets which lane, where work waits, and which gates a human must open.
+Most agent tools tune the prompt, the model, or the chat. FlowLoop tunes the **workflow graph around the agents**: which nodes exist, how they depend on each other, who gets which lane, where work waits, and which gates a human must open.
 
 A blueprint-driven goal is compiled against one **immutable Blueprint version** — a DAG of `task`, `condition`, `router`, `gate`, `spawn` and `end` nodes. The run then leaves a second graph: the **execution graph**, with real nodes, edges, waits, retries, consults and human gates. RSI reads that graph, computes structural metrics, and emits findings such as a serial chain, lost parallelism, a merge candidate, the wrong assignee, retry amplification, ping-pong, weak briefs or repeated consults. A finding becomes a structured **graph patch** — add/update/remove a node, add/remove an edge — with the expected effect and a retest plan.
 
@@ -49,7 +49,7 @@ The graph is the deliberate path, not the only one: `infer` goals keep dynamic o
 
 The version chain is the audit trail: `v1 → v2 → v3` is diffable, immutable and rollbackable. A/B on seven metrics — critical path, wall time, parallel speedup, rework, verification pass rate, verification overhead, human-wait time — decides whether the new graph is actually better.
 
-> This is **not** model training and **not** prompt self-editing. OuroFlow optimizes the orchestration graph only. It never approves its own proposals or publishes a version: `decided_by` is human, publishing is human, and the next RSI round is human-triggered. Today the analyzer is deterministic rules plus statistics (no LLM attribution), and the Phase E evaluation set / best-checkpoint loop is not built yet.
+> This is **not** model training and **not** prompt self-editing. FlowLoop optimizes the orchestration graph only. It never approves its own proposals or publishes a version: `decided_by` is human, publishing is human, and the next RSI round is human-triggered. Today the analyzer is deterministic rules plus statistics (no LLM attribution), and the Phase E evaluation set / best-checkpoint loop is not built yet.
 
 ## 🧭 Under it: a delivery pipeline
 
@@ -57,7 +57,7 @@ A self-iterating graph still has to ship code. The layer underneath turns a goal
 
 It automates the pipeline: queueing, dispatch, retries, worktree setup, completion bookkeeping, review routing, post-approval merge/re-verify/push, and notifications. It deliberately leaves the decisions to you: the **HITL/HOOTL** choice, review approval, graph-patch adoption, version publishing, and starting the next RSI round.
 
-> OuroFlow does **not** promise a fully autonomous software team. The graph proposes; you review, sign and publish.
+> FlowLoop does **not** promise a fully autonomous software team. The graph proposes; you review, sign and publish.
 
 ### Three places you decide
 
@@ -70,10 +70,10 @@ It automates the pipeline: queueing, dispatch, retries, worktree setup, completi
 - **Workflow self-iteration** — the execution graph is the feedback loop: RSI findings → structured graph patch → human-approved `vN+1` → the next goal runs on it. The orchestration improves; the model weights never change.
 - **A version chain, not a prompt pile** — Blueprint versions are immutable, diffable and rollbackable. Seven metrics make each round A/B-testable, and the version chain is the checkpoint.
 - **Evidence from the run, not guesswork** — nodes, edges, critical path, parallelism, retries, rework, consults and human-wait time are recorded as facts; nine finding types are derived from the graph.
-- **Durable state, isolated execution** — goals, runs, sub-goals and changes live in SQLite; every run gets its own worktree under `$OUROFLOW_HOME/runs/<runID>`. Restart the daemon without losing the loop.
+- **Durable state, isolated execution** — goals, runs, sub-goals and changes live in SQLite; every run gets its own worktree under `$FLOWLOOP_HOME/runs/<runID>`. Restart the daemon without losing the loop.
 - **A real review gate** — HITL goals stop at `review` for your decision. After approval the platform merges, re-verifies and pushes. HOOTL skips the gate; repo-backed HOOTL goals are **not** auto-merged, so the branch stays for you.
 - **Sub-goals + Changes** — the owner splits work into sub-goals with their own assignee and worktree. Completed sub-goals produce **Changes** with revisions; the owner integrates them, and conflicts wake the assignee to rework.
-- **Collaboration without a shared chat room** — Comment / Consult / Handoff / Sub-goal, exposed through the `ouroflow` CLI. The per-run token is the only identity and owner permissions are enforced server-side.
+- **Collaboration without a shared chat room** — Comment / Consult / Handoff / Sub-goal, exposed through the `flowloop` CLI. The per-run token is the only identity and owner permissions are enforced server-side.
 - **Your agent stack + a console** — ACP / JSONL / JSON-RPC over stdio / ws / tcp, extra MCP servers, GitHub/GitCode/cron/Feishu triggers, remote skill sync, live timeline, sub-goal/change/verification panels and per-agent chat.
 
 ## 🚀 Quick Start
@@ -85,18 +85,18 @@ Go 1.26+, Node.js 20+/npm 10+, Git, and an ACP-capable agent CLI on the executio
 ### From source
 
 ```bash
-./build.sh                                  # build/ouroflow + build/ouroflow-daemon
-./build/ouroflow-daemon                     # terminal 1 — control plane, :47813
+./build.sh                                  # build/flowloop + build/flowloop-daemon
+./build/flowloop-daemon                     # terminal 1 — control plane, :47813
 
 cd web && npm install && npm run dev        # terminal 2 — web UI, :47814
 
-./build/ouroflow connect \
+./build/flowloop connect \
   --server http://127.0.0.1:47813           # terminal 3 — execution plane
 ```
 
 Open **<http://127.0.0.1:47814>**.
 
-- `ouroflow connect` is the **execution plane**: it pulls runs, spawns the agent CLI and hosts chats. The daemon never spawns agents itself; keep `connect` running on the machine that has your agent CLIs.
+- `flowloop connect` is the **execution plane**: it pulls runs, spawns the agent CLI and hosts chats. The daemon never spawns agents itself; keep `connect` running on the machine that has your agent CLIs.
 - The web UI is a separate Next.js app. For a production build use `npm run build && npm start`; `./package.sh` produces a tarball with `start-all.sh` that runs both processes.
 - On first launch, the web UI walks you through registering a domain (repo URL or `scratch`) and an agent. A runtime appears after `connect` probes the installed agent CLIs.
 
@@ -110,9 +110,9 @@ Open **<http://127.0.0.1:47814>**.
 You can do the same from the CLI:
 
 ```bash
-ouroflow create domain --name demo --type scratch
-ouroflow create agent  --name dev --runtime <runtime-id>
-ouroflow create goal   --title "build the thing" --domain demo --assignee dev
+flowloop create domain --name demo --type scratch
+flowloop create agent  --name dev --runtime <runtime-id>
+flowloop create goal   --title "build the thing" --domain demo --assignee dev
 ```
 
 ## 🧩 Core Concepts
@@ -148,12 +148,12 @@ ouroflow create goal   --title "build the thing" --domain demo --assignee dev
 
 | Behavior | CLI command | Who may |
 |---|---|---|
-| **Comment** (say) | `ouroflow goal comment --text T` | anyone |
+| **Comment** (say) | `flowloop goal comment --text T` | anyone |
 | **Consult** (ask) | a mention in `goal comment`: `[@Name](mention://agent/<id>)` | the goal's owner |
-| **Handoff** (transfer) | `ouroflow goal assign <to-agent-id> [--note N]` | the goal's owner |
-| **Sub-goal** (split) | `ouroflow subgoal create --title T --assignee A` / `subgoal cancel <id>` | the goal's owner |
+| **Handoff** (transfer) | `flowloop goal assign <to-agent-id> [--note N]` | the goal's owner |
+| **Sub-goal** (split) | `flowloop subgoal create --title T --assignee A` / `subgoal cancel <id>` | the goal's owner |
 
-Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon binary, placed on the agent's PATH at spawn). Every command carries the per-run token (`OUROFLOW_TOKEN`), which the daemon's `/rpc` endpoint resolves to the run's `(goal, agent, role)` — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side. Plus `subgoal verify`, `change integrate`, and the `*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
+Agents coordinate exclusively through the `flowloop` CLI (a shim of the daemon binary, placed on the agent's PATH at spawn). Every command carries the per-run token (`FLOWLOOP_TOKEN`), which the daemon's `/rpc` endpoint resolves to the run's `(goal, agent, role)` — the token is the ONLY identity, self-reported ids are ignored, and the handoff owner check is enforced server-side. Plus `subgoal verify`, `change integrate`, and the `*_list` commands. Full model in [Collaboration.v2.md](docs/design/Collaboration.v2.md).
 
 </details>
 
@@ -173,7 +173,7 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
         SQLite (truth) ── daemon scheduler ──────────────┤
                              │ run.poll / chat.*        │
                              ▼                           ▼
-                      ouroflow connect   ◄──  /connect (JSON-RPC)
+                      flowloop connect   ◄──  /connect (JSON-RPC)
                              │  runTask, chat bridge (spawn + relay)
                              ▼
                       runtime.Open(spec)
@@ -181,7 +181,7 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
                              ▼
                       agent CLI subprocess ◄── ACP frames relayed unparsed
                        (stdio/ws/tcp)
-                       └─ fs/terminal RPC + ouroflow CLI (/rpc)
+                       └─ fs/terminal RPC + flowloop CLI (/rpc)
                           (worktree, collaboration commands)
              ┌───────────────┬─────────────────────────────┐
              ▼               ▼
@@ -190,8 +190,8 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
 ```
 
 - **Event ≠ truth** — the bus is a wakeup hint; every transition is a conditional DB transaction, idempotent under replay.
-- **Two planes** — the daemon owns state, scheduling and delivery and never spawns agents; `ouroflow connect` owns execution: it holds a persistent JSON-RPC link, pulls work (`run.poll`), spawns the CLI, hosts the per-agent chat bridge, and relays ACP frames unparsed.
-- **Per-run worktrees** — `$OUROFLOW_HOME/runs/<runID>` (default `~/.ouroflow`) ephemeral git worktrees against per-domain bare repos; crash recovery replays terminal runs and re-derives attention at startup.
+- **Two planes** — the daemon owns state, scheduling and delivery and never spawns agents; `flowloop connect` owns execution: it holds a persistent JSON-RPC link, pulls work (`run.poll`), spawns the CLI, hosts the per-agent chat bridge, and relays ACP frames unparsed.
+- **Per-run worktrees** — `$FLOWLOOP_HOME/runs/<runID>` (default `~/.flowloop`) ephemeral git worktrees against per-domain bare repos; crash recovery replays terminal runs and re-derives attention at startup.
 - **Coordinator** — derived OwnerAttention (integration / recovery / user_action) wakes the owner exactly when there is work for it.
 
 </details>
@@ -201,28 +201,28 @@ Agents coordinate exclusively through the `ouroflow` CLI (a shim of the daemon b
 <details>
 <summary><b>Machine executor + human debugging tool</b></summary>
 
-`ouroflow` is the **machine executor** and a human debugging tool (agents use the `ouroflow` CLI shim for collaboration):
+`flowloop` is the **machine executor** and a human debugging tool (agents use the `flowloop` CLI shim for collaboration):
 
 ```bash
-ouroflow connect --server http://127.0.0.1:47813   # execution plane: pulls work, runs it, hosts chats
-ouroflow status                                    # machine id, probed CLIs, heartbeat
-ouroflow goal list --limit 5                       # debugging commands
+flowloop connect --server http://127.0.0.1:47813   # execution plane: pulls work, runs it, hosts chats
+flowloop status                                    # machine id, probed CLIs, heartbeat
+flowloop goal list --limit 5                       # debugging commands
 ```
 
-The CLI defaults to `http://localhost:47813`; override with `OUROFLOW_SERVER_URL`.
+The CLI defaults to `http://localhost:47813`; override with `FLOWLOOP_SERVER_URL`.
 
 </details>
 
 ## 📚 Docs, Upgrades & Templates
 
-- **[OuroFlow project spec](docs/OUROFLOW-SPEC.html)** — the whole-project reference: product, architecture, scheduling, collaboration, delivery, Blueprint and RSI
+- **[FlowLoop project spec](docs/FLOWLOOP-SPEC.html)** — the whole-project reference: product, architecture, scheduling, collaboration, delivery, Blueprint and RSI
 - **[Docs index](docs/README.md)** — every other document, grouped by role (design decisions, guides, research, reports, use-cases, archive)
 - [Blueprint & RSI design](docs/BLUEPRINT-PROPOSAL.md) — graph schema, node semantics, phase history and the convergence rules; current behavior lives in the spec
 - [Paths and data layout](docs/PATHS.md) — every directory/env var, and what must survive an upgrade
 - [Upgrade without losing data](docs/UPGRADE.md) — stop → backup → replace only bin/web → start, including JEM
 - [Run identity & instruction ownership](docs/IDENTITY.md) — a run's identity comes from THIS run alone: the shared-workdir hijack postmortem and the three-layer fix
-- [Turn your workflow into a template](docs/TEMPLATES.md) — export with `ouroflow-daemon export-template`
-- [Artifact-swap skill](skills/ouroflow-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
+- [Turn your workflow into a template](docs/TEMPLATES.md) — export with `flowloop-daemon export-template`
+- [Artifact-swap skill](skills/flowloop-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
 - [Design baseline](docs/design/DESIGN.md) — product & architecture decisions, invariants and boundaries (current behavior lives in the spec)
 - [Collaboration model](docs/design/Collaboration.v2.md) — the full owner/role/permission model
 
@@ -244,7 +244,7 @@ The CLI defaults to `http://localhost:47813`; override with `OUROFLOW_SERVER_URL
 
 ## 🙏 Acknowledgments
 
-OuroFlow is an independent derivative distribution of [agentwork](https://github.com/yusheng-g/agentwork), maintained by [Sinkear](https://github.com/Sinkear).
+FlowLoop is an independent derivative distribution of [agentwork](https://github.com/yusheng-g/agentwork), maintained by [Sinkear](https://github.com/Sinkear).
 
 | | |
 |---|---|
@@ -256,9 +256,9 @@ OuroFlow is an independent derivative distribution of [agentwork](https://github
 
 <div align="center">
 
-**OuroFlow** — the graph proposes; you sign. Every round runs on a better workflow.
+**FlowLoop** — the graph proposes; you sign. Every round runs on a better workflow.
 
-[⬆ Back to top](#ouroflow)
+[⬆ Back to top](#flowloop)
 
 MIT © 2026 Sinkear
 

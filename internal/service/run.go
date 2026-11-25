@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Run is one execution of a goal by one agent (the execution plane). It has

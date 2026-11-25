@@ -14,7 +14,7 @@ import (
 // under the repository's skills/ directory for local use, and a test keeps the
 // two byte-identical.
 //
-//go:embed assets/ouroflow-chat-create
+//go:embed assets/flowloop-chat-create
 var builtinSkillsFS embed.FS
 
 // SeedBuiltinSkills installs or refreshes every skill the platform ships with
@@ -25,7 +25,7 @@ var builtinSkillsFS embed.FS
 //
 // Returns the chat-create skill so the caller can log its id.
 func SeedBuiltinSkills(ctx context.Context, skillSvc *SkillService) (*Skill, error) {
-	files, err := readBuiltinSkillFiles("assets/ouroflow-chat-create")
+	files, err := readBuiltinSkillFiles("assets/flowloop-chat-create")
 	if err != nil {
 		return nil, err
 	}

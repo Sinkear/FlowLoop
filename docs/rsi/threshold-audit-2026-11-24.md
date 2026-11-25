@@ -19,7 +19,7 @@
    `lost_parallelism` 在这之前数学上恒不成立（`speedup ≡ gain`），0.7 系数
    直到 2a4babe 之后才第一次可能触发（2026-11-21 事故里报了 2 次），
    **从未用真实分布校准过**。仓库内也没有可用于校准的数据
-   （本地 `~/.ouroflow/ouroflow.db` 的相关表全空）。
+   （本地 `~/.flowloop/flowloop.db` 的相关表全空）。
 3. **4 个结构性缺陷**（靠调数值救不回来，必须改口径）：
    - `wrong_assignee` 用的 lane 指标只统计“有耗时的 lane”、且把 verify/consult
      时间混入，空闲成员根本不出现 → 在 2 个忙 lane 时 `max/mean ≥ 2` **数学上不可达**，
@@ -418,7 +418,7 @@ ruleHumanWaitFloorMS     = 600000// 新增：≥10min
   → `gain := work/cp; if gain >= 2.0 && speedup < gain*0.7`，两值恒等。
 - 关键路径含 verify：临时探针（已删除）用 2 task + 2 verify 构造图，
   `BuildGoalWorkflow` 后打印 `critical=[sg:a v:a sg:b v:b]`、`cp=wall=4800000`。
-- 本地库无校准样本：`cp ~/.ouroflow/ouroflow.db* /tmp/` 后用 sqlite 查
+- 本地库无校准样本：`cp ~/.flowloop/flowloop.db* /tmp/` 后用 sqlite 查
   `goal/run/sub_goal/rsi_report` 均为 0 行。
 ## 8. 实施状态（2026-11-24，P0+P1 已落地）
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/card"
+	"github.com/Sinkear/flowloop/internal/card"
 )
 
 func TestBuildCardBasic(t *testing.T) {

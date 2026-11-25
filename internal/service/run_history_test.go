@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // TestHistoryByAgentJoinsGoalAndOrders: the chat "what have I done" view joins

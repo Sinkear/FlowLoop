@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // Structure analysis (W-RSI). Input: the assembled WorkflowGraph + entity

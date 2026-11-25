@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // digestSeedFixture builds a store plus the three services the seed needs,

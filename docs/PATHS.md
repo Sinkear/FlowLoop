@@ -1,52 +1,52 @@
-# OuroFlow 路径与数据布局
+# FlowLoop 路径与数据布局
 
 这份文档回答两个问题：
 
-1. OuroFlow 到底把数据写到哪里？
+1. FlowLoop 到底把数据写到哪里？
 2. 升级时哪些目录必须保留、哪些可以随制品一起替换？
 
 ## 0. 一句话原则
 
-> **`bin/`、`web/` 是无状态制品，可以整体替换；`OUROFLOW_HOME` 是状态，必须独立于制品并持久化。**
+> **`bin/`、`web/` 是无状态制品，可以整体替换；`FLOWLOOP_HOME` 是状态，必须独立于制品并持久化。**
 
 从这一版开始，所有持久化路径都通过 `internal/paths` 统一计算：
 
 ```bash
 # 默认值（兼容已有安装）
-~/.ouroflow
+~/.flowloop
 
 # 生产环境建议显式指定，放在制品目录和 /workspace 之外
-export OUROFLOW_HOME=/root/ouroflow-data
+export FLOWLOOP_HOME=/root/flowloop-data
 ```
 
 还支持单独覆盖 SQLite 文件：
 
 ```bash
-export OUROFLOW_DB=/data/ouroflow/ouroflow.db
+export FLOWLOOP_DB=/data/flowloop/flowloop.db
 ```
 
-`OUROFLOW_HOME` 支持 `~/xxx` 展开，并且**每次读取都会重新求值**，不会被进程启动时缓存，因此测试和容器场景都可以安全使用。
+`FLOWLOOP_HOME` 支持 `~/xxx` 展开，并且**每次读取都会重新求值**，不会被进程启动时缓存，因此测试和容器场景都可以安全使用。
 
 查看当前进程实际会使用的全部路径：
 
 ```bash
 # daemon 端
-ouroflow-daemon paths
+flowloop-daemon paths
 
 # 机器端（远程执行机 / CLI 所在机器）
-ouroflow paths
+flowloop paths
 ```
 
 命令输出 JSON，字段包括 `home`、`database`、`runs`、`repos`、`digest`、`daemon_log`、`cli_log`、`cli_state`、`agents_config`、`pending_reports`、`agents`、`skills`、`chat`、`bin`。
 
 ## 1. Daemon 端（服务端 / 调度器）
 
-所有下表路径默认都在 `$OUROFLOW_HOME` 下，默认即 `~/.ouroflow`。
+所有下表路径默认都在 `$FLOWLOOP_HOME` 下，默认即 `~/.flowloop`。
 
 | 路径 | 内容 | 是否必须保留 |
 | --- | --- | --- |
-| `ouroflow.db` | SQLite 主库：agent、squad、domain、goal、run、schedule、settings 等 | **是，最高优先级** |
-| `ouroflow.db-wal`、`ouroflow.db-shm` | SQLite WAL 辅助文件；停机备份时一并复制 | 是（随 DB） |
+| `flowloop.db` | SQLite 主库：agent、squad、domain、goal、run、schedule、settings 等 | **是，最高优先级** |
+| `flowloop.db-wal`、`flowloop.db-shm` | SQLite WAL 辅助文件；停机备份时一并复制 | 是（随 DB） |
 | `runs/repos/<domainID>/` | daemon 为每个 repo 型 domain 维护的裸仓库镜像 | 建议保留 |
 | `runs/<runID>/` | daemon 侧一次 run 的工作树 | 否，可重建 |
 | `runs/deliver-<goalID>/` | goal 交付阶段的临时工作树 | 否 |
@@ -63,22 +63,22 @@ ouroflow paths
 
 - `runs/repos`、`runs/scratch`、`runs/skills`、`digest` 是 daemon 的持久状态，不只是缓存，升级时必须保留。
 - `runs/<runID>`、`runs/proc`、`runs/sessions`、`runs/gates` 可以清理，不影响 agent/团队配置。
-- daemon 启动时会在日志里打印 `ouroflow: home=... db=...`，可以用来确认它是否真的用了你期望的数据目录。
+- daemon 启动时会在日志里打印 `flowloop: home=... db=...`，可以用来确认它是否真的用了你期望的数据目录。
 
 ## 2. 机器端（执行机 / CLI）
 
-远程执行机上的 `ouroflow` CLI 也支持 `OUROFLOW_HOME`，但默认用自己的 `~/.ouroflow`；它和 daemon 端是**两套独立副本**（例如仓库镜像：daemon 用 `runs/repos`，机器端用 `repos`）。
+远程执行机上的 `flowloop` CLI 也支持 `FLOWLOOP_HOME`，但默认用自己的 `~/.flowloop`；它和 daemon 端是**两套独立副本**（例如仓库镜像：daemon 用 `runs/repos`，机器端用 `repos`）。
 
 | 路径 | 内容 | 是否必须保留 |
 | --- | --- | --- |
-| `ouroflow-cli-state.json` | 机器身份、上次连接信息 | 建议保留 |
+| `flowloop-cli-state.json` | 机器身份、上次连接信息 | 建议保留 |
 | `agents.yaml` | 机器端 agent/探测配置 | 是（如果使用） |
 | `cli.log` | CLI 日志 | 否 |
 | `pending-reports.json` | 未能上报的终态 run 报告 | 建议保留 |
 | `agents/<agentID>/AGENTS.md` | 下发给该 agent 的项目说明 | 可重建（服务端有源） |
 | `skills/<agentID>/` | 下发给该 agent 的技能包 | 可重建（服务端有源） |
 | `chat/<agentID>/` | 按 cwd 隔离的稳定聊天目录 | 建议保留 |
-| `bin/ouroflow` | 注入到 agent PATH 的 shim | 可重建 |
+| `bin/flowloop` | 注入到 agent PATH 的 shim | 可重建 |
 | `repos/<domainID>/` | 机器端裸仓库镜像 | 可重建（需网络/凭据） |
 | `runs/<runID>/` | 机器端 run 工作树 | 否（终态后可清） |
 | `runs/proc/<runID>/` | processor 临时目录 | 否 |
@@ -99,25 +99,25 @@ ouroflow paths
 | `dist/` | `package.sh` 产出的发布包与压缩包 |
 | `tmp/` | 构建临时目录 |
 | `build/` | 旧构建缓存 |
-| 仓库根目录 `ouroflow-daemon` | 本地 `go build` 产物 |
+| 仓库根目录 `flowloop-daemon` | 本地 `go build` 产物 |
 
-Web 只通过 `OUROFLOW_SERVER_URL` / Next rewrite 访问 daemon，不在本地保存 agent/团队配置。
+Web 只通过 `FLOWLOOP_SERVER_URL` / Next rewrite 访问 daemon，不在本地保存 agent/团队配置。
 
 ## 4. 环境变量
 
 | 变量 | 作用 | 默认 |
 | --- | --- | --- |
-| `OUROFLOW_HOME` | **全部持久数据根目录** | `~/.ouroflow` |
-| `OUROFLOW_DB` | 单独覆盖 SQLite 路径 | `$OUROFLOW_HOME/ouroflow.db` |
-| `OUROFLOW_SERVER_URL` | CLI/机器端访问 daemon 的地址 | `http://127.0.0.1:47813` |
-| `OUROFLOW_GOAL_ID` / `OUROFLOW_RUN_ID` / `OUROFLOW_AGENT_ID` | 当前 run 上下文，由 daemon 注入 | 无 |
-| `OUROFLOW_TOKEN` | 机器端上报/回调令牌 | 无 |
-| `OUROFLOW_GIT_URL` / `OUROFLOW_GIT_CREDENTIALS` / `OUROFLOW_DEFAULT_BRANCH` | 机器端 git 上下文 | 无 |
-| `OUROFLOW_ISSUE_REPO` / `OUROFLOW_ISSUE_NUMBER` / `OUROFLOW_SOURCE_KIND` | issue / PR 触发上下文 | 无 |
-| `OUROFLOW_COMPILE_VERSION` | 构建版本号注入 | `0.0.1-beta.1` |
-| `OUROFLOW_DAEMON_PORT` | 打包期 Next 反代 daemon 的端口（`DAEMON_PORT=... ./package.sh` 时注入） | `47813` |
+| `FLOWLOOP_HOME` | **全部持久数据根目录** | `~/.flowloop` |
+| `FLOWLOOP_DB` | 单独覆盖 SQLite 路径 | `$FLOWLOOP_HOME/flowloop.db` |
+| `FLOWLOOP_SERVER_URL` | CLI/机器端访问 daemon 的地址 | `http://127.0.0.1:47813` |
+| `FLOWLOOP_GOAL_ID` / `FLOWLOOP_RUN_ID` / `FLOWLOOP_AGENT_ID` | 当前 run 上下文，由 daemon 注入 | 无 |
+| `FLOWLOOP_TOKEN` | 机器端上报/回调令牌 | 无 |
+| `FLOWLOOP_GIT_URL` / `FLOWLOOP_GIT_CREDENTIALS` / `FLOWLOOP_DEFAULT_BRANCH` | 机器端 git 上下文 | 无 |
+| `FLOWLOOP_ISSUE_REPO` / `FLOWLOOP_ISSUE_NUMBER` / `FLOWLOOP_SOURCE_KIND` | issue / PR 触发上下文 | 无 |
+| `FLOWLOOP_COMPILE_VERSION` | 构建版本号注入 | `0.0.1-beta.1` |
+| `FLOWLOOP_DAEMON_PORT` | 打包期 Next 反代 daemon 的端口（`DAEMON_PORT=... ./package.sh` 时注入） | `47813` |
 
-> 注意：daemon 与机器端 CLI 是两套独立的数据根，可以不同。daemon 的 `OUROFLOW_HOME` 决定服务端数据；每台执行机上的 CLI 默认用自己的 `~/.ouroflow`。如果显式设置了 `OUROFLOW_HOME`，要确保每个需要它的进程/执行机都能看到，否则会各自落到默认目录。
+> 注意：daemon 与机器端 CLI 是两套独立的数据根，可以不同。daemon 的 `FLOWLOOP_HOME` 决定服务端数据；每台执行机上的 CLI 默认用自己的 `~/.flowloop`。如果显式设置了 `FLOWLOOP_HOME`，要确保每个需要它的进程/执行机都能看到，否则会各自落到默认目录。
 
 ## 5. 在 JEM（job-environment）里的映射
 
@@ -125,31 +125,31 @@ Web 只通过 `OUROFLOW_SERVER_URL` / Next rewrite 访问 daemon，不在本地�
 
 | 位置 | 路径 |
 | --- | --- |
-| 宿主机制品目录 | `/root/runtime/ouroflow/`（`bin/`、`web/`） |
-| 沙箱 workspace | `/root/job-envs/sandboxes/ouroflow-*`，以 `/workspace` 挂进沙箱 |
-| 默认数据目录 | `/workspace/.ouroflow` |
+| 宿主机制品目录 | `/root/runtime/flowloop/`（`bin/`、`web/`） |
+| 沙箱 workspace | `/root/job-envs/sandboxes/flowloop-*`，以 `/workspace` 挂进沙箱 |
+| 默认数据目录 | `/workspace/.flowloop` |
 | JEM 服务 | `http://127.0.0.1:8090` |
 | JEM 数据 / 运行时 / 日志 | `/root/job-envs`、`/root/runtime`、`/root/log` |
 
 关键事实：
 
 - `stop` / `start` **保留** workspace；`upgrade` 也**不触碰** workspace。
-- `deploy`（重新部署）和 `delete` **会重建/清空** workspace，因此会丢 `/workspace/.ouroflow`。
+- `deploy`（重新部署）和 `delete` **会重建/清空** workspace，因此会丢 `/workspace/.flowloop`。
 - `POST /envs/{id}/upgrade` 才是 JEM 原生的“换制品、留 workspace”路径。
 
 如果希望连 `deploy` 也不丢数据，需要把数据目录放到宿主机持久路径，并挂进沙箱：
 
 ```bash
 # 宿主机
-mkdir -p /root/ouroflow-data
+mkdir -p /root/flowloop-data
 
 # 两件事都要做：
-# 1) JEM 模板 writablePaths 把 /root/ouroflow-data 挂进沙箱；
+# 1) JEM 模板 writablePaths 把 /root/flowloop-data 挂进沙箱；
 # 2) 启动环境（模板 env 或 start 包装脚本）export 同一个路径。
-export OUROFLOW_HOME=/root/ouroflow-data
+export FLOWLOOP_HOME=/root/flowloop-data
 ```
 
-只要 `/root/ouroflow-data` 是宿主机目录（且没有被 sandbox 重建覆盖），无论 stop/start/upgrade/deploy，DB、runs、skills 都不会丢。
+只要 `/root/flowloop-data` 是宿主机目录（且没有被 sandbox 重建覆盖），无论 stop/start/upgrade/deploy，DB、runs、skills 都不会丢。
 
 ## 6. 迁移已有数据
 
@@ -158,19 +158,45 @@ export OUROFLOW_HOME=/root/ouroflow-data
 ```bash
 # 1. 停 daemon（或 JEM stop），确保没有写入
 # 2. 复制整个数据根，而不只是 DB
-rsync -a --delete ~/.ouroflow/ /root/ouroflow-data/
+rsync -a --delete ~/.flowloop/ /root/flowloop-data/
 
 # 3. 用新目录启动
-export OUROFLOW_HOME=/root/ouroflow-data
-ouroflow-daemon paths          # 确认输出
-ouroflow-daemon -addr 127.0.0.1:47813
+export FLOWLOOP_HOME=/root/flowloop-data
+flowloop-daemon paths          # 确认输出
+flowloop-daemon -addr 127.0.0.1:47813
 ```
 
-只复制 `ouroflow.db` 也能恢复 agent/团队/goal/schedule，但会丢技能包、scratch 项目、digest 缓存和 repos 镜像。生产迁移建议整目录复制。
+只复制 `flowloop.db` 也能恢复 agent/团队/goal/schedule，但会丢技能包、scratch 项目、digest 缓存和 repos 镜像。生产迁移建议整目录复制。
 
 ## 7. 不要做的事
 
-- 不要把 `OUROFLOW_HOME` 指到制品目录（`bin/`、`web/` 旁边），否则下一次替换制品会一起删掉。
+- 不要把 `FLOWLOOP_HOME` 指到制品目录（`bin/`、`web/` 旁边），否则下一次替换制品会一起删掉。
 - 不要用 `deploy` / `delete` 做日常升级；用 `stop → 替换 bin/web → start` 或 JEM `upgrade`。
-- 不要在 daemon 还开着的时候只备份 `ouroflow.db` 而忽略 `-wal`；要么停机，要么用 `ouroflow-daemon backup`（内部 `VACUUM INTO`）。
+- 不要在 daemon 还开着的时候只备份 `flowloop.db` 而忽略 `-wal`；要么停机，要么用 `flowloop-daemon backup`（内部 `VACUUM INTO`）。
 - 不要把 daemon 的 `runs/repos` 和机器端的 `repos` 当成同一份；它们本来就是两份镜像。
+
+## 8. 附录：从 OuroFlow（旧名）升级
+
+产品名从 OuroFlow 改为 FlowLoop 后，磁盘布局也一起改了名字。**不需要手工搬数据**：新二进制启动时会自动做一次性迁移。
+
+| 旧 | 新 |
+| --- | --- |
+| `~/.ouroflow/` | `~/.flowloop/` |
+| `ouroflow.db`（含 `-wal` / `-shm` / `.manifest.json`） | `flowloop.db`（同名边文件） |
+| `ouroflow-cli-state.json` | `flowloop-cli-state.json` |
+| `OUROFLOW_*` 环境变量 | `FLOWLOOP_*`（旧变量仍被读取并映射，新变量优先） |
+
+迁移规则：
+
+- **先停旧 daemon**，再启动新版本。旧 daemon 还在写库时迁移，会搬走一个正在被打开的文件。
+- 只移动**默认根目录** `~/.ouroflow`；如果显式设置了 `FLOWLOOP_HOME`（或旧的 `OUROFLOW_HOME`），目录本身不动，只把目录里的旧文件名改成新文件名。
+- 如果 `~/.flowloop` 已经存在（半新半旧的环境、或被测试残留建出来的空目录），不会让它把有数据的旧目录遮住：旧目录里的条目会**合并**进去，同名条目留在旧目录里由你裁决。
+- **绝不覆盖**：新名字的文件已存在时，旧文件原地保留，由你确认后再手工清理。
+- 迁移是幂等的：已经迁移过的环境再次启动是无操作。
+
+升级后核对一次即可：
+
+```bash
+flowloop-daemon paths      # home/database 应指向 flowloop 新名字
+flowloop-daemon backup     # 能成功打开并备份即说明库完好
+```

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/flowloop/internal/link"
 )
 
 // TestRuntimeModelsEndpoint covers RuntimeService.Models: identity fields

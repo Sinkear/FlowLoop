@@ -3,7 +3,7 @@
 一页结论（按影响排序）：
 
 1. **F1_fatal** 页面卸载 cleanup 主动关 ws：切 tab（app router 正常导航）被当成「用户放弃」，连接必断。
-2. **F2_fatal** 断连的下游是杀进程：daemon CloseChat → 机器关 CLI stdin（3s 强杀兜底）——管家正在跑的 `ouroflow create goal` 半路死，**任务永远建不出来**（用户报告的第二个症状）。
+2. **F2_fatal** 断连的下游是杀进程：daemon CloseChat → 机器关 CLI stdin（3s 强杀兜底）——管家正在跑的 `flowloop create goal` 半路死，**任务永远建不出来**（用户报告的第二个症状）。
 3. **F3_major** 对话记录只是组件 state，没有任何持久层——切 tab 即清零（第一个症状）。
 4. **F4_major** 重挂载后盲目 `newSession`：不查、不 load，回来必然是空白新会话。
 5. **P1_positive** 平台早有全部零件：CLI session store 按 chat cwd 落盘、`session/list`+`session/load` 跨进程可用（/chat 页 chat-panel.tsx 一直在用）；steward-chat.tsx 用 localStorage 存 lines。/goals/new 是唯一没接这套的 ACP 界面。
@@ -25,7 +25,7 @@
 ### F2 断连 → 杀进程 → turn 半路死
 
 - `internal/daemon/chat.go`（416 行）：web ws 断开 → `CloseChat` → 校验 identity → `Notify(MethodChatClose)`
-- `cmd/ouroflow-cli/chat.go`（461 行）：`MethodChatClose` → `chatBridge.cleanup`：关 stdin（优雅退出留全历史）→ 3s 强杀兜底
+- `cmd/flowloop-cli/chat.go`（461 行）：`MethodChatClose` → `chatBridge.cleanup`：关 stdin（优雅退出留全历史）→ 3s 强杀兜底
 - 时序：管家 turn 通常数十秒（LLM+CLI 命令），用户「看到气泡在动就切走」大概率落在 turn 中段 → `create goal` 未执行/未落库
 - 第二症状「没有新的 goal 生成」的完整解释：不是管家不干活，是它**被打死了**
 
@@ -57,7 +57,7 @@
 ### 两级恢复
 
 1. SPA 导航（用户报告的主场景）：module store 本身就是持久层，什么都不用做；
-2. 整页刷新/关闭：`sessionStorage` 流程快照 `{sessionId, startedAt}`（SNAPSHOT_KEY=`ouroflow-new-goal-flow`，24h 过期）→ 挂载时 `resumeIfNeeded()` → `ensureClient` 里按快照 sessionId 在 `listSessions()` 里**精确匹配**（不拿最新，防误载 /chat 开的别的会话）→ `loadSession` 回放（`replaying=true` 门控：user 消息只在此期间上屏）→ 续跑轮询（`startedAt` 不变）→ 若断线期间 goal 已建成，直接命中跳转。
+2. 整页刷新/关闭：`sessionStorage` 流程快照 `{sessionId, startedAt}`（SNAPSHOT_KEY=`flowloop-new-goal-flow`，24h 过期）→ 挂载时 `resumeIfNeeded()` → `ensureClient` 里按快照 sessionId 在 `listSessions()` 里**精确匹配**（不拿最新，防误载 /chat 开的别的会话）→ `loadSession` 回放（`replaying=true` 门控：user 消息只在此期间上屏）→ 续跑轮询（`startedAt` 不变）→ 若断线期间 goal 已建成，直接命中跳转。
 
 ### 关键语义保留（与旧实现/聊天页对齐）
 

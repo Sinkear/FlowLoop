@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // ageOwnerRun marks the goal's queued owner run terminal and rewrites its

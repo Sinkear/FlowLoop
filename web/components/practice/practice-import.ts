@@ -128,7 +128,7 @@ export function normalizePracticeKind(kind: unknown): PracticeImportKind | null 
 // 示例 intentionally use capability: 引用，这样只要有一支小队就能导入；
 // 想展示 agent 指派时，把 capability:developer 换成 agent:<你的 Agent 名称>。
 const PROJECT_SAMPLE = {
-  api_version: "ouroflow/v1",
+  api_version: "flowloop/v1",
   kind: "project",
   metadata: {
     name: "数据平台",
@@ -166,7 +166,7 @@ const PROJECT_SAMPLE = {
 };
 
 const SQUAD_SAMPLE = {
-  api_version: "ouroflow/v1",
+  api_version: "flowloop/v1",
   kind: "squad",
   metadata: {
     name: "调研小队",
@@ -188,7 +188,7 @@ const SQUAD_SAMPLE = {
 };
 
 const WORKFLOW_SAMPLE = {
-  api_version: "ouroflow/v1",
+  api_version: "flowloop/v1",
   kind: "workflow",
   metadata: {
     name: "发布流程",

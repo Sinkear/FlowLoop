@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/card"
-	"github.com/Sinkear/ouroflow/internal/card/feishu"
+	"github.com/Sinkear/flowloop/internal/card"
+	"github.com/Sinkear/flowloop/internal/card/feishu"
 )
 
 // Card construction (M3): Feishu interactive cards (schema 2.0). Cards are the

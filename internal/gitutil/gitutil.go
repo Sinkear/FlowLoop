@@ -1,5 +1,5 @@
 // Package gitutil holds the small git-URL helpers shared by the daemon and
-// the ouroflow CLI (CLI 分支 Phase 3: the machine clones/commits/pushes
+// the flowloop CLI (CLI 分支 Phase 3: the machine clones/commits/pushes
 // with the SAME credential embedding the daemon uses).
 package gitutil
 

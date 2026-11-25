@@ -194,7 +194,7 @@ func TestCreateNoDispatchIsPureComment(t *testing.T) {
 // `goal comment` (its own CLI call); the run's output stream is internal.
 
 // TestAgentCommentAutoThreadsToTrigger: an agent comment made inside a run
-// (run_id carried from OUROFLOW_RUN_ID) automatically replies to the
+// (run_id carried from FLOWLOOP_RUN_ID) automatically replies to the
 // comment that triggered that run — mention → run → reply chains without
 // any agent cooperation (platform mechanism, decision 4-4 spirit).
 func TestAgentCommentAutoThreadsToTrigger(t *testing.T) {

@@ -1,7 +1,7 @@
 # 案例分析：icode 0.28.0 → 0.35.2 升级作业
 
 > 分析对象：`execution-report.md`（原始执行报告，2026-11-13 15:52 – 11-14 10:30）
-> 代码基线：`/home/sinkear/developer/ouroflow` HEAD `9931759`（2026-11-13）。生产 daemon 为 11-03 构建（`19f9c40`/`23a7ce1`），本文引用的 daemon/service 路径在两者上逐字节一致（已用 `git diff 23a7ce1 HEAD -- <path>` 核对）。
+> 代码基线：`/home/sinkear/developer/flowloop` HEAD `9931759`（2026-11-13）。生产 daemon 为 11-03 构建（`19f9c40`/`23a7ce1`），本文引用的 daemon/service 路径在两者上逐字节一致（已用 `git diff 23a7ce1 HEAD -- <path>` 核对）。
 > 配套：`findings-dispatch.md`（派发链路 D1–D7）、`findings-runtime.md`（运行生命周期 RT-1–RT-6）、`findings-watchdog.md`（看门狗与交付 W1–W8）。本文是三者与 report 的交叉结论，**若干处修正了 report 与单点分析的口径**。
 
 ---
@@ -94,7 +94,7 @@
 **改法**
 
 1. `internal/service/run.go`：`enqueueTx` 在 `(goal,agent,role)` 合并**之前**增加"工作项级"去重——入参带 `WorkRef`（子任务场景 = `sub_goal_id`，owner 场景 = goal id），若同 `WorkRef` 已有 `queued|running` 且 `role IN ('subgoal','consult','owner')` 的 run，则合并/丢弃并写 `activity_log`（`dedupe:workref`）。窗口不设时间，靠 run 终态收敛；`review/verify` 不参与。
-2. 更简的等价实现：`CreateSubGoal` 在 `:179` 之后不再让模板派发——**模板侧改为"派发只用 `subgoal create`，@mention 只用于提问"**（`ouroflow-templates` 同步改，平台加 prompt 硬规则）。
+2. 更简的等价实现：`CreateSubGoal` 在 `:179` 之后不再让模板派发——**模板侧改为"派发只用 `subgoal create`，@mention 只用于提问"**（`flowloop-templates` 同步改，平台加 prompt 硬规则）。
 3. 测试：`internal/service/run_test.go` 新增"create_sub_goal 后紧跟一条 @assignee 评论 → 只产生 1 个 run"；`TestMentionDispatchRoleMatrix`。
 
 ### R2[P0] 平台没有"这个 goal 的执行者已经在跑"的概念，咨询回流又在推波助澜
@@ -166,11 +166,11 @@
 - `internal/daemon/deliver.go:102-105`：`finishDeliver(..., true, "无仓库交付——产物在项目目录，按汇报验收", nil)`——**审批依据是 agent 的自述**。
 - 设计上 scratch 的产物就是 report + 强制人卡点（`p0_regression_test.go:473-505` 验证"必 park review"），但"人卡点"不等于"有证据"。
 
-**本案例代价**（不是慢，是正确性）：A7 的 `--env view` 非严格口径、缺 license/upstream/attribution/THIRD_PARTY；A8 的 1.0.2/1.0.3/1.0.4 三轴错位直到人工补验 zz.009（10:15，`ouroflow_runs: 0`）才发现。平台全程零参与。
+**本案例代价**（不是慢，是正确性）：A7 的 `--env view` 非严格口径、缺 license/upstream/attribution/THIRD_PARTY；A8 的 1.0.2/1.0.3/1.0.4 三轴错位直到人工补验 zz.009（10:15，`flowloop_runs: 0`）才发现。平台全程零参与。
 
 **改法**
 
-1. scratch 域也允许声明 `checks.Verify`：由 exec CLI 在 agent 退出后执行（`cmd/ouroflow-cli/exec.go` 已有事件泵与退出码通道），产出 `reports/verify-evidence.json`，`ArtifactFiles` 带上；非零退出 → run failed。
+1. scratch 域也允许声明 `checks.Verify`：由 exec CLI 在 agent 退出后执行（`cmd/flowloop-cli/exec.go` 已有事件泵与退出码通道），产出 `reports/verify-evidence.json`，`ArtifactFiles` 带上；非零退出 → run failed。
 2. `deliver` 在"域冻结了 Verify 命令"时，无 evidence 不放行（默认只告警，`verification_strength=strong` 才硬拦——避免调研类目标被卡）。
 3. 把"严格 spec 扫描""版本一致性（zz.009 等价）"写成该 packaging domain 的 Verify 命令（由模板仓库提供，平台只执行/留证），**不要给 goal 加 template_version 列做对账**（三轴都不在平台状态里，见 `findings-watchdog.md` W8）。
 4. 测试：`TestScratchDomainRunsVerifyChecks`、`TestDeliverRequiresEvidenceWhenChecksFrozen`。
@@ -179,9 +179,9 @@
 
 **证据**
 
-- 持久 goal 目录**已经存在**：`internal/paths/paths.go:95-98` `ScratchGoal`；exec 的 cwd 就是它（`cmd/ouroflow-cli/exec.go:715-722`）。
+- 持久 goal 目录**已经存在**：`internal/paths/paths.go:95-98` `ScratchGoal`；exec 的 cwd 就是它（`cmd/flowloop-cli/exec.go:715-722`）。
 - 但只"告知"不强制：`internal/daemon/team_context.go:71-78` 只给路径，不给报告子目录、不禁止 `/tmp`。
-- 没有目录环境变量：`exec.go:739-743` 只注入 `OUROFLOW_SERVER_URL/GOAL_ID/RUN_ID/AGENT_ID/TOKEN`。
+- 没有目录环境变量：`exec.go:739-743` 只注入 `FLOWLOOP_SERVER_URL/GOAL_ID/RUN_ID/AGENT_ID/TOKEN`。
 - 证据只能内联：`collab.go:78` 的 `--evidence` 是字符串，`subgoal.go:483-487` 落库；`ArtifactFiles` 只服务 processor/import/digest（`link.go:284,505-508`、`exec.go:431-438`、`daemon.go:1949/2035`）。
 - 所以 `/tmp` 是 skill/模板的选择（job-env 系列硬编码 `/tmp/job-env-*`），不是平台默认，也不是容器。
 
@@ -189,8 +189,8 @@
 
 **改法**
 
-1. `exec.go` `buildEnv` 注入 `OUROFLOW_WORKDIR` / `OUROFLOW_GOAL_DIR` / `OUROFLOW_REPORT_DIR`（scratch = `<goalDir>/reports`）。
-2. `team_context.go` 固定块加硬规则："所有报告/证据写到 `OUROFLOW_REPORT_DIR`；`/tmp` 下的文件不持久，视为缺失证据"。
+1. `exec.go` `buildEnv` 注入 `FLOWLOOP_WORKDIR` / `FLOWLOOP_GOAL_DIR` / `FLOWLOOP_REPORT_DIR`（scratch = `<goalDir>/reports`）。
+2. `team_context.go` 固定块加硬规则："所有报告/证据写到 `FLOWLOOP_REPORT_DIR`；`/tmp` 下的文件不持久，视为缺失证据"。
 3. CLI 增加 `subgoal verify --evidence-file <path>`（读文件，64KB 上限，与 `--evidence` 互斥）。
 4. scratch owner run 设 `ArtifactFiles: ["reports/manifest.json"]`，daemon 落副本（跨机审计的最小通道）。
 5. 模板仓库同步改（平台改不了的部分）。
@@ -200,7 +200,7 @@
 **证据**
 
 - `machineLastEvent` 只由 claim（`machine_dispatch.go:313-316`）和每批 ACP 事件（`:369`）刷新；工具执行中零事件。
-- 事件泵只在 `len(buf)>0` 时 flush（`cmd/ouroflow-cli/exec.go:351-396`）——`uv sync` 装 183 个包期间可以 5–10 分钟无字节。
+- 事件泵只在 `len(buf)>0` 时 flush（`cmd/flowloop-cli/exec.go:351-396`）——`uv sync` 装 183 个包期间可以 5–10 分钟无字节。
 - `run` 级没有心跳：`connect.go` 的 5s heartbeat 只更新 `machine.last_seen_at`；ACP 的 `OnPlan/OnUsageUpdate/OnSessionInfo` 全是空实现（`backend.go:300-305`）。
 - 触发动作仅 `CreateNoDispatch` 评论（`comment.go:205-207` return），**不取消、不重派、不 reopen**——这一点原报告归因错误。
 
@@ -237,7 +237,7 @@
 | S5 | verifier 可与 assignee 同一人（玩家-裁判） | `subgoal.go:97-113` 只对 squad reviewer 强制，`verifier_id` 只校验存在 | 本案例 owner AI SHELL 亲自跑 verify run，独立 Verifier 只跑 34 条 base 用例 | 拒绝 `verifier==assignee`（`--self-verify` 逃生门）；owner 可当 verifier 但卡上标注"verified by goal owner" |
 | S6 | 工具/事件时序成本 | `gitwork.go:58` 每 run `git fetch`；`exec.go:228` 全量拷 skills；无进程复用；只读角色每次新 checkout | 单 run 2–5s，23 run <2min，**不是慢的主因** | 只读角色共享只读快照、skills 增量同步；优先级低 |
 | S7 | 跨机器路径 | `team_context.go:75` 用 daemon 侧 `paths.Runs()` 渲染绝对路径；scratch 无镜像通道 | 换执行机/容器即复现 A9，且更彻底 | 路径改占位符由 exec 替换；`reports/` 走 manifest 镜像（上限 10MB） |
-| S8 | 模板仓库硬编码 `/tmp/job-env-*` | 本仓库无该脚本，来自 `ouroflow-templates` | A9 的另一半 | 模板侧改为 `${OUROFLOW_REPORT_DIR:-$PWD/reports}`；平台侧开 issue |
+| S8 | 模板仓库硬编码 `/tmp/job-env-*` | 本仓库无该脚本，来自 `flowloop-templates` | A9 的另一半 | 模板侧改为 `${FLOWLOOP_REPORT_DIR:-$PWD/reports}`；平台侧开 issue |
 
 ---
 
@@ -266,7 +266,7 @@
 2. 同一 (goal, agent) 无并发 run；同一工作项无重复 run（`run` 表按 `sub_goal_id` 分组 `COUNT(*)>1` 为 0）。
 3. verify 单次 ≤ 300s，且 prompt 含 `run.evidence`。
 4. 端点不可用时 goal 保持 active，自动重试 ≥3 次不置 failed。
-5. scratch 交付卡必须带 `verify-evidence`（域配置了 Verify 时）；报告只能在 `OUROFLOW_REPORT_DIR` 找到。
+5. scratch 交付卡必须带 `verify-evidence`（域配置了 Verify 时）；报告只能在 `FLOWLOOP_REPORT_DIR` 找到。
 6. 全程 idle 评论数为 0（长命令场景），或每条都带 `tool/callID/时长`。
 
 当前可测的量化基线：`run#9 6236s / run#12 4562s / verify 1591s / dup 2540s / 404 11s+25min 墙钟`。

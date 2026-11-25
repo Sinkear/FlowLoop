@@ -75,7 +75,7 @@ export function RuntimeCreateDialog({
     >
       <p className="text-xs leading-relaxed text-ink-3">
         运行时是 Agent 在这台机器上的执行席位。机器执行{" "}
-        <code className="font-mono">ouroflow connect</code> 时会自动注册探测到的 CLI（
+        <code className="font-mono">flowloop connect</code> 时会自动注册探测到的 CLI（
         <code className="font-mono">CLI@机器名</code>）；只有自动注册没覆盖到时才需要手动添加。
       </p>
 

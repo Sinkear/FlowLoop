@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
-	"github.com/Sinkear/ouroflow/internal/proto"
+	"github.com/Sinkear/flowloop/internal/acp"
+	"github.com/Sinkear/flowloop/internal/proto"
 )
 
 // ── Persistent ACP session (决策 6-21) ──
@@ -61,7 +61,7 @@ func (b *Backend) OpenSession(ctx context.Context, spec proto.SessionSpec) (prot
 		// The ACP convention for naming the client: _meta._channel lets the
 		// agent's runtime identify WHERE a session came from (a multi-tenant
 		// openagent can route/group platform sessions by it).
-		Meta: map[string]any{"_channel": "ouroflow"},
+		Meta: map[string]any{"_channel": "flowloop"},
 	})
 	if err != nil {
 		conn.Close()

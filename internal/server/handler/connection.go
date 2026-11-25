@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/issue"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/issue"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // ── connections (contract §3: per-squad, per-repo webhook bindings) ──

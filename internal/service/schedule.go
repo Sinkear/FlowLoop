@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Schedule is a cron-triggered goal template. Each firing clones a fresh goal

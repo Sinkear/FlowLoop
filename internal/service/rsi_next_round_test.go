@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // seedNextRoundFixture builds the incident's RSI shape:

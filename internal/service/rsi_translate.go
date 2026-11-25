@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // ═══════════════════════════════════════════════════════════════════════

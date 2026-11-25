@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Domain is an asset/evolution domain: a shared repo (or a scratch project
@@ -24,7 +24,7 @@ type Domain struct {
 	// GitCredentials is the platform's REMOTE-OPERATION identity (decision
 	// 3-5): the token used for issue comments/close AND git push — every
 	// remote action appears under this account. Configure a dedicated
-	// ouroflow-bot account's token (GitHub or GitCode — both platforms
+	// flowloop-bot account's token (GitHub or GitCode — both platforms
 	// render comments under the authenticating account) so the human's own
 	// identity stays clean; commits are separately authored by git_identity.
 	GitCredentials    string `json:"git_credentials"`
@@ -259,8 +259,8 @@ func (s *DomainService) Delete(ctx context.Context, id string) error {
 // the platform token is required, the provider is github|gitcode, and the
 // assignee may be an agent or a squad.
 // deriveIssueSource infers the issue tracker identity (owner/repo +
-// provider) from the repo URL: https://gitcode.com/ouroflow/test-repo.git →
-// ("ouroflow/test-repo", "gitcode"). Handles https/http and ssh shapes.
+// provider) from the repo URL: https://gitcode.com/flowloop/test-repo.git →
+// ("flowloop/test-repo", "gitcode"). Handles https/http and ssh shapes.
 func deriveIssueSource(gitURL string) (ownerRepo, provider string) {
 	u := strings.TrimSpace(gitURL)
 	u = strings.TrimPrefix(u, "https://")

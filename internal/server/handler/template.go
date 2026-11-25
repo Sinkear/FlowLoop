@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // ── templates (GitCode YAML 模板：列表 / 详情 / 刷新 / apply) ──

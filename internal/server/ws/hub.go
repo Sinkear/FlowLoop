@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // topics is the full set of bus topics the hub forwards to clients. New

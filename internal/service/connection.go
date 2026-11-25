@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Connection is a first-class squad ↔ repository binding. Each connection has

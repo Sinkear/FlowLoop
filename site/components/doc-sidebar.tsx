@@ -39,7 +39,7 @@ export function DocSidebar() {
     <nav className="sticky top-0 h-screen w-[260px] shrink-0 overflow-auto border-r border-border bg-surface p-4">
       {/* wordmark + 版本 */}
       <div className="mb-7 px-2">
-        <div className="font-mono text-base font-semibold text-text">ouroflow</div>
+        <div className="font-mono text-base font-semibold text-text">flowloop</div>
         <div className="text-xs text-muted">{t("sidebarVersion")}</div>
       </div>
 

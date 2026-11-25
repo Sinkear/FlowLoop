@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/link"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/link"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Runtime is the launch spec of one probed agent CLI on one registered
@@ -24,7 +24,7 @@ type Runtime struct {
 	Args []string          `json:"args"`
 	Env  map[string]string `json:"env"`
 	// MachineID is the registered machine that executes this runtime's
-	// runs (transport='ouroflow'; '' = local/legacy transports).
+	// runs (transport='flowloop'; '' = local/legacy transports).
 	MachineID string `json:"machine_id,omitempty"`
 	// Status: active | absent | inactive — absent = the machine's latest
 	// probe no longer sees this CLI (uninstalled); the claim gate rejects

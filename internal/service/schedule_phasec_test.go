@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Phase C tests: a schedule can pin one published workflow version and carry

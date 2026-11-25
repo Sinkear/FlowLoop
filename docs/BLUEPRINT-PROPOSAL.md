@@ -1,8 +1,8 @@
 # 设计提案：工作流蓝图（Blueprint）— 把编排权威从自然语言迁到可序列化图数据
 
 > **状态：已落地（Phase A–D + §14，2026-11）— 本文件保留为设计依据、schema 与决策存档，不再是待批提案。**
-> 现行行为说明与全项目细节见 [OUROFLOW-SPEC.html](OUROFLOW-SPEC.html)；产品与架构决策基线见 [design/DESIGN.md](design/DESIGN.md)；协作模型见 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
-> 变更纪律：**先改文档、后改代码。** 行为/架构/接口/流程变更必须同步更新 OUROFLOW-SPEC.html 对应章节；蓝图 schema 或节点语义变更还必须同步本文件。
+> 现行行为说明与全项目细节见 [FLOWLOOP-SPEC.html](FLOWLOOP-SPEC.html)；产品与架构决策基线见 [design/DESIGN.md](design/DESIGN.md)；协作模型见 [design/Collaboration.v2.md](design/Collaboration.v2.md)。
+> 变更纪律：**先改文档、后改代码。** 行为/架构/接口/流程变更必须同步更新 FLOWLOOP-SPEC.html 对应章节；蓝图 schema 或节点语义变更还必须同步本文件。
 >
 > **证据基线**（本仓库 `docs/research/` 归档，三份独立调研交叉收敛）：
 > - `research/research-workflow-dsl-definitions.md` — 7 平台工作流定义格式（官方文档 + Dify 源码 + 262 个真实 DSL 导出语料）
@@ -149,7 +149,7 @@ blueprint JSON 是唯一规范格式。**校验器是纯代码（零 LLM），�
 - `blueprint`（命名实体）→ `blueprint_version`（不可变内容快照 + version 1..N + draft/published/retired）。
 - **goal 绑定具体 version_id，引用钉版本**（Coze 子工作流模式）：确定性重跑 + 天然的同题 A/B 基础设施。
 - 版本 diff = 结构化三色 diff（节点增/删/改、边增/删/改、参数变化），changelog 字段承载本版变更说明——**优化提案的 hypothesis 就落在这里**。
-- JSON 文件导入导出（`ouroflow blueprint export/import`），凭据类内容不入 DSL。
+- JSON 文件导入导出（`flowloop blueprint export/import`），凭据类内容不入 DSL。
 
 ### 4.7 编译器：blueprint → 执行（两拍编译）
 
@@ -334,8 +334,8 @@ AFlow 式 MCTS 在补丁空间搜索，A/B 门控，预算（goal.budget_usd）�
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "ouroflow/blueprint/v1",
-  "title": "ouroflow workflow blueprint",
+  "$id": "flowloop/blueprint/v1",
+  "title": "flowloop workflow blueprint",
   "type": "object",
   "required": ["name", "nodes", "edges"],
   "properties": {

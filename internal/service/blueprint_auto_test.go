@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // autoGateJSON is the B-3 gate fixture WITH a runtime auto rule (and no

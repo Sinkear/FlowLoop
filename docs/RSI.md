@@ -1,6 +1,6 @@
 # W-RSI：工作流级训练模式与训练分析
 
-W-RSI（Workflow-level Recursive Self-Improvement）把 ouroflow 的一次 goal 执行过程冻结成一张**工作流编排图**（DAG），在任务结束后异步分析编排结构、分派与信息流，产出只读的优化提案与复测计划。**这里不训练模型权重**，也不改 agent harness 内部（prompt/工具/上下文策略由各 agent 自治）；优化对象是**编排层**：节点怎么拆、依赖怎么连、任务派给谁、信息怎么流转。
+W-RSI（Workflow-level Recursive Self-Improvement）把 flowloop 的一次 goal 执行过程冻结成一张**工作流编排图**（DAG），在任务结束后异步分析编排结构、分派与信息流，产出只读的优化提案与复测计划。**这里不训练模型权重**，也不改 agent harness 内部（prompt/工具/上下文策略由各 agent 自治）；优化对象是**编排层**：节点怎么拆、依赖怎么连、任务派给谁、信息怎么流转。
 
 设计文档（论点、指标体系、Coze 教训、分期路线）见 `docs/research/rsi-summary.md`。
 
@@ -134,6 +134,6 @@ go test ./...
 # TestCodesMatchRemoteTermJSON 是 code ↔ 远端 term.json 的跨层漂移守卫：
 #   - 当前基线（ae12054）：CDN 不可达 / 非 200 / 响应畸形 / 缺码都 t.Skip，只留诊断信息；
 #   - fix/hardening 合入后：默认 FAIL + 到期 allowlist（未知缺码立刻 FAIL，允许清单
-#     截至 2026-12-31 UTC；`OUROFLOW_SKIP_CDN_DRIFT=1` 是离线/降级 CDN 的显式逃生口）。
+#     截至 2026-12-31 UTC；`FLOWLOOP_SKIP_CDN_DRIFT=1` 是离线/降级 CDN 的显式逃生口）。
 cd web && npx tsc --noEmit && npm run build
 ```

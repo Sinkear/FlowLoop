@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // StartNextRoundFromProposal is the explicit link between "a proposal was

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // ── Collaboration semantics tests (决策 5-x, Collaboration.v2.md final) ──

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // gateSweepInterval is how often the daemon times out held blueprint gates

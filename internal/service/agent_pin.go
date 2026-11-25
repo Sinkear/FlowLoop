@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // AgentPinService manages the sidebar-pin preference for agents. Pin state is
-// per-agent only — ouroflow is a single-user local platform (no user/tenant
+// per-agent only — flowloop is a single-user local platform (no user/tenant
 // dimension), so there is no user_id column.
 //
 // The model is "row existence = pinned": pin = INSERT OR IGNORE, unpin =

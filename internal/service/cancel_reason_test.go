@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestCancelledRunPostsSystemFeedComment: a cancelled run with a structured

@@ -6,16 +6,16 @@ import (
 
 // ── Chat platform brief (the chat surface's platform role) ──
 //
-// ouroflow's chat is an ACP pass-through relay: the daemon does not build a
+// flowloop's chat is an ACP pass-through relay: the daemon does not build a
 // prompt (unlike multica's buildChatPrompt); the machine only stages
 // AGENTS.md + skills. The run path injects identity and tools via
 // buildFixedBlock/buildRunProfile into AGENTS.md; the chat path has no such
 // layer, so the agent does not know it is in the chat surface or that the
-// `ouroflow` CLI exists to query its history.
+// `flowloop` CLI exists to query its history.
 //
 // buildChatBrief closes that gap: a session-fixed platform brief appended to
 // the chat cwd's AGENTS.md (staged alongside the agent's system_prompt
-// persona). It only points the agent at `ouroflow agent history` to pull its
+// persona). It only points the agent at `flowloop agent history` to pull its
 // history on demand (dual-track: passive brief + active CLI, the same shape
 // as the run path's buildFixedBlock + goal comments). No task summary is
 // injected: history grows over time and embedding it would bloat the
@@ -32,12 +32,12 @@ import (
 func buildChatBrief(agentName string, isSteward bool) string {
 	var b strings.Builder
 	b.WriteString("# Chat Context\n")
-	b.WriteString("You are chatting with the user in ouroflow's chat surface (not executing a goal).\n")
+	b.WriteString("You are chatting with the user in flowloop's chat surface (not executing a goal).\n")
 	b.WriteString("- Your identity and skills are loaded from this AGENTS.md and the .claude/skills/ (or runtime-native) directory.\n")
-	b.WriteString("- You have done work before: run `ouroflow agent history` to see your past goals/runs (use --limit and --status to filter).\n")
+	b.WriteString("- You have done work before: run `flowloop agent history` to see your past goals/runs (use --limit and --status to filter).\n")
 	b.WriteString("- This is an open conversation — coordinate freely; no goal/verification lifecycle applies here.\n")
 	if !isSteward {
-		b.WriteString("- Use the `ouroflow` CLI only for reading your own history; do not assign/handoff/cancel from chat (those are goal-run side effects).\n")
+		b.WriteString("- Use the `flowloop` CLI only for reading your own history; do not assign/handoff/cancel from chat (those are goal-run side effects).\n")
 	}
 	if agentName != "" {
 		b.WriteString("\nAgent: " + agentName + "\n")
@@ -47,7 +47,7 @@ func buildChatBrief(agentName string, isSteward bool) string {
 
 // stewardChatBriefAppendix is the extra brief section appended to the
 // steward agent's AGENTS.md (on top of the regular buildChatBrief). It tells
-// the steward it has platform-intake capabilities via the `ouroflow` CLI.
+// the steward it has platform-intake capabilities via the `flowloop` CLI.
 // The steward exercises these by calling CLI subcommands through its
 // terminal/bash tool; create operations go through POST /intake/dispatch →
 // DispatchIntake (the same handlers + draft/merge ask-once as the IM
@@ -56,42 +56,42 @@ func buildChatBrief(agentName string, isSteward bool) string {
 func stewardChatBriefAppendix() string {
 	var b strings.Builder
 	b.WriteString("\n# Steward Platform Capabilities\n")
-	b.WriteString("You are the steward agent — in addition to normal chat, you can perform platform operations for the user by calling the `ouroflow` CLI (output is JSON on stdout).\n\n")
+	b.WriteString("You are the steward agent — in addition to normal chat, you can perform platform operations for the user by calling the `flowloop` CLI (output is JSON on stdout).\n\n")
 
 	b.WriteString("Create (returns {\"status\":\"created\",\"entity\":{\"id\":...},\"message\":\"...\"} on success, or {\"status\":\"need_fields\",\"missing\":[...],\"message\":\"...\",\"platform_hint\":\"<system-reminder>...</system-reminder>\"} when fields are missing):\n")
-	b.WriteString("- `ouroflow create goal --title \"...\" --assignee <id-or-name> --domain <id-or-name> [--assignee_type agent|squad]`\n")
-	b.WriteString("- `ouroflow create agent --name \"...\" --runtime <id-or-name> --description \"...\"`\n")
-	b.WriteString("- `ouroflow create squad --name \"...\" --leader <id-or-name>`\n")
-	b.WriteString("- `ouroflow create domain --name \"...\" --git_url <url>` (or --type scratch for no-repo)\n")
-	b.WriteString("- `ouroflow create schedule --name \"...\" --title \"...\" --cron \"0 * * * *\" --assignee <id-or-name> --domain <id-or-name> [--assignee_type agent|squad]`\n")
-	b.WriteString("- `ouroflow create team --url <git-url>`\n\n")
+	b.WriteString("- `flowloop create goal --title \"...\" --assignee <id-or-name> --domain <id-or-name> [--assignee_type agent|squad]`\n")
+	b.WriteString("- `flowloop create agent --name \"...\" --runtime <id-or-name> --description \"...\"`\n")
+	b.WriteString("- `flowloop create squad --name \"...\" --leader <id-or-name>`\n")
+	b.WriteString("- `flowloop create domain --name \"...\" --git_url <url>` (or --type scratch for no-repo)\n")
+	b.WriteString("- `flowloop create schedule --name \"...\" --title \"...\" --cron \"0 * * * *\" --assignee <id-or-name> --domain <id-or-name> [--assignee_type agent|squad]`\n")
+	b.WriteString("- `flowloop create team --url <git-url>`\n\n")
 
 	b.WriteString("Query (returns JSON — parse id fields for follow-up operations):\n")
-	b.WriteString("- `ouroflow goal list [--status review]` (tasks; --status review = pending approvals)\n")
-	b.WriteString("- `ouroflow agent list`\n")
-	b.WriteString("- `ouroflow squad list`\n")
-	b.WriteString("- `ouroflow schedule list`\n")
-	b.WriteString("- `ouroflow domain list`\n")
-	b.WriteString("- `ouroflow skill list`\n")
-	b.WriteString("- `ouroflow agent history` (your own past runs)\n\n")
+	b.WriteString("- `flowloop goal list [--status review]` (tasks; --status review = pending approvals)\n")
+	b.WriteString("- `flowloop agent list`\n")
+	b.WriteString("- `flowloop squad list`\n")
+	b.WriteString("- `flowloop schedule list`\n")
+	b.WriteString("- `flowloop domain list`\n")
+	b.WriteString("- `flowloop skill list`\n")
+	b.WriteString("- `flowloop agent history` (your own past runs)\n\n")
 
 	b.WriteString("Manage (returns {\"status\":\"replied\",\"message\":\"...\"} — relay message to user, do not parse for ids):\n")
-	b.WriteString("- `ouroflow goal status <id>` (task detail + last run outcome)\n")
-	b.WriteString("- `ouroflow squad detail <name>` (squad members + leader)\n")
-	b.WriteString("- `ouroflow goal cancel <id>`\n")
-	b.WriteString("- `ouroflow goal reopen --goal <id> [--reason \"...\"]`\n")
-	b.WriteString("- `ouroflow goal assign --to <id-or-name> --goal <id> [--note \"...\"] [--assignee_type agent|squad]`\n")
-	b.WriteString("- `ouroflow goal delete <id>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow agent delete <name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow agent update --name <name> [--description \"...\"] [--system_prompt \"...\"] [--runtime <id-or-name>]`\n")
-	b.WriteString("- `ouroflow squad delete <name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow squad update --squad <name> [--leader <id-or-name>] [--description \"...\"] [--instructions \"...\"]`\n")
-	b.WriteString("- `ouroflow squad add-member --squad <name> --agent <id-or-name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow squad remove-member --squad <name> --agent <id-or-name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow schedule stop <name>` / `ouroflow schedule enable <name>`\n")
-	b.WriteString("- `ouroflow schedule delete <name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow domain delete <name>` (comma-separated batch)\n")
-	b.WriteString("- `ouroflow skill delete <name>` (comma-separated batch)\n\n")
+	b.WriteString("- `flowloop goal status <id>` (task detail + last run outcome)\n")
+	b.WriteString("- `flowloop squad detail <name>` (squad members + leader)\n")
+	b.WriteString("- `flowloop goal cancel <id>`\n")
+	b.WriteString("- `flowloop goal reopen --goal <id> [--reason \"...\"]`\n")
+	b.WriteString("- `flowloop goal assign --to <id-or-name> --goal <id> [--note \"...\"] [--assignee_type agent|squad]`\n")
+	b.WriteString("- `flowloop goal delete <id>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop agent delete <name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop agent update --name <name> [--description \"...\"] [--system_prompt \"...\"] [--runtime <id-or-name>]`\n")
+	b.WriteString("- `flowloop squad delete <name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop squad update --squad <name> [--leader <id-or-name>] [--description \"...\"] [--instructions \"...\"]`\n")
+	b.WriteString("- `flowloop squad add-member --squad <name> --agent <id-or-name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop squad remove-member --squad <name> --agent <id-or-name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop schedule stop <name>` / `flowloop schedule enable <name>`\n")
+	b.WriteString("- `flowloop schedule delete <name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop domain delete <name>` (comma-separated batch)\n")
+	b.WriteString("- `flowloop skill delete <name>` (comma-separated batch)\n\n")
 
 	b.WriteString("When the user asks you to create something, call the CLI directly. If required fields are missing, the CLI returns a structured {\"status\":\"need_fields\",\"missing\":[...],\"message\":\"...\",\"platform_hint\":\"<system-reminder>...</system-reminder>\"} response. Relay `message` to the user (it lists what's missing). Read `platform_hint` yourself — it carries the current roster (available agents/domains/runtimes) so you can fill the missing fields or suggest options to the user. The <system-reminder> tags wrap platform instructions for you, NOT text to relay verbatim. On success the CLI returns {\"status\":\"created\",\"entity\":{...},\"message\":\"...\"} — parse entity.id for follow-up. You do NOT output any special markers.\n")
 	return b.String()

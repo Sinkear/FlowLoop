@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Sinkear/ouroflow/internal/acp"
+	"github.com/Sinkear/flowloop/internal/acp"
 )
 
 // modelConfigID is the config-option id agents use for the model selector.

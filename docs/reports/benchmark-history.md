@@ -1,4 +1,4 @@
-# ouroflow 构建/测试基准测量历史（R1 → R3）
+# flowloop 构建/测试基准测量历史（R1 → R3）
 
 > 合并自：`docs/reports/benchmark-report.md`（R1 复跑修订 v2）、`docs/reports/benchmark-report-r2.md`（R2 复测）、`docs/reports/benchmark-report-r3.md`（R3 冷缓存复测）、`docs/reports/impl-notes.md`（R2 实施说明） ｜ 合并日期：2026-11-23 ｜ 状态：历史记录（只读） ｜ 用途：单文件回溯三代基线（`0bf354e` / `365e108` / `e7c2572`）的测量条件、原始数字、失败清单与结论；原文事实与措辞未改写，仅按轮次重组并标注跨文档矛盾。
 
@@ -6,10 +6,10 @@
 
 | 原文件 | 原标题 / 版本 | 日期 | 基线 | 并入本文件 |
 | --- | --- | --- | --- | --- |
-| `reports/benchmark-report.md` | ouroflow R1 构建/测试基准测量报告（bench）· R1 复跑·冲突重做修订 v2 | 2026-11-10 | `0bf354e` | §1、§2、§3、§4、附录 A |
+| `reports/benchmark-report.md` | flowloop R1 构建/测试基准测量报告（bench）· R1 复跑·冲突重做修订 v2 | 2026-11-10 | `0bf354e` | §1、§2、§3、§4、附录 A |
 | `reports/impl-notes.md` | RSI R2 实施说明（builder · impl-notes）· 状态：已完成 | 2026-11-10 | `365e108`（分支 `feat-25da0cc6-sg-23d061da`） | §5.1 |
-| `reports/benchmark-report-r2.md` | ouroflow R2 实施后基准复测报告（bench）· v1 | 2026-11-10 | `365e108` | §5.2–§5.6、附录 A |
-| `reports/benchmark-report-r3.md` | ouroflow R3 基准复测报告（bench · 冷缓存口径 · 无依赖并行重派版）· v1 | 2026-11-11 | `e7c2572` | §1、§6、附录 A |
+| `reports/benchmark-report-r2.md` | flowloop R2 实施后基准复测报告（bench）· v1 | 2026-11-10 | `365e108` | §5.2–§5.6、附录 A |
+| `reports/benchmark-report-r3.md` | flowloop R3 基准复测报告（bench · 冷缓存口径 · 无依赖并行重派版）· v1 | 2026-11-11 | `e7c2572` | §1、§6、附录 A |
 
 - 原 R1 v1 报告（基线 `33f16dc`，冷 38.4s / 温中位 4.4s / 测试 14.5s）在集成时与同队另一条同名 `benchmark-report.md` 发生路径冲突，已被 v2 修订**整体替换**，仓库内不再保留；其数字仅通过 `reports/proposals.md` 的引用与 R2 对比表间接留存，见 §2.4、§8.2。
 - 每份原报告均在自身尾部声明「本报告为工作区内该文件唯一有效版本」；合并后本文件是该四条测量线的唯一归档。
@@ -21,10 +21,10 @@
 
 | 基线 commit | 轮次 | 分支 / 来源 | 说明 | 与上一代的关系 |
 | --- | --- | --- | --- | --- |
-| `33f16dc` | R1（v1，已废弃） | `ouroflow-int` HEAD（R1 早期） | Merge feat-98d60d12 (ouroflow deliver)；R1 v1 报告与 `reports/proposals.md` 的引用基线 | — |
-| `0bf354e` | R1（v2，现存 R1 报告） | `ouroflow-int` 新集成基线（"Integrate 46d681ea…"），含 optimizer 提案 `proposals.md` | 相对旧基线 `33f16dc` **仅新增文档，无代码变更** | 文档递增，代码等同 |
+| `33f16dc` | R1（v1，已废弃） | `flowloop-int` HEAD（R1 早期） | Merge feat-98d60d12 (flowloop deliver)；R1 v1 报告与 `reports/proposals.md` 的引用基线 | — |
+| `0bf354e` | R1（v2，现存 R1 报告） | `flowloop-int` 新集成基线（"Integrate 46d681ea…"），含 optimizer 提案 `proposals.md` | 相对旧基线 `33f16dc` **仅新增文档，无代码变更** | 文档递增，代码等同 |
 | `365e108` | R2 | 分支 `feat-25da0cc6-sg-23d061da` HEAD | builder 实施成果；近几代：`3cf2116` P1 并行化 + `8ca9957` P2 CDN 守卫 fail→skip + `18a8c3c` P3 不可重试快速失败 + `365e108` impl-notes docs | 相对 `0bf354e` **仅含这三条已批准提案的实施与文档**，无其他代码变更 |
-| `e7c2572` | R3 | 分支 `feat-357252be-sg-b13a5581` HEAD = `origin/ouroflow-int-v2` | 近三代：`e7c2572` R1/R2 交付物迁移 + `e08cb72` P1 并行化重放 + `e2bda1d` P2/P3 语义化重放 | 相对 `365e108` 是**新基线重建（历史重放）**，非增量演进 |
+| `e7c2572` | R3 | 分支 `feat-357252be-sg-b13a5581` HEAD = `origin/flowloop-int-v2` | 近三代：`e7c2572` R1/R2 交付物迁移 + `e08cb72` P1 并行化重放 + `e2bda1d` P2/P3 语义化重放 | 相对 `365e108` 是**新基线重建（历史重放）**，非增量演进 |
 
 ### 1.2 测量口径（P-C 提案执行版）
 
@@ -48,7 +48,7 @@
 | GOCACHE（温） | `/root/.cache/go-build` | `/root/.cache/go-build` | `/root/.cache/go-build`（2.7G 热） |
 | GOMODCACHE | `/root/go/pkg/mod` | `/root/go/pkg/mod` | `/root/go/pkg/mod`（651M，两场景共用均热） |
 | 工作区 | 全新 checkout（含 v1 报告文件），标准 GOCACHE 为热缓存 | `git worktree add --detach /tmp/opencode/bench-r2 feat-25da0cc6-sg-23d061da` 只读挂载 | bench 工作区（worktree）实跑，`git diff` 为空 |
-| 其他 | — | — | `OUROFLOW_HOME=/root/.ouroflow`（全局已设置，与 R3 测试失败根因直接相关） |
+| 其他 | — | — | `FLOWLOOP_HOME=/root/.flowloop`（全局已设置，与 R3 测试失败根因直接相关） |
 
 ### 1.4 各轮「只测量、不改代码」证据
 
@@ -86,18 +86,18 @@ R1 在仓库与后续文档中留下**四组互不一致的记录**，源于「�
 
 | 排名 | 包 | 耗时 | 结果 |
 | --- | --- | --- | --- |
-| 1 | `github.com/Sinkear/ouroflow/internal/daemon` | 8.00 s | pass |
-| 2 | `github.com/Sinkear/ouroflow/internal/service` | 4.61 s | **FAIL** |
-| 3 | `github.com/Sinkear/ouroflow/cmd/ouroflow-cli` | 4.20 s | pass |
-| 4 | `github.com/Sinkear/ouroflow/internal/notify` | 0.89 s | pass |
-| 5 | `github.com/Sinkear/ouroflow/internal/issue` | 0.30 s | pass |
-| 6 | `github.com/Sinkear/ouroflow/internal/backup` | 0.26 s | pass |
-| 7 | `github.com/Sinkear/ouroflow/internal/server/handler` | 0.05 s | pass |
-| 8 | `github.com/Sinkear/ouroflow/internal/paths` | 0.04 s | pass |
-| 9 | `github.com/Sinkear/ouroflow/internal/server` | 0.03 s | pass |
-| 10 | `github.com/Sinkear/ouroflow/internal/acp` | 0.03 s | pass |
+| 1 | `github.com/Sinkear/flowloop/internal/daemon` | 8.00 s | pass |
+| 2 | `github.com/Sinkear/flowloop/internal/service` | 4.61 s | **FAIL** |
+| 3 | `github.com/Sinkear/flowloop/cmd/flowloop-cli` | 4.20 s | pass |
+| 4 | `github.com/Sinkear/flowloop/internal/notify` | 0.89 s | pass |
+| 5 | `github.com/Sinkear/flowloop/internal/issue` | 0.30 s | pass |
+| 6 | `github.com/Sinkear/flowloop/internal/backup` | 0.26 s | pass |
+| 7 | `github.com/Sinkear/flowloop/internal/server/handler` | 0.05 s | pass |
+| 8 | `github.com/Sinkear/flowloop/internal/paths` | 0.04 s | pass |
+| 9 | `github.com/Sinkear/flowloop/internal/server` | 0.03 s | pass |
+| 10 | `github.com/Sinkear/flowloop/internal/acp` | 0.03 s | pass |
 
-其余包均 < 0.03 s；`cmd/ouroflow-daemon`、`cmd/validate-templates`、`internal/card`、`internal/events`、`internal/gitcodeapi`、`internal/store` 等无测试文件（`[no test files]`，未计入排名）。
+其余包均 < 0.03 s；`cmd/flowloop-daemon`、`cmd/validate-templates`、`internal/card`、`internal/events`、`internal/gitcodeapi`、`internal/store` 等无测试文件（`[no test files]`，未计入排名）。
 
 ### 3.3 失败用例清单（3 条，与 v1 一致）
 
@@ -135,7 +135,7 @@ code "AW.10000025" missing from https://res-static.hc-cdn.cn/asset/locales/PROD/
 
 ### 4.1 R2 实施说明（`impl-notes.md` 事实）
 
-三条已批准提案（P1、P2、P3）全部实施，机器验证门自检通过。分支 `feat-25da0cc6-sg-23d061da`（基于 `ouroflow-int` HEAD `339f10d`），每条提案独立 commit：
+三条已批准提案（P1、P2、P3）全部实施，机器验证门自检通过。分支 `feat-25da0cc6-sg-23d061da`（基于 `flowloop-int` HEAD `339f10d`），每条提案独立 commit：
 
 | commit | 提案 | 内容 |
 | --- | --- | --- |
@@ -148,15 +148,15 @@ code "AW.10000025" missing from https://res-static.hc-cdn.cn/asset/locales/PROD/
 - 改动：纯 `*_test.go`，7 个文件，+140 行。对 7 个无 `t.Setenv` 的测试文件（`intake_test.go`、`verify_test.go`、`gate_test.go`、`schedule_test.go`、`runaway_test.go`、`prompt_context_test.go`、`handoff_cancel_test.go`）的全部 **70 个顶层测试函数**加 `t.Parallel()`。
 - 使用 `t.Setenv` 隔离 HOME 的 3 个文件（`deliver_test.go`、`digest_test.go`、`worktree_test.go`）保持串行（`t.Setenv` 自动禁止并行）。
 - 实施前核实：7 个文件均无 `os.Setenv`/`Chdir`/固定端口/共享 HOME 依赖；`runaway_test.go` 中 `TestScratchDirNames` 只读 `runsRoot()` 路径计算；各测试均用 `:memory:` SQLite 或 `t.TempDir()`。
-- 次级目标 `cmd/ouroflow-cli` **未动**：4 个测试文件中 3 个使用 `t.Setenv`（gitwork/main/probe），纯函数测试（chat/exec）合计 <0.1s，并行化收益趋近于零且违反「改动最小化」。
+- 次级目标 `cmd/flowloop-cli` **未动**：4 个测试文件中 3 个使用 `t.Setenv`（gitwork/main/probe），纯函数测试（chat/exec）合计 <0.1s，并行化收益趋近于零且违反「改动最小化」。
 - 验证：`-count=1` 连跑 3 次全绿；wall 5.30s / 5.73s / 4.99s（实施前基线 8.17s，**约 -35%**）；涉及状态机/取消链的 15 个测试 `-race` 通过；`gofmt -l` 无新增格式问题（4 个文件为基线既有问题）。
 
 **P2（CDN 漂移守卫 fail→skip）**
 
-- 改动：`internal/service/codes_test.go`，+26/-2 行。decode 失败（截断 JSON / 网关错误页 200+HTML）由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与既有不可达（`:89-90`）/非 200（`:93-94`）的 skip 语义对齐；新增 `OUROFLOW_SKIP_CDN_DRIFT=1` 环境开关。
+- 改动：`internal/service/codes_test.go`，+26/-2 行。decode 失败（截断 JSON / 网关错误页 200+HTML）由 `t.Fatalf` 改为 `t.Skipf("CDN returned malformed body — skip drift guard: %v", err)`，与既有不可达（`:89-90`）/非 200（`:93-94`）的 skip 语义对齐；新增 `FLOWLOOP_SKIP_CDN_DRIFT=1` 环境开关。
 - **缺码漂移同步改 skip**：实施时发现 CDN 实际返回合法 JSON 但缺 6 码（`AW.10000025~30`，两 locale 各 6 条），走缺码 `Errorf` 分支；若缺码仍 `Errorf`，`go test ./...` 无法恢复全绿，与提案 ③ 预期「1/24 包 FAIL → 0」矛盾。提案 ④ 风险条款亦明确「CDN 缺码不再使测试变红」为已接受风险，故缺码分支按提案语义改为 `t.Skipf`，skip 时输出完整缺码清单（保留可诊断性），可 `-run TestCodesMatchRemoteTermJSON` 手动复查。
 - 本地不变量守卫 `TestErrorCodesExported` 保持不动。
-- 验证：缺码场景输出 6 码 × 2 locale；`OUROFLOW_SKIP_CDN_DRIFT=1` 时整守卫 skip；`go test ./... -count=1` 全量无 FAIL（**13 个含测试的包全 ok**——与 §4.2 的 14 包口径差异见 §8.2）。
+- 验证：缺码场景输出 6 码 × 2 locale；`FLOWLOOP_SKIP_CDN_DRIFT=1` 时整守卫 skip；`go test ./... -count=1` 全量无 FAIL（**13 个含测试的包全 ok**——与 §4.2 的 14 包口径差异见 §8.2）。
 
 **P3（不可重试错误快速失败）**
 
@@ -192,16 +192,16 @@ go test ./... -count=1    → PASS（连跑 2 次全量 0 FAIL，wall 10.9s / 9.
 
 | 排名 | 包 | 耗时 | 结果 |
 | --- | --- | --- | --- |
-| 1 | `github.com/Sinkear/ouroflow/internal/daemon` | 5.911 s | pass |
-| 2 | `github.com/Sinkear/ouroflow/cmd/ouroflow-cli` | 4.530 s | pass |
-| 3 | `github.com/Sinkear/ouroflow/internal/service` | 4.456 s | pass（R1 唯一失败包，现已 PASS） |
-| 4 | `github.com/Sinkear/ouroflow/internal/notify` | 0.925 s | pass |
-| 5 | `github.com/Sinkear/ouroflow/internal/issue` | 0.419 s | pass |
-| 6 | `github.com/Sinkear/ouroflow/internal/backup` | 0.297 s | pass |
-| 7 | `github.com/Sinkear/ouroflow/internal/link` | 0.075 s | pass |
-| 8 | `github.com/Sinkear/ouroflow/internal/server` | 0.061 s | pass |
-| 9 | `github.com/Sinkear/ouroflow/internal/acp` | 0.056 s | pass |
-| 10 | `github.com/Sinkear/ouroflow/internal/server/handler` | 0.049 s | pass |
+| 1 | `github.com/Sinkear/flowloop/internal/daemon` | 5.911 s | pass |
+| 2 | `github.com/Sinkear/flowloop/cmd/flowloop-cli` | 4.530 s | pass |
+| 3 | `github.com/Sinkear/flowloop/internal/service` | 4.456 s | pass（R1 唯一失败包，现已 PASS） |
+| 4 | `github.com/Sinkear/flowloop/internal/notify` | 0.925 s | pass |
+| 5 | `github.com/Sinkear/flowloop/internal/issue` | 0.419 s | pass |
+| 6 | `github.com/Sinkear/flowloop/internal/backup` | 0.297 s | pass |
+| 7 | `github.com/Sinkear/flowloop/internal/link` | 0.075 s | pass |
+| 8 | `github.com/Sinkear/flowloop/internal/server` | 0.061 s | pass |
+| 9 | `github.com/Sinkear/flowloop/internal/acp` | 0.056 s | pass |
+| 10 | `github.com/Sinkear/flowloop/internal/server/handler` | 0.049 s | pass |
 
 - 共 27 个包：14 个含测试（全部 ok）+ 13 个无测试文件（`[no test files]`，未计入排名）。
 - 三连跑 Top3 稳定性：daemon 6.218 / 5.719 / 5.911 s；service 4.619 / 4.399 / 4.456 s；cli 4.295* / 3.876 / 4.530 s（*run1 取自同命令补跑）。
@@ -277,31 +277,31 @@ R1 基线（任务给定）：build 11.574s / test 23.012s / `internal/daemon` 7
 | `go build ./...` 温中位 | 4.387 s | 4.672 s | +0.285 s（约 +6.5%），仅参照不采信 |
 | `go test ./... -count=1` 中位 | 11.559 s | 13.173 s | **+1.614 s（约 +14.0%）** |
 | `internal/daemon` 包耗时中位 | 5.911 s | 5.855 s（5.855/4.893/6.026） | -0.056 s（基本持平），P1 并行化收益保持 |
-| `cmd/ouroflow-cli` 包耗时中位 | 4.530 s | 2.374 s（3.852/2.166/2.374） | -2.156 s（约 -47.6%，失败路径提前退出所致，见 §5.5 注） |
+| `cmd/flowloop-cli` 包耗时中位 | 4.530 s | 2.374 s（3.852/2.166/2.374） | -2.156 s（约 -47.6%，失败路径提前退出所致，见 §5.5 注） |
 | `internal/service` 包耗时中位 | 4.456 s | 6.144 s（6.200/6.004/6.229） | +1.688 s（约 +37.9%） |
 | 失败用例数 | 0（全绿） | **6（2 包）** | **0 → 6**，见 §5.4 |
-| 失败包数 | 0 | 2（`cmd/ouroflow-cli`、`internal/daemon`） | 0 → 2 |
+| 失败包数 | 0 | 2（`cmd/flowloop-cli`、`internal/daemon`） | 0 → 2 |
 
 **结论（冷列，原文）**：新基线 `e7c2572` 冷构建 41.285s，较 R2 冷测 44.417s **约 -7%**——R2 已批准提案（P1 并行化等）的收益在新基线重建中得到保持，未因历史重放而回退。**test 中位 +14%** 的原因主要是 `internal/service` 包 +38%（新增 RSI 分析代码 `e7c2572` 的测试负载）与失败用例的重试路径。
 
-**结论（测试健康，原文）**：R2 全绿 → R3 6 例失败。**6 例失败全部为测试环境隔离缺陷（`OUROFLOW_HOME` 全局泄漏 + 固定 domainID/goalID 跨运行残留），非业务代码功能缺陷**。
+**结论（测试健康，原文）**：R2 全绿 → R3 6 例失败。**6 例失败全部为测试环境隔离缺陷（`FLOWLOOP_HOME` 全局泄漏 + 固定 domainID/goalID 跨运行残留），非业务代码功能缺陷**。
 
 ### 5.4 包级测试耗时 Top10（run3，共 30 个包）
 
 | 排名 | 包 | 耗时 | 结果 |
 | --- | --- | --- | --- |
-| 1 | `github.com/Sinkear/ouroflow/internal/daemon` | 6.026 s | **FAIL**（4 例，见 §5.5） |
-| 2 | `github.com/Sinkear/ouroflow/cmd/ouroflow-cli` | 2.374 s | **FAIL**（2 例，见 §5.5） |
-| 3 | `github.com/Sinkear/ouroflow/internal/service` | 6.229 s | pass（R2 4.456s → 6.229s，+38%，RSI 新代码测试负载） |
-| 4 | `github.com/Sinkear/ouroflow/internal/notify` | 0.884 s | pass |
-| 5 | `github.com/Sinkear/ouroflow/internal/issue` | 0.395 s | pass |
-| 6 | `github.com/Sinkear/ouroflow/internal/backup` | 0.326 s | pass |
-| 7 | `github.com/Sinkear/ouroflow/internal/server/handler` | 0.069 s | pass |
-| 8 | `github.com/Sinkear/ouroflow/internal/zipx` | 0.039 s | pass |
-| 9 | `github.com/Sinkear/ouroflow/internal/link` | 0.037 s | pass |
-| 10 | `github.com/Sinkear/ouroflow/internal/server` | 0.030 s | pass |
+| 1 | `github.com/Sinkear/flowloop/internal/daemon` | 6.026 s | **FAIL**（4 例，见 §5.5） |
+| 2 | `github.com/Sinkear/flowloop/cmd/flowloop-cli` | 2.374 s | **FAIL**（2 例，见 §5.5） |
+| 3 | `github.com/Sinkear/flowloop/internal/service` | 6.229 s | pass（R2 4.456s → 6.229s，+38%，RSI 新代码测试负载） |
+| 4 | `github.com/Sinkear/flowloop/internal/notify` | 0.884 s | pass |
+| 5 | `github.com/Sinkear/flowloop/internal/issue` | 0.395 s | pass |
+| 6 | `github.com/Sinkear/flowloop/internal/backup` | 0.326 s | pass |
+| 7 | `github.com/Sinkear/flowloop/internal/server/handler` | 0.069 s | pass |
+| 8 | `github.com/Sinkear/flowloop/internal/zipx` | 0.039 s | pass |
+| 9 | `github.com/Sinkear/flowloop/internal/link` | 0.037 s | pass |
+| 10 | `github.com/Sinkear/flowloop/internal/server` | 0.030 s | pass |
 
-- 共 30 个包：12 ok + 2 FAIL + 16 无测试文件（`[no test files]`，未计入排名）。R2 为 27 包（14 ok）；新基线包数 27 → 30（新增 `internal/paths`、`internal/proto/acpbackend`、`internal/card/feishu` 等拆分/新增包），daemon 测试部分迁移至 `cmd/ouroflow-cli`，跨轮包级对比已按同名包对齐。
+- 共 30 个包：12 ok + 2 FAIL + 16 无测试文件（`[no test files]`，未计入排名）。R2 为 27 包（14 ok）；新基线包数 27 → 30（新增 `internal/paths`、`internal/proto/acpbackend`、`internal/card/feishu` 等拆分/新增包），daemon 测试部分迁移至 `cmd/flowloop-cli`，跨轮包级对比已按同名包对齐。
 - 三连跑 Top3 稳定性：daemon 5.855/4.893/6.026 s；cli 3.852/2.166/2.374 s；service 6.200/6.004/6.229 s。
 - 注（原文）：cli 包中位 2.374s 较 R2 4.530s 大幅下降，是 2 个失败用例在 setup 后段提前退出（fetch 128）所致，**不是性能改进**，不采信为收益。
 
@@ -311,8 +311,8 @@ R1 基线（任务给定）：build 11.574s / test 23.012s / `internal/daemon` 7
 
 | # | 用例 | 包 | 错误摘要 | 根因归类 |
 | --- | --- | --- | --- | --- |
-| 1 | `TestGitWorkdirAndTransferPush` | `cmd/ouroflow-cli` | `gitwork_test.go:59: workdir: fetch: exit status 128: '/tmp/TestGitWorkdirAndTransferPush2535588731/002/bare.git' does not appear to be a git repository` | **A：`OUROFLOW_HOME` 泄漏 + 陈旧缓存复用** |
-| 2 | `TestPersistentGoalWorkdir` | `cmd/ouroflow-cli` | 同上（同一陈旧 `bare.git` 路径） | A |
+| 1 | `TestGitWorkdirAndTransferPush` | `cmd/flowloop-cli` | `gitwork_test.go:59: workdir: fetch: exit status 128: '/tmp/TestGitWorkdirAndTransferPush2535588731/002/bare.git' does not appear to be a git repository` | **A：`FLOWLOOP_HOME` 泄漏 + 陈旧缓存复用** |
+| 2 | `TestPersistentGoalWorkdir` | `cmd/flowloop-cli` | 同上（同一陈旧 `bare.git` 路径） | A |
 | 3 | `TestDeliverMergeIdentityNoGlobalGitConfig` | `internal/daemon` | `deliver_test.go:114: goal status = "review", want done. review_request="deliver: fetch: exit status 128: '/tmp/TestDeliverMergeIdentity.../002/remote.git' does not appear..."` | **A'：同源（daemon 侧 deliver 走真实 HOME 下仓库）** |
 | 4 | `TestParallelConsultWorktreeDetaches` | `internal/daemon` | `worktree_test.go:39: owner worktree: git fetch: exit status 128: '/tmp/TestParallelConsultWorktreeDetaches.../002/src' does not appear...` | A' |
 | 5 | `TestCollectDigestBatchWritesAndIsIdempotent` | `internal/daemon` | `digest_test.go:206: articles = 1, want 2`（日志：`goal g-1 batch already collected — skipping append`） | **B：`digestRoot()` 落在真实守护进程数据目录，跨运行幂等残留** |
@@ -320,28 +320,28 @@ R1 基线（任务给定）：build 11.574s / test 23.012s / `internal/daemon` 7
 
 #### 根因 A（#1/#2，实测证据链）
 
-1. `cmd/ouroflow-cli` 测试 `t.Setenv("HOME", t.TempDir())` 只改 HOME；`internal/paths.Home()`（`paths.go:36-46`）**优先读 `OUROFLOW_HOME`**（本环境全局设置为 `/root/.ouroflow`，且 `paths.go:15` 注释明确 "OUROFLOW_HOME is read on every call"）。
-2. `ensureBareRepo`（`cmd/ouroflow-cli/gitwork.go:38-62`）用固定 domainID `dom-1` 计算 `paths.RepoDir("dom-1")` = `/root/.ouroflow/repos/dom-1`，**只检查 `HEAD` 存在即跳过 re-clone**（`gitwork.go:44` "Existence alone is not cloned" 注释所防的恰是半写目录，但未防陈旧 remote）。
-3. 实测 `/root/.ouroflow/repos/dom-1`：HEAD 存在（2026-11-10 20:49 上轮测试遗留）、`git remote -v` 指向 `file:///tmp/TestGitWorkdirAndTransferPush2535588731/002/bare.git`（该目录已删除）→ fetch 128。
-4. 对照实验：手动在同一环境建 `bare.git` + clone + push + `git ls-remote file://…` 全部正常（git 2.33.0 无问题）→ **排除 git 工具链问题**；失败仅出现在复用陈旧 `/root/.ouroflow/repos/dom-1` 时。
+1. `cmd/flowloop-cli` 测试 `t.Setenv("HOME", t.TempDir())` 只改 HOME；`internal/paths.Home()`（`paths.go:36-46`）**优先读 `FLOWLOOP_HOME`**（本环境全局设置为 `/root/.flowloop`，且 `paths.go:15` 注释明确 "FLOWLOOP_HOME is read on every call"）。
+2. `ensureBareRepo`（`cmd/flowloop-cli/gitwork.go:38-62`）用固定 domainID `dom-1` 计算 `paths.RepoDir("dom-1")` = `/root/.flowloop/repos/dom-1`，**只检查 `HEAD` 存在即跳过 re-clone**（`gitwork.go:44` "Existence alone is not cloned" 注释所防的恰是半写目录，但未防陈旧 remote）。
+3. 实测 `/root/.flowloop/repos/dom-1`：HEAD 存在（2026-11-10 20:49 上轮测试遗留）、`git remote -v` 指向 `file:///tmp/TestGitWorkdirAndTransferPush2535588731/002/bare.git`（该目录已删除）→ fetch 128。
+4. 对照实验：手动在同一环境建 `bare.git` + clone + push + `git ls-remote file://…` 全部正常（git 2.33.0 无问题）→ **排除 git 工具链问题**；失败仅出现在复用陈旧 `/root/.flowloop/repos/dom-1` 时。
 
 #### 根因 B（#5/#6，实测证据链）
 
-1. digest 测试同样 `t.Setenv("HOME", t.TempDir())`，但 `digestRoot()` = `paths.Digest()` = `filepath.Join(Home(), "digest")` = **真实 `/root/.ouroflow/digest`**（`OUROFLOW_HOME` 优先）。
-2. 实测 `/root/.ouroflow/digest/g-1/`（只剩 `1.md`）与 `articles.json`（create 时间戳 `2026-11-11T08:45:30Z` = 本轮第一次三连跑时刻）跨测试运行共享；`collectDigestBatch` 的幂等检查（`digest.go:193-199` "batch already collected — skipping append"）命中上一轮 `g-1` 残留 → 第二次起不再追加 → `articles = 1, want 2`。
+1. digest 测试同样 `t.Setenv("HOME", t.TempDir())`，但 `digestRoot()` = `paths.Digest()` = `filepath.Join(Home(), "digest")` = **真实 `/root/.flowloop/digest`**（`FLOWLOOP_HOME` 优先）。
+2. 实测 `/root/.flowloop/digest/g-1/`（只剩 `1.md`）与 `articles.json`（create 时间戳 `2026-11-11T08:45:30Z` = 本轮第一次三连跑时刻）跨测试运行共享；`collectDigestBatch` 的幂等检查（`digest.go:193-199` "batch already collected — skipping append"）命中上一轮 `g-1` 残留 → 第二次起不再追加 → `articles = 1, want 2`。
 3. 单跑复现验证：`go test ./internal/daemon -count=1 -run 'TestCollectDigestBatchWritesAndIsIdempotent'` 单独执行亦 FAIL（日志同样 "already collected"）→ **稳定复现，非并行污染**。
 
 #### 归类小结（原文）
 
-- **非业务缺陷**：6 例全部可通过「测试内 `t.Setenv("OUROFLOW_HOME", t.TempDir())`（或 `ensureBareRepo` 增加 remote 存活校验）」修复，业务代码（deliver/worktree/digest 的生产路径）本身逻辑未被证伪。
-- **与 optimizer P-A 提案的关系**：根因 A 是 P-A「验证子进程环境净化」的**姊妹问题**——P-A 防 daemon 验证子进程继承 `OUROFLOW_HOME`，本组失败防 **go test 子进程**继承 `OUROFLOW_HOME` 后 paths 层误用；修复方向一致（环境隔离层），建议 P-A 实施时一并覆盖测试进程环境。
+- **非业务缺陷**：6 例全部可通过「测试内 `t.Setenv("FLOWLOOP_HOME", t.TempDir())`（或 `ensureBareRepo` 增加 remote 存活校验）」修复，业务代码（deliver/worktree/digest 的生产路径）本身逻辑未被证伪。
+- **与 optimizer P-A 提案的关系**：根因 A 是 P-A「验证子进程环境净化」的**姊妹问题**——P-A 防 daemon 验证子进程继承 `FLOWLOOP_HOME`，本组失败防 **go test 子进程**继承 `FLOWLOOP_HOME` 后 paths 层误用；修复方向一致（环境隔离层），建议 P-A 实施时一并覆盖测试进程环境。
 - **对基准连续性的影响**：R2 全绿口径在新基线上被测试隔离缺陷打破；建议后续轮次将「测试环境隔离修复」作为高优任务，修复后 §5.4 失败项应归零，届时 test 中位数才可与 R2 11.559s 直接对比。
 
 ### 5.6 R3 结论（原文五条）
 
 1. **冷列（跨轮采信）**：新基线 `e7c2572` 冷构建 **41.285s**，较 R2 冷测 44.417s **约 -7%**，R2 提案收益在新基线重建中保持。
 2. **温列（参照）**：温 build 中位 4.672s（R2 4.387s，+6.5%）；test 中位 13.173s（R2 11.559s，+14.0%，主因 service 包 +38% RSI 新代码负载与失败重试路径）。
-3. **测试健康**：6 例失败（2 包）**全部为测试环境隔离缺陷**（`OUROFLOW_HOME` 全局泄漏 × 固定 ID 跨运行残留），根因已实测定位（含陈旧 remote 路径、跨运行共享目录、单跑复现三重证据），非业务代码缺陷；已与 P-A 提案建立关联。
+3. **测试健康**：6 例失败（2 包）**全部为测试环境隔离缺陷**（`FLOWLOOP_HOME` 全局泄漏 × 固定 ID 跨运行残留），根因已实测定位（含陈旧 remote 路径、跨运行共享目录、单跑复现三重证据），非业务代码缺陷；已与 P-A 提案建立关联。
 4. **基准连续性**：R1（`0bf354e`）→ R2（`365e108`）→ R3（`e7c2572`）三代基线数据齐备；自本轮起冷/温双列口径落地，跨轮对比只采冷列。
 5. 本轮未改任何代码（`git diff` 为空），全部测量在本 bench 工作区只读完成。
 
@@ -356,7 +356,7 @@ R1 基线（任务给定）：build 11.574s / test 23.012s / `internal/daemon` 7
 | `go test ./... -count=1` | 11.3 s（单跑） | 23.012 s | 中位 **11.559 s**（14.399/11.421/11.559） | 中位 13.173 s（16.447/13.173/11.919） |
 | `internal/daemon` | 8.00 s | 7.696 s | 中位 5.911 s（6.218/5.719/5.911） | 中位 5.855 s（run3 6.026 s） |
 | `internal/service` | 4.61 s **FAIL** | 1 包失败 | 4.456 s pass | 中位 6.144 s（run3 6.229 s）pass |
-| `cmd/ouroflow-cli` | 4.20 s | — | 4.530 s | 中位 2.374 s（失败提前退出，不采信） |
+| `cmd/flowloop-cli` | 4.20 s | — | 4.530 s | 中位 2.374 s（失败提前退出，不采信） |
 | 失败用例 / 失败包 | 3 / 1 | 未细分 / 1 | 0 / 0 | **6 / 2** |
 | 包总数（含测试包） | 27（24 ok + 1 FAIL，原文） | — | 27（14 测试 + 13 无测试） | 30（12 ok + 2 FAIL + 16 无测试） |
 | 退出码 | 1 | 未注明 | 0（3 次） | 1（3 次） |
@@ -375,7 +375,7 @@ R1 基线（任务给定）：build 11.574s / test 23.012s / `internal/daemon` 7
 1. **R1 无冷态 test 数据**，R1 的 build/test 只能按温列标注，不能参与冷列跨轮对比。
 2. **机器负载波动**：R1 测试 wall 14.5 → 11.3s 被原文归为负载波动（daemon 8.17 → 8.00s 基本不变）；单跑值与中位值不可混用。
 3. **外部依赖**：R1/R2 的 CDN 失败源于 `res-static.hc-cdn.cn` 词表未同步，非仓库代码可控；R2 后缺码改 SKIP，红信号消失（可诊断性保留在 skip 日志）。
-4. **测试环境泄漏**：R3 的 6 例失败由 `OUROFLOW_HOME=/root/.ouroflow` 全局变量 + 固定 domainID/goalID 残留造成，任何未设该变量的机器不复现；因此 R3 的 test 中位不可与 R2 直接等同比较。
+4. **测试环境泄漏**：R3 的 6 例失败由 `FLOWLOOP_HOME=/root/.flowloop` 全局变量 + 固定 domainID/goalID 残留造成，任何未设该变量的机器不复现；因此 R3 的 test 中位不可与 R2 直接等同比较。
 5. **口径变更本身改变可比性**：R2 冷测 44.417s 是首次冷列记录，与 R1 无冷列基线之间只能单向参照。
 6. **未做重复测量统计**：冷构建每轮仅 1 次，无 min/max；温 build/test 为 3 连跑中位。
 
@@ -450,7 +450,7 @@ go test ./internal/service -count=1 -v | grep -E "SKIP:|missing from"
 
 # 4) 包级耗时提取
 grep -E "^ok" /tmp/opencode/test-r2-run3.txt | sort -k2
-# → daemon 5.911s / ouroflow-cli 4.530s / service 4.456s / notify 0.925s / issue 0.419s / backup 0.297s / link 0.075s / server 0.061s / acp 0.056s / handler 0.049s ...
+# → daemon 5.911s / flowloop-cli 4.530s / service 4.456s / notify 0.925s / issue 0.419s / backup 0.297s / link 0.075s / server 0.061s / acp 0.056s / handler 0.049s ...
 
 # 5) P1 核对
 grep -c "t.Parallel()" internal/daemon/*_test.go   # → 2+8+30+11+3+4+12 = 70
@@ -460,7 +460,7 @@ grep -c "t.Parallel()" internal/daemon/*_test.go   # → 2+8+30+11+3+4+12 = 70
 
 ```bash
 # 基线确认（只读）
-cd /root/.ouroflow/runs/goal/357252be…/sg/…/6d704bc6f96289e41e5fa2d06ee4131c
+cd /root/.flowloop/runs/goal/357252be…/sg/…/6d704bc6f96289e41e5fa2d06ee4131c
 git log --oneline -1        # → e7c2572 docs: R1/R2 自迭代交付物迁移至新基线
 git diff --stat             # → 空（未改任何代码）
 
@@ -484,15 +484,15 @@ grep -E "^--- FAIL" /tmp/opencode/r3b-test-run3.txt
 grep -E "^ok " /tmp/opencode/r3b-test-run3.txt | sort -k3 -rn | head -10
 
 # 5) 根因 A 证据
-git -C /root/.ouroflow/repos/dom-1 remote -v
+git -C /root/.flowloop/repos/dom-1 remote -v
 # → origin file:///tmp/TestGitWorkdirAndTransferPush2535588731/002/bare.git（已删除）
-env | grep ^OUROFLOW_HOME   # → /root/.ouroflow（全局泄漏）
+env | grep ^FLOWLOOP_HOME   # → /root/.flowloop（全局泄漏）
 # 对照：手动 bare.git + clone + push + ls-remote file:// 全部 rc=0（git 2.33.0 无问题）
 
 # 6) 根因 B 证据（单跑复现）
 go test ./internal/daemon -count=1 -run 'TestCollectDigestBatchWritesAndIsIdempotent' -v
 # → INFO digest: goal g-1 batch already collected — skipping append；--- FAIL（稳定复现）
-ls /root/.ouroflow/digest/g-1/   # → 1.md（跨运行共享目录残留）
+ls /root/.flowloop/digest/g-1/   # → 1.md（跨运行共享目录残留）
 
 # 7) 交叉印证（上轮被取消 sg-REBENCH 的残留数据，非正式采信）
 grep -E "^--- FAIL" /tmp/opencode/r3-test-run1.txt   # → 同样 6 例

@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Sinkear/ouroflow/internal/link"
+	"github.com/Sinkear/flowloop/internal/link"
 )
 
 // fakeRefreshPeer registers a machine peer that answers machine.models_refresh

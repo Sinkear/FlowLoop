@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // TestOwnerRunTriggeredByHumanReplyWakeLine (决策 7-3): an owner run whose
@@ -155,13 +155,13 @@ func TestOwnerReplyWakeupCarriesPreviousAsk(t *testing.T) {
 	// parent — what the user is answering). Without this the owner cannot
 	// tell which of its questions the reply addresses. The parent comment's
 	// id is injected as the anchor so the owner can re-pull the full thread
-	// via `ouroflow goal comments --after <id>` if the snippet is not
+	// via `flowloop goal comments --after <id>` if the snippet is not
 	// enough — no truncateIn (a cut snippet with no anchor was worse than a
 	// longer prompt).
 	if !strings.Contains(prompt, "Your previous comment (comment "+askID+" — the user is replying to this") {
 		t.Fatalf("owner reply wake must label the previous-comment context with the parent comment id, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "ouroflow goal comments --after "+askID) {
+	if !strings.Contains(prompt, "flowloop goal comments --after "+askID) {
 		t.Fatalf("owner reply wake must expose the parent comment id as a pull anchor, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, askText) {

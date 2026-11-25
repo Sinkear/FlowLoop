@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
+	"github.com/Sinkear/flowloop/internal/events"
 )
 
 // TestReviewingEventText: a goal:reviewing event produces the approval

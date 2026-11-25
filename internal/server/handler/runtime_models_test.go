@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/daemon"
-	"github.com/Sinkear/ouroflow/internal/service"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/daemon"
+	"github.com/Sinkear/flowloop/internal/service"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // modelsResponse mirrors the GET /runtimes/{id}/models contract exactly:

@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/paths"
-	"github.com/Sinkear/ouroflow/internal/service"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/paths"
+	"github.com/Sinkear/flowloop/internal/service"
 )
 
 // digestMu serializes articles.json read-modify-writes across concurrent
@@ -139,7 +139,7 @@ func (d *Daemon) maybePickDigestExecutor(ctx context.Context, scheduleID, assign
 
 // ── collection (run finish) ──
 
-// digestRoot is where collected articles land: $OUROFLOW_HOME/digest/. The
+// digestRoot is where collected articles land: $FLOWLOOP_HOME/digest/. The
 // daemon host's filesystem is what the reading frontend can reach (the
 // artifacts arrive over the link — the sandbox is opaque to us).
 func digestRoot() string {

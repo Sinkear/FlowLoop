@@ -267,7 +267,7 @@ function CreateHookDialog({ onClose }: { onClose: () => void }) {
         </Field>
         <Field
           label="默认参数"
-          hint="扁平 {参数名: 值}。注入三通道：stdin payload 的 params 键、OUROFLOW_HOOK_PARAMS（完整 JSON）、OUROFLOW_PARAM_<参数名>（扁平 env）。绑定时可按绑定覆盖"
+          hint="扁平 {参数名: 值}。注入三通道：stdin payload 的 params 键、FLOWLOOP_HOOK_PARAMS（完整 JSON）、FLOWLOOP_PARAM_<参数名>（扁平 env）。绑定时可按绑定覆盖"
         >
           <ParamsEditor value={params} onChange={setParams} />
         </Field>
@@ -486,7 +486,7 @@ function EditHookMetaDialog({ item, onClose }: { item: HookListItem; onClose: ()
             />
           </Field>
         </div>
-        <Field label="默认参数" hint="保存即整体替换；脚本通过 stdin params / OUROFLOW_HOOK_PARAMS / OUROFLOW_PARAM_<名> 三通道读取">
+        <Field label="默认参数" hint="保存即整体替换；脚本通过 stdin params / FLOWLOOP_HOOK_PARAMS / FLOWLOOP_PARAM_<名> 三通道读取">
           <ParamsEditor value={params} onChange={setParams} />
         </Field>
         {updateMeta.isError && <p className="text-sm text-red-400">{String(updateMeta.error)}</p>}

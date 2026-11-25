@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // noisyShapeGoal: a done infer goal whose WORK SKELETON matches

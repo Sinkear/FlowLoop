@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 
 // 浏览器只打同源的 Next 服务：/backend/* 由 Next 服务端转发给本机 daemon
-// （默认 47813，可用 OUROFLOW_DAEMON_PORT 在构建时覆盖），反代 Web 端口
+// （默认 47813，可用 FLOWLOOP_DAEMON_PORT 在构建时覆盖），反代 Web 端口
 // 出去时用户无需直连 daemon（CORS 也随之无关）。/ws 也走同源：Next 的
 // rewrite 代理（dev/多数 prod 版本）转发 WebSocket upgrade；若部署形态
 // 不支持，则在反代层加一条 /ws → daemon/ws（需 Upgrade/Connection 透传）。
-const daemonPort = process.env.OUROFLOW_DAEMON_PORT || "47813";
+const daemonPort = process.env.FLOWLOOP_DAEMON_PORT || "47813";
 const daemonBase = `http://localhost:${daemonPort}`;
 
 const nextConfig: NextConfig = {

@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sinkear/ouroflow/internal/events"
-	"github.com/Sinkear/ouroflow/internal/logging"
-	"github.com/Sinkear/ouroflow/internal/store"
+	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
+	"github.com/Sinkear/flowloop/internal/store"
 )
 
 // Blueprint Phase A (docs/BLUEPRINT-PROPOSAL.md): the serialized orchestration
