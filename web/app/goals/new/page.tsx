@@ -239,10 +239,12 @@ export default function NewGoalPage() {
     return () => window.clearTimeout(timer);
   }, [st.phase]);
 
-  // 深链：蓝图详情「用此版本新建任务」直达这里。管家对话不吃蓝图参数，
-  // 直接展开手动表单并预选该版本（NewGoalForm 读同一个 ?blueprint= 参数）。
+  // 深链：?form=1 / ?project= / ?blueprint= 直接展开手动表单。
+  // 工作台、项目详情和任务板的「新建任务」都走这条入口——先填表，
+  // 不让用户先和管家对话再找「手动填写」。
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("blueprint")) setManual(true);
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("form") === "1" || q.get("project") || q.get("blueprint")) setManual(true);
   }, []);
 
   // 建成功 → 切回对应视图：任务进详情，项目/团队/智能体/蓝本回各自列表。

@@ -41,7 +41,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
-      <body className="min-h-full flex flex-row bg-surface-0">
+      <body className="min-h-full flex flex-col bg-surface-0 md:flex-row">
         <Providers>
           <Nav />
           <main className="flex-1 overflow-auto">

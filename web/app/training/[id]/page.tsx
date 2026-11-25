@@ -14,7 +14,14 @@ import {
   Segmented,
   Skeleton,
 } from "@/components/ui";
-import { useRetryRsiSession, useRsiDetail } from "@/lib/queries";
+import {
+  useAgents,
+  useDomains,
+  useGoal,
+  useRetryRsiSession,
+  useRsiDetail,
+  useSquads,
+} from "@/lib/queries";
 import { TrainingOverview } from "@/components/training/overview";
 import { TrainingFindings } from "@/components/training/findings";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
@@ -39,6 +46,81 @@ const RETRYABLE = ["waiting", "failed", "ready"];
 // 分析进行中页面靠轮询刷新；这里只用于文案。
 const IN_FLIGHT = ["waiting", "analyzing"];
 
+// 复盘头部上下文：会话行只带 goal_id / domain_id，项目名、小队名与工作流版本
+// 要从 goal + domains/squads/agents 里 join。拆成独立组件，useGoal 才只在
+// 会话确实关联任务时挂载（goal_id 为空时不发请求）。
+function ReviewContext({
+  goalId,
+  fallbackDomainId,
+}: {
+  goalId: string;
+  fallbackDomainId: string;
+}) {
+  const { data: goal } = useGoal(goalId);
+  const { data: domains } = useDomains();
+  const { data: squads } = useSquads();
+  const { data: agents } = useAgents();
+
+  const domainId = goal?.domain_id || fallbackDomainId;
+  const domain = domains?.find((d) => d.id === domainId);
+  const squad =
+    goal?.assignee_type === "squad"
+      ? squads?.find((s) => s.id === goal.assignee_id)
+      : undefined;
+  const agent =
+    goal?.assignee_type === "agent"
+      ? agents?.find((a) => a.id === goal.assignee_id)
+      : undefined;
+  const version = goal?.blueprint_version_id ?? "";
+  // goal 尚未加载完时只显示占位，不把 assignee_type 猜成小队/单干。
+  const squadText = squad?.name
+    ? squad.name
+    : goal
+      ? goal.assignee_type === "squad"
+        ? "已删除小队"
+        : "不适用（单干）"
+      : "—";
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
+      <span>
+        项目{" "}
+        {domainId ? (
+          <Link
+            href={`/projects/${domainId}`}
+            className="text-ink-2 transition-colors hover:text-accent"
+            title={domain?.name || domainId}
+          >
+            {domain?.name || domainId.slice(0, 8)}
+          </Link>
+        ) : (
+          <span className="text-ink-2">—</span>
+        )}
+      </span>
+      <span>
+        小队 <span className="text-ink-2">{squadText}</span>
+      </span>
+      {agent && (
+        <span>
+          执行者 <span className="text-ink-2">{agent.name}</span>
+        </span>
+      )}
+      <span>
+        工作流版本{" "}
+        {version ? (
+          <span className="font-mono text-ink-2" title={version}>
+            {version.slice(0, 8)}
+          </span>
+        ) : (
+          <span className="text-ink-2">
+            {goal ? "未使用蓝本（自动拆解）" : "—"}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export default function TrainingDetailPage() {
   const params = useParams<{ id: string }>();
   const raw = params?.id;
@@ -50,15 +132,15 @@ export default function TrainingDetailPage() {
   const [retryErr, setRetryErr] = useState("");
 
   const back = (
-    <Link href="/training" className="text-xs text-ink-3 transition-colors hover:text-ink-2">
-      ← 返回训练分析
+    <Link href="/" className="text-xs text-ink-3 transition-colors hover:text-ink-2">
+      ← 工作台
     </Link>
   );
 
   if (isLoading) {
     return (
       <PageBody>
-        <PageHeader title="训练会话" desc="执行分析详情" action={back} />
+        <PageHeader title="复盘" desc="复盘是一次执行的镜子，不是评分" action={back} />
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -69,10 +151,10 @@ export default function TrainingDetailPage() {
   if (isError || !detail) {
     return (
       <PageBody>
-        <PageHeader title="训练会话" desc="执行分析详情" action={back} />
+        <PageHeader title="复盘" desc="复盘是一次执行的镜子，不是评分" action={back} />
         <SectionCard bodyClassName="p-0">
           <Empty>
-            找不到这个训练会话，可能已被删除，或后端尚未部署 RSI 接口。
+            找不到这个复盘会话，可能已被删除，或后端尚未部署 RSI 接口。
             {isError && (
               <span className="mt-2 block font-mono text-[11px] text-red-300">
                 {error instanceof Error ? error.message : String(error)}
@@ -123,8 +205,8 @@ export default function TrainingDetailPage() {
   return (
     <PageBody>
       <PageHeader
-        title={session.goal_title || "训练会话"}
-        desc={`会话 ${session.id.slice(0, 8)} · 训练模式的执行分析`}
+        title={session.goal_title || "复盘"}
+        desc={`复盘是一次执行的镜子，不是评分 · 会话 ${session.id.slice(0, 8)}`}
         action={
           <div className="flex items-center gap-3">
             {back}
@@ -147,6 +229,10 @@ export default function TrainingDetailPage() {
           </div>
         }
       />
+
+      {session.goal_id && (
+        <ReviewContext goalId={session.goal_id} fallbackDomainId={session.domain_id} />
+      )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-3">
         <Badge status={status} />
@@ -174,7 +260,7 @@ export default function TrainingDetailPage() {
         <p className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[11px] leading-relaxed text-ink-3">
           本次会话被跳过：运行模式为推理（infer），或采样未命中（会话采样率
           {session.sample_rate === 1 ? "100%" : `${Math.round(session.sample_rate * 100)}%`}
-          ），没有执行训练分析，因此没有报告与图快照。重跑只对 waiting / failed / ready
+          ），没有执行复盘分析，因此没有报告与图快照。重跑只对 waiting / failed / ready
           开放，跳过会话不可重跑。
         </p>
       )}
@@ -200,7 +286,7 @@ export default function TrainingDetailPage() {
           options={[
             { value: "overview", label: "概览" },
             { value: "findings", label: `发现${displayFindingCount ? ` ${displayFindingCount}` : ""}` },
-            { value: "workflow", label: `编排${displayNodeCount ? ` ${displayNodeCount}` : ""}` },
+            { value: "workflow", label: `工作流${displayNodeCount ? ` ${displayNodeCount}` : ""}` },
             { value: "insights", label: "洞察" },
           ]}
         />
@@ -217,7 +303,7 @@ export default function TrainingDetailPage() {
       {tab === "findings" && <TrainingFindings detail={detail} />}
       {tab === "workflow" && (
         <SectionCard
-          title="编排图"
+          title="工作流图"
           count={displayNodeCount || undefined}
           desc={
             status === "analyzing"
@@ -225,12 +311,12 @@ export default function TrainingDetailPage() {
                 ? "重跑分析中；下方是上一次分析冻结的快照，完成后才会更新为本次快照，旧报告指标暂不展示"
                 : "当前实时编排图；分析完成后才会冻结为只读快照，分析期间不展示报告指标"
               : status === "waiting"
-                ? "任务进入终态后会冻结编排图并用于训练分析"
+                ? "任务进入终态后会冻结编排图并用于复盘分析"
                 : status === "failed"
                   ? "分析失败；下方图仅用于查看编排结构，旧报告指标已隐藏"
                   : workflow?.frozen
                     ? "任务终态时冻结的只读 DAG；关键路径节点高亮，绿色连线为关键路径"
-                    : "实时编排图；任务终态后冻结并用于训练分析"
+                    : "实时编排图；任务终态后冻结并用于复盘分析"
           }
           bodyClassName="p-0"
         >

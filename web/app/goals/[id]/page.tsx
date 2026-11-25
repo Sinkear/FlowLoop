@@ -3,8 +3,8 @@
 import { Suspense, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment, useEnvChanges } from "@/lib/queries";
+import { AlertTriangle, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment, useEnvChanges, useRsiSessions } from "@/lib/queries";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalRuns } from "@/components/goal-runs";
@@ -381,6 +381,87 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
   );
 }
 
+// 终态复盘卡（Phase A）：复盘会话只在「训练」模式任务激活时由
+// RSI EnsureSession 创建（internal/service/rsi.go:154）。因此终态却没有
+// 会话 = 本次未开启复盘，而不是“分析失败”。提案由分析在分析时自动生成，
+// 这里只陈述生成时机，不暗示与发现确认有关，也不编造提案条数。
+const REVIEW_TERMINAL = new Set(["done", "failed", "cancelled"]);
+
+function ReviewCard({ goal }: { goal: Goal }) {
+  const { data: sessions, isLoading } = useRsiSessions();
+  // 一个 goal 只会有一个会话（EnsureSession 幂等），find 足够；轮询仍由 query 负责。
+  const session = sessions?.find((s) => s.goal_id === goal.id);
+  const terminal = REVIEW_TERMINAL.has(goal.status);
+  // 会话列表还没回来时不能断言「本次未开启复盘」——那会把加载中误报成没有复盘。
+  if (!session && (isLoading || !sessions)) return null;
+  if (!session && !terminal) return null;
+
+  const noBlueprint = !goal.blueprint_version_id;
+  const view = session ? (
+    <Link
+      href={`/training/${session.id}`}
+      className="inline-flex items-center gap-0.5 text-xs text-ink-2 transition-colors hover:text-accent"
+    >
+      查看复盘
+      <ArrowUpRight className="h-3 w-3" />
+    </Link>
+  ) : null;
+
+  return (
+    <SectionCard title="复盘" action={view}>
+      {session ? (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge status={session.status} />
+            {session.status === "ready" ? (
+              <span className="text-sm text-ink-2">
+                复盘已生成：
+                <span className="font-mono tabular-nums text-ink">{fmtInt(session.finding_count)}</span>{" "}
+                个发现
+              </span>
+            ) : session.status === "analyzing" ? (
+              <span className="text-sm text-ink-2">
+                分析中：复盘正在分析编排图，页面会自动刷新；完成后可查看发现。
+              </span>
+            ) : session.status === "waiting" ? (
+              <span className="text-sm text-ink-2">
+                等待中：任务进入终态后才会冻结编排图并开始分析。
+              </span>
+            ) : session.status === "failed" ? (
+              <span className="text-sm text-ink-2">
+                复盘分析失败{session.error ? `：${session.error}` : "，没有可展示的发现"}。
+              </span>
+            ) : (
+              <span className="text-sm text-ink-2">
+                本次复盘被跳过（未开启复盘或采样未命中），没有分析报告。
+              </span>
+            )}
+          </div>
+          {session.status === "ready" && !noBlueprint && (
+            <p className="text-xs leading-relaxed text-ink-3">
+              提案在分析完成时自动生成（本任务绑定了工作流）。
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <p className="text-sm text-ink-2">
+            本次未开启复盘。适合一次性/探索性任务；不会产生优化提案。
+          </p>
+          <p className="text-xs leading-relaxed text-ink-3">
+            复盘只在勾选「完成后生成复盘」的任务上开启；这次执行没有复盘会话，因此也不会产生提案。
+          </p>
+        </div>
+      )}
+      {noBlueprint && (
+        <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
+          本次没有使用蓝本，发现不会自动转成提案；可把这次执行固化成蓝本（后续）。
+        </p>
+      )}
+    </SectionCard>
+  );
+}
+
 function GoalDetailPageInner() {
   useGoalEvents();
   const params = useParams<{ id: string }>();
@@ -418,6 +499,8 @@ function GoalDetailPageInner() {
     : goal.assignee_id
       ? (agentName(goal.assignee_id) || goal.assignee_id)
       : "-";
+  const domain = domains?.find((d) => d.id === goal.domain_id);
+  const projectName = domain?.name || (goal.domain_id ? "未知项目" : "—");
 
   return (
     <PageBody>
@@ -437,13 +520,29 @@ function GoalDetailPageInner() {
           <AttentionChip attention={goal.attention} />
           <GoalStatusBar goalId={id} goalStatus={goal.status} />
         </div>
-        <p className="text-sm text-ink-3 mt-1">
-          分配给：{assigneeLabel}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
+          <span>
+            项目{" "}
+            {goal.domain_id ? (
+              <Link
+                href={`/projects/${goal.domain_id}`}
+                className="text-ink-2 transition-colors hover:text-accent"
+                title={domain?.name || goal.domain_id}
+              >
+                {projectName}
+              </Link>
+            ) : (
+              <span className="text-ink-2">—</span>
+            )}
+          </span>
+          <span>
+            分配给：<span className="text-ink-2">{assigneeLabel}</span>
+            {goal.assignee_type === "squad" ? "（小队）" : goal.assignee_type === "agent" ? "（agent）" : ""}
+          </span>
+        </div>
         <p className="text-xs text-ink-3 mt-1">
           验收级别优先级：任务级覆盖 &gt; 项目默认 &gt; 平台默认（HITL）。
           {(() => {
-            const domain = domains?.find((d) => d.id === goal.domain_id);
             const source = !domain
               ? "平台默认"
               : domain.acceptance_level === goal.category
@@ -454,10 +553,14 @@ function GoalDetailPageInner() {
             return <span className="ml-1 text-ink-2">当前：{source}</span>;
           })()}
         </p>
-        {goal.blueprint_version_id && (
+        {goal.blueprint_version_id ? (
           <p className="text-xs text-ink-3 mt-1">
-            蓝本：<span className="font-mono">{goal.blueprint_version_id}</span>
+            蓝本版本：<span className="font-mono" title={goal.blueprint_version_id}>{goal.blueprint_version_id}</span>
             （激活时按规范图编译；子任务创建被结构拒绝）
+          </p>
+        ) : (
+          <p className="text-xs text-ink-3 mt-1">
+            执行方式：自动拆解（未使用蓝本）
           </p>
         )}
         {goal.source_ref && (
@@ -475,6 +578,9 @@ function GoalDetailPageInner() {
           </div>
         )}
       </div>
+
+      {/* 终态复盘：已生成 / 进行中 / 未开启三种情况都在这里说清楚 */}
+      <ReviewCard goal={goal} />
 
       {/* Actions + 执行流入口 */}
       <div className="flex items-start gap-2 flex-wrap">
@@ -524,11 +630,11 @@ function GoalDetailPageInner() {
       {/* scratch 环境变更账本（BUG-4 P2）：有记录才渲染 */}
       <EnvChangesCard goalId={id} />
 
-      {/* 编排：live DAG（训练分析里冻结的是同一张图的终态版本） */}
+      {/* 编排：live DAG（复盘分析里冻结的是同一张图的终态版本） */}
       <SectionCard
         title="编排"
         count={workflow?.nodes?.length}
-        desc="只读编排图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后训练分析会冻结同一张图"
+        desc="只读编排图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后复盘分析会冻结同一张图"
         bodyClassName="p-0"
       >
         <WorkflowGraphView

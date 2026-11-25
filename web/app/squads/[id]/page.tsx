@@ -17,6 +17,7 @@ import {
   useDomains,
   useConnections,
   useGoals,
+  useBlueprints,
 } from "@/lib/queries";
 import {
   Button,
@@ -24,6 +25,7 @@ import {
   PageHeader,
   SectionCard,
   StatStrip,
+  Segmented,
   Empty,
   Skeleton,
   Dialog,
@@ -34,7 +36,22 @@ import { Users, Trash2, BookA } from "lucide-react";
 import { cn, relTime } from "@/lib/utils";
 import type { SquadMember } from "@/lib/types";
 import { SquadConnections } from "@/components/squad-connections";
-import { SquadWorkflows } from "@/components/training/squad-workflows";
+import { SquadRecentExecutions } from "@/components/squads/squad-recent-executions";
+import { SquadBlueprints } from "@/components/squads/squad-blueprints";
+import { SquadReviews } from "@/components/squads/squad-reviews";
+
+// 小队详情最多 6 个 tab（IA 4.5）。「工作流」在 Phase A 仍是全局蓝本，
+// tab 标签直接写明迁移中，避免把全局概念伪装成本队归属。
+type SquadTab = "overview" | "members" | "workflows" | "reviews" | "access" | "settings";
+
+const SQUAD_TABS: { value: SquadTab; label: string }[] = [
+  { value: "overview", label: "概览" },
+  { value: "members", label: "成员" },
+  { value: "workflows", label: "工作流（蓝本迁移中）" },
+  { value: "reviews", label: "复盘" },
+  { value: "access", label: "接入" },
+  { value: "settings", label: "设置" },
+];
 
 export default function SquadDetailPage() {
   useGoalEvents();
@@ -46,8 +63,10 @@ export default function SquadDetailPage() {
   const { data: goals } = useGoals();
   const { data: domains } = useDomains();
   const { data: connections } = useConnections(id);
+  const { data: blueprints } = useBlueprints();
   const updateSquad = useUpdateSquad();
   const removeMember = useRemoveSquadMember();
+  const [tab, setTab] = useState<SquadTab>("overview");
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState("");
@@ -77,14 +96,34 @@ export default function SquadDetailPage() {
   );
   const activeGoals = squadGoals.filter((g) => g.status === "active").length;
   const reviewGoals = squadGoals.filter((g) => g.status === "review").length;
+  // 迁移期「工作流数」= 全局蓝本数；已发布数单独说明，免得被读成「本队 5 条工作流」。
+  const publishedBlueprintCount = (blueprints ?? []).filter((b) => !!b.latest_version_id).length;
 
-  const openEdit = () => {
+  const syncEditForm = () => {
     if (!squad) return;
     setEditName(squad.name);
     setEditLeader(squad.leader_id);
     setEditDesc(squad.description || "");
     setEditInstr(squad.instructions || "");
+  };
+
+  // 切 tab 时同步设置表单：进去总是当前数据，且不在输入过程中被后台刷新覆盖。
+  const changeTab = (next: SquadTab) => {
+    if (next === "settings") syncEditForm();
+    setTab(next);
+  };
+
+  const openEdit = () => {
+    syncEditForm();
     setShowEdit(true);
+  };
+
+  // 设置 tab 与编辑对话框共用同一份表单与 mutation。
+  const saveSquad = (onSuccess?: () => void) => {
+    updateSquad.mutate(
+      { id, name: editName, description: editDesc, leader_id: editLeader, instructions: editInstr },
+      { onSuccess }
+    );
   };
 
   if (!squad) {
@@ -133,15 +172,30 @@ export default function SquadDetailPage() {
       <StatStrip
         items={[
           {
-            label: "成员数",
-            value: members?.length ?? 0,
-            hint: reviewerCount > 0 ? `${reviewerCount} 名 reviewer` : "agent / human 成员",
+            label: "Leader",
+            value: (
+              <span className="block truncate" title={agentName(squad.leader_id)}>
+                {agentName(squad.leader_id)}
+              </span>
+            ),
+            hint: "接任务并分派给成员",
           },
           {
-            label: "负责仓库",
+            label: "成员",
+            value: members?.length ?? 0,
+            hint: `${agentMembers} agent · ${humanMembers} human${reviewerCount > 0 ? ` · ${reviewerCount} reviewer` : ""}`,
+          },
+          {
+            label: "服务项目",
             value: boundRepoCount,
             tone: boundRepoCount > 0 ? "info" : "muted",
-            hint: `${connections?.length ?? 0} 条连接 · 共跟踪 ${trackedRepoCount} 个仓库`,
+            hint: `${connections?.length ?? 0} 条仓库连接 · 共跟踪 ${trackedRepoCount} 个仓库`,
+          },
+          {
+            label: "工作流",
+            value: blueprints?.length ?? 0,
+            tone: (blueprints?.length ?? 0) > 0 ? "info" : "muted",
+            hint: `${publishedBlueprintCount} 个已发布 · 全局蓝本`,
           },
           {
             label: "进行中任务",
@@ -152,143 +206,200 @@ export default function SquadDetailPage() {
         ]}
       />
 
-      {/* 小队信息：leader / 创建时间 / 成员构成 / instructions */}
-      <SectionCard
-        title="概览"
-        desc="Leader 接任务并分派给成员；instructions 会注入 leader 的运行"
-      >
-        <dl className="divide-y divide-line">
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <dt className="text-xs text-ink-3">Leader</dt>
-            <dd className="truncate text-sm text-ink-2">{agentName(squad.leader_id)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <dt className="text-xs text-ink-3">成员构成</dt>
-            <dd className="font-mono text-xs text-ink-2">
-              {members?.length ?? 0} 人（agent {agentMembers} · human {humanMembers}）
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <dt className="text-xs text-ink-3">创建时间</dt>
-            <dd className="font-mono text-xs text-ink-2" title={squad.created_at}>
-              {new Date(squad.created_at).toLocaleString()}
-            </dd>
-          </div>
-        </dl>
-        {squad.instructions && (
-          <div className="border-t border-line px-4 py-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3">
-              Instructions
-            </div>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">
-              {squad.instructions}
-            </p>
-          </div>
-        )}
-      </SectionCard>
+      {/* 窄屏允许横向滚动：6 个 tab 里「工作流（蓝本迁移中）」较长，不能让整页溢出 */}
+      <div className="-mx-1 overflow-x-auto px-1">
+        <div className="w-max">
+          <Segmented value={tab} onChange={changeTab} options={SQUAD_TABS} />
+        </div>
+      </div>
 
-      {/* Members */}
-      <SectionCard
-        title="成员"
-        count={members?.length ?? 0}
-        desc="leader 由 squad 自身指定；reviewer 在进审批时被平台自动拉入"
-        bodyClassName="p-0"
-        action={
-          <Button onClick={() => setShowAdd(true)} className="h-7 px-2.5 text-xs">
-            + 添加
-          </Button>
-        }
-      >
-        {isLoading ? (
-          <div className="divide-y divide-line">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                <Skeleton className="h-5 w-12" />
-                <Skeleton className="h-3 w-48" />
+      {tab === "overview" && (
+        <div className="space-y-6">
+          {/* 小队信息：leader / 创建时间 / 成员构成 / instructions */}
+          <SectionCard
+            title="概览"
+            desc="Leader 接任务并分派给成员；instructions 会注入 leader 的运行"
+          >
+            <dl className="divide-y divide-line">
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-xs text-ink-3">Leader</dt>
+                <dd className="truncate text-sm text-ink-2">{agentName(squad.leader_id)}</dd>
               </div>
-            ))}
-          </div>
-        ) : !members || members.length === 0 ? (
-          <Empty icon={<Users className="h-4 w-4" />}>
-            暂无成员。点「+ 添加」把 agent 拉进小队。
-          </Empty>
-        ) : (
-          <ul className="divide-y divide-line">
-            {members.map((m: SquadMember) => {
-              const isLeader = m.member_type === "agent" && m.member_id === squad.leader_id;
-              const memberName =
-                m.member_type === "agent" ? agentName(m.member_id) || m.member_id : m.member_id;
-              return (
-                <li key={m.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium",
-                      m.member_type === "agent"
-                        ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
-                        : "border-line bg-surface-2 text-ink-2",
-                    )}
-                  >
-                    {m.member_type}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm text-ink-2">{memberName}</span>
-                      {isLeader && (
-                        <span className="inline-flex items-center rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                          leader
-                        </span>
-                      )}
-                      {m.role === "reviewer" && (
-                        <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                          reviewer
-                        </span>
-                      )}
-                      {!isLeader && m.role && m.role !== "reviewer" && (
-                        <span className="font-mono text-[10px] text-ink-3">{m.role}</span>
-                      )}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-3">
-                      <span className="font-mono" title={m.member_id}>
-                        {m.member_id.slice(0, 8)}
-                      </span>
-                      <span>·</span>
-                      <span title={new Date(m.created_at).toLocaleString()}>
-                        {relTime(m.created_at)}加入
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => removeMember.mutate({ squadId: id, memberId: m.member_id })}
-                    disabled={removeMember.isPending && removeMember.variables?.memberId === m.member_id}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-red-400 disabled:opacity-40"
-                    title="移除该成员"
-                    aria-label={`移除成员 ${memberName}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </SectionCard>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-xs text-ink-3">成员构成</dt>
+                <dd className="font-mono text-xs text-ink-2">
+                  {members?.length ?? 0} 人（agent {agentMembers} · human {humanMembers}）
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-xs text-ink-3">创建时间</dt>
+                <dd className="font-mono text-xs text-ink-2" title={squad.created_at}>
+                  {new Date(squad.created_at).toLocaleString()}
+                </dd>
+              </div>
+            </dl>
+            {squad.instructions && (
+              <div className="border-t border-line px-4 py-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3">
+                  Instructions
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">
+                  {squad.instructions}
+                </p>
+              </div>
+            )}
+          </SectionCard>
 
-      {/* 成员移除失败必须显示——后端 400 错误静默等于「点了没反应」。 */}
-      {removeMember.isError && (
-        <p className="text-sm text-red-400">{String(removeMember.error)}</p>
+          {/* 编排摘要并进概览：原「编排」tab 去掉后不允许功能凭空消失。 */}
+          <SquadRecentExecutions squadId={id} />
+        </div>
       )}
 
-      {/* 角色词汇表（BLUEPRINT-PROPOSAL §11.8）：能力词注册表。
-          蓝图 capability:<name> 按这里注册的词解析成员；技能差异要编码成
-          不同的词（如 design-implementer / proprietary-implementer）。
-          注册过任何一个词后，成员角色就只能从词表（或保留词 reviewer/member）里选。 */}
-      <SquadRoleRegistry squadId={id} />
+      {tab === "members" && (
+        <div className="space-y-6">
+          {/* Members */}
+          <SectionCard
+            title="成员"
+            count={members?.length ?? 0}
+            desc="leader 由 squad 自身指定；reviewer 在进审批时被平台自动拉入"
+            bodyClassName="p-0"
+            action={
+              <Button onClick={() => setShowAdd(true)} className="h-7 px-2.5 text-xs">
+                + 添加
+              </Button>
+            }
+          >
+            {isLoading ? (
+              <div className="divide-y divide-line">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                    <Skeleton className="h-5 w-12" />
+                    <Skeleton className="h-3 w-48" />
+                  </div>
+                ))}
+              </div>
+            ) : !members || members.length === 0 ? (
+              <Empty icon={<Users className="h-4 w-4" />}>
+                暂无成员。点「+ 添加」把 agent 拉进小队。
+              </Empty>
+            ) : (
+              <ul className="divide-y divide-line">
+                {members.map((m: SquadMember) => {
+                  const isLeader = m.member_type === "agent" && m.member_id === squad.leader_id;
+                  const memberName =
+                    m.member_type === "agent" ? agentName(m.member_id) || m.member_id : m.member_id;
+                  return (
+                    <li key={m.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium",
+                          m.member_type === "agent"
+                            ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                            : "border-line bg-surface-2 text-ink-2",
+                        )}
+                      >
+                        {m.member_type}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm text-ink-2">{memberName}</span>
+                          {isLeader && (
+                            <span className="inline-flex items-center rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                              leader
+                            </span>
+                          )}
+                          {m.role === "reviewer" && (
+                            <span className="inline-flex items-center rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                              reviewer
+                            </span>
+                          )}
+                          {!isLeader && m.role && m.role !== "reviewer" && (
+                            <span className="font-mono text-[10px] text-ink-3">{m.role}</span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-3">
+                          <span className="font-mono" title={m.member_id}>
+                            {m.member_id.slice(0, 8)}
+                          </span>
+                          <span>·</span>
+                          <span title={new Date(m.created_at).toLocaleString()}>
+                            {relTime(m.created_at)}加入
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removeMember.mutate({ squadId: id, memberId: m.member_id })}
+                        disabled={removeMember.isPending && removeMember.variables?.memberId === m.member_id}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-red-400 disabled:opacity-40"
+                        title="移除该成员"
+                        aria-label={`移除成员 ${memberName}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </SectionCard>
 
-      {/* 仓库接入：每条连接是独立 webhook（契约 3.3c / §5），同一仓库可被多个 squad 接入 */}
-      <SquadConnections squadId={id} />
+          {/* 成员移除失败必须显示——后端 400 错误静默等于「点了没反应」。 */}
+          {removeMember.isError && (
+            <p className="text-sm text-red-400">{String(removeMember.error)}</p>
+          )}
 
-      {/* 编排：近期任务的冻结/实时 DAG 摘要（W-RSI v2） */}
-      <SquadWorkflows squadId={id} />
+          {/* 角色词汇表（BLUEPRINT-PROPOSAL §11.8）：能力词注册表。
+              蓝图 capability:<name> 按这里注册的词解析成员；技能差异要编码成
+              不同的词（如 design-implementer / proprietary-implementer）。
+              注册过任何一个词后，成员角色就只能从词表（或保留词 reviewer/member）里选。 */}
+          <SquadRoleRegistry squadId={id} />
+        </div>
+      )}
+
+      {/* 接入：仓库连接与 webhook */}
+      {tab === "access" && <SquadConnections squadId={id} />}
+
+      {/* 工作流：Phase A 仍展示全局蓝本，迁移说明由组件内 banner 承担 */}
+      {tab === "workflows" && <SquadBlueprints />}
+
+      {/* 复盘：本队任务的 RSI session（只有开启复盘的任务才会生成） */}
+      {tab === "reviews" && <SquadReviews squadId={id} />}
+
+      {/* 设置：与编辑对话框共用表单，避免两处字段漂移 */}
+      {tab === "settings" && (
+        <SectionCard
+          title="设置"
+          desc="名称、Leader、描述与 Instructions；Leader 变更会让旧 leader 的 in-flight run 孤儿化"
+          action={
+            <Button
+              onClick={() => saveSquad()}
+              disabled={updateSquad.isPending || !editName.trim() || !editLeader}
+            >
+              {updateSquad.isPending ? "保存中…" : "保存"}
+            </Button>
+          }
+        >
+          <div className="space-y-4 p-4">
+            <SquadBasicFields
+              agents={agents}
+              name={editName}
+              setName={setEditName}
+              leader={editLeader}
+              setLeader={setEditLeader}
+              description={editDesc}
+              setDescription={setEditDesc}
+              instructions={editInstr}
+              setInstructions={setEditInstr}
+            />
+            {updateSquad.isError && (
+              <p className="text-sm text-red-400">{String(updateSquad.error)}</p>
+            )}
+            <p className="text-xs leading-relaxed text-ink-3">
+              角色词汇表在「成员」tab 内维护；仓库连接在「接入」tab。
+            </p>
+          </div>
+        </SectionCard>
+      )}
 
       {/* Add member dialog */}
       {showAdd && (
@@ -307,12 +418,7 @@ export default function SquadDetailPage() {
             <>
               <Button variant="outline" onClick={() => setShowEdit(false)}>取消</Button>
               <Button
-                onClick={() =>
-                  updateSquad.mutate(
-                    { id, name: editName, description: editDesc, leader_id: editLeader, instructions: editInstr },
-                    { onSuccess: () => setShowEdit(false) }
-                  )
-                }
+                onClick={() => saveSquad(() => setShowEdit(false))}
                 disabled={updateSquad.isPending || !editName.trim() || !editLeader}
               >
                 {updateSquad.isPending ? "保存中…" : "保存"}
@@ -321,23 +427,17 @@ export default function SquadDetailPage() {
           }
         >
           <div className="space-y-4">
-            <Field label="名称" hint="必填">
-              <input value={editName} onChange={(e) => setEditName(e.target.value)} className={inputCls} placeholder="Squad 名称…" />
-            </Field>
-            <Field label="Leader" hint="必填，leader 必须是 agent（角色动态生效：旧 leader 的 in-flight run 会孤儿化）">
-              <select value={editLeader} onChange={(e) => setEditLeader(e.target.value)} className={inputCls}>
-                <option value="">选择…</option>
-                {agents?.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="描述">
-              <textarea value={editDesc} onChange={(e) => setEditDesc(e.target.value)} className={inputCls} rows={2} />
-            </Field>
-            <Field label="Instructions" hint="leader 运行时会注入这些 instructions">
-              <textarea value={editInstr} onChange={(e) => setEditInstr(e.target.value)} className={inputCls} rows={3} placeholder="Squad 工作说明…" />
-            </Field>
+            <SquadBasicFields
+              agents={agents}
+              name={editName}
+              setName={setEditName}
+              leader={editLeader}
+              setLeader={setEditLeader}
+              description={editDesc}
+              setDescription={setEditDesc}
+              instructions={editInstr}
+              setInstructions={setEditInstr}
+            />
             {/* 保存失败必须显示——leader 校验等后端 400 错误静默等于「点了没反应」。 */}
             {updateSquad.isError && (
               <p className="text-sm text-red-400">{String(updateSquad.error)}</p>
@@ -346,6 +446,73 @@ export default function SquadDetailPage() {
         </Dialog>
       )}
     </PageBody>
+  );
+}
+
+// SquadBasicFields: 编辑对话框与「设置」tab 共用的基础字段，
+// 避免两处表单各自漂移（尤其 Leader 校验文案）。
+function SquadBasicFields({
+  agents,
+  name,
+  setName,
+  leader,
+  setLeader,
+  description,
+  setDescription,
+  instructions,
+  setInstructions,
+}: {
+  agents?: { id: string; name: string }[];
+  name: string;
+  setName: (v: string) => void;
+  leader: string;
+  setLeader: (v: string) => void;
+  description: string;
+  setDescription: (v: string) => void;
+  instructions: string;
+  setInstructions: (v: string) => void;
+}) {
+  return (
+    <>
+      <Field label="名称" hint="必填">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className={inputCls}
+          placeholder="Squad 名称…"
+        />
+      </Field>
+      <Field
+        label="Leader"
+        hint="必填，leader 必须是 agent（角色动态生效：旧 leader 的 in-flight run 会孤儿化）"
+      >
+        <select value={leader} onChange={(e) => setLeader(e.target.value)} className={inputCls}>
+          <option value="">选择…</option>
+          {agents?.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="描述">
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className={inputCls}
+          rows={2}
+        />
+      </Field>
+      <Field label="Instructions" hint="leader 运行时会注入这些 instructions">
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          className={inputCls}
+          rows={3}
+          placeholder="Squad 工作说明…"
+        />
+      </Field>
+    </>
   );
 }
 

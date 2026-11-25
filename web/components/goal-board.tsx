@@ -11,7 +11,7 @@ import {
   useResolveGoalReview,
 } from "@/lib/queries";
 import { cn, relTime } from "@/lib/utils";
-import type { Agent, Goal, GoalStatus, Squad } from "@/lib/types";
+import type { Agent, Domain, Goal, GoalStatus, Squad } from "@/lib/types";
 
 // 看板的一列。fundamental 的 6 个 GoalStatus 被折叠成 5 列：
 // failed 与 cancelled 同属「已结束」——它们对使用者是同一件事（不再推进了），
@@ -167,10 +167,12 @@ export function GoalBoard({
   goals,
   agents,
   squads,
+  domains,
 }: {
   goals: Goal[];
   agents: Agent[];
   squads: Squad[];
+  domains?: Domain[];
 }) {
   const activate = useActivateGoal();
   const cancel = useCancelGoal();
@@ -224,6 +226,12 @@ export function GoalBoard({
     for (const s of squads) m.set(`squad:${s.id}`, s.name);
     return (g: Goal) => m.get(`${g.assignee_type}:${g.assignee_id}`) || g.assignee_type;
   }, [agents, squads]);
+
+  const projectOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of domains ?? []) m.set(d.id, d.name);
+    return (g: Goal) => m.get(g.domain_id) || "";
+  }, [domains]);
 
   const byCol = useMemo(() => {
     const box: Record<BoardCol, Goal[]> = { backlog: [], active: [], review: [], done: [], closed: [] };
@@ -458,7 +466,12 @@ export function GoalBoard({
                     >
                       <div className="flex items-start gap-2">
                         <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3/60" />
-                        <p className="line-clamp-3 text-[13px] font-medium leading-snug text-ink">{g.title}</p>
+                        <div className="min-w-0">
+                          {projectOf(g) && (
+                            <div className="mb-1 truncate text-[10px] text-ink-3">{projectOf(g)}</div>
+                          )}
+                          <p className="line-clamp-3 text-[13px] font-medium leading-snug text-ink">{g.title}</p>
+                        </div>
                       </div>
 
                       {(g.attention || g.review_phase || g.category) && (

@@ -407,7 +407,7 @@ export default function BlueprintDetailPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {isPublished ? (
                     <Link
-                      href={`/goals/new?blueprint=${selected.id}`}
+                      href={`/goals/new?blueprint=${selected.id}&form=1`}
                       className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
                     >
                       用此版本新建任务 <ArrowRight className="h-3.5 w-3.5" />
@@ -545,7 +545,7 @@ export default function BlueprintDetailPage() {
                   )}
                   {selected.status === "published" && (
                     <Link
-                      href={`/goals/new?blueprint=${selected.id}`}
+                      href={`/goals/new?blueprint=${selected.id}&form=1`}
                       className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
                     >
                       <ArrowRight className="h-3.5 w-3.5" /> 用此版本新建任务

@@ -35,12 +35,22 @@ export function NewGoalForm({
   // 直接把版本钉进表单，省得在对话框里再找一遍。读 window.location 而不是
   // useSearchParams——避开静态预渲染页的 Suspense 边界约束。
   useEffect(() => {
-    const v = new URLSearchParams(window.location.search).get("blueprint");
-    if (v) setBlueprintVersionId(v);
-  }, []);  const [title, setTitle] = useState("");
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("blueprint");
+    if (v) {
+      setBlueprintVersionId(v);
+      setReview(true);
+    }
+  }, []);
+
+  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [domainId, setDomainId] = useState("");
   const [domainErr, setDomainErr] = useState("");
+  useEffect(() => {
+    const project = new URLSearchParams(window.location.search).get("project");
+    if (project && domains?.some((d) => d.id === project)) setDomainId(project);
+  }, [domains]);
   // 验收级别优先级：任务级 > 项目默认 > 平台默认(HITL)。
   // 默认模式「跟随项目」在提交时把项目当前级别固化成任务级值——项目之后
   // 改级别不会回溯已有任务（创建时快照），这样任务页的徽章永远可信。
@@ -54,9 +64,10 @@ export function NewGoalForm({
   const [assigneeType, setAssigneeType] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [assigneeErr, setAssigneeErr] = useState("");
-  // 运行模式与训练高级项（§5.6）：默认推理，高级项只在训练时展开；
-  // 默认值隐藏是因为 90% 的场景不需要动它们。
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>("infer");
+  // 复盘与高级项（§5.6）：复盘默认关闭；选了蓝本后默认打开，可手动关掉。
+  // 执行方式（蓝本 / 自动拆解）和复盘是两件事：可以钉蓝本但不复盘。
+  const [review, setReview] = useState(false);
+  const executionMode: ExecutionMode = review ? "train" : "infer";
   const [contentCapture, setContentCapture] = useState<"redacted" | "none" | "full">("redacted");
   const [budgetUsd, setBudgetUsd] = useState("2");
   const [sampleRatePct, setSampleRatePct] = useState("100");
@@ -222,6 +233,10 @@ export function NewGoalForm({
             onChange={(e) => {
               setAssigneeType(e.target.value);
               setAssigneeId("");
+              if (e.target.value !== "squad") {
+                setBlueprintVersionId("");
+                setReview(false);
+              }
             }}
             className={inputCls}
           >
@@ -254,68 +269,132 @@ export function NewGoalForm({
             </select>
           </Field>
         )}
-        {/* 运行模式：两栏单选卡片（不是下拉——两个选项各带一句解释，选错代价大）。 */}
-        {/* 蓝本绑定（Phase A）：只在有 published 蓝本时出现，默认不绑。 */}
-        {publishedBlueprints.length > 0 && (
-          <Field
-            label="绑定蓝本"
-            hint="可选：激活时按规范图编译子任务，执行顺序由结构保证；不绑则由 owner 动态拆解（infer 模式）"
-          >
-            <select
-              value={blueprintVersionId}
-              onChange={(e) => setBlueprintVersionId(e.target.value)}
-              className={inputCls}
-            >
-              <option value="">不绑定（owner 动态拆解）</option>
-              {publishedBlueprints.map((b) => (
-                <option key={b.latest_version_id} value={b.latest_version_id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        <div className="space-y-1">
-          <span className="block text-xs font-medium text-ink-2">运行模式</span>
-          <div className="grid grid-cols-2 gap-2">
-            {(
-              [
-                { value: "infer", label: "推理", desc: "只记录基础指标（耗时/状态）" },
-                { value: "train", label: "训练", desc: "记录编排与耗时元数据，完成后自动分析" },
-              ] as const
-            ).map((m) => (
-              <label
-                key={m.value}
-                className={cn(
-                  "flex cursor-pointer flex-col gap-1 rounded-md border px-3 py-2 transition-colors duration-150",
-                  executionMode === m.value
-                    ? "border-accent/50 bg-accent/10"
-                    : "border-line bg-surface-2 hover:border-line-strong"
-                )}
-              >
-                <span className="flex items-center gap-2 text-sm font-medium text-ink">
-                  <input
-                    type="radio"
-                    name="execution_mode"
-                    value={m.value}
-                    checked={executionMode === m.value}
-                    onChange={() => setExecutionMode(m.value)}
-                    className="accent-accent"
-                  />
-                  {m.label}
-                </span>
-                <span className="pl-5 text-[11px] leading-relaxed text-ink-3">{m.desc}</span>
-              </label>
-            ))}
+        {/* 执行方式与复盘拆开：蓝本回答“怎么干”，复盘回答“跑完要不要看”。 */}
+        <div className="space-y-3 rounded-md border border-line bg-surface-2/30 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium text-ink-2">执行方式</div>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink-3">
+                用蓝本时，平台在任务开始时把步骤编译成固定结构；自动拆解则由负责人边做边拆。
+              </p>
+            </div>
           </div>
-          <span className="block text-xs text-ink-3">
-            训练模式记录执行编排与耗时元数据，用于“哪块慢”的分析；不训练模型权重，也不保存对话正文。
-          </span>
+
+          {assigneeType === "squad" ? (
+            <>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-1 rounded-md border px-3 py-2 transition-colors",
+                    blueprintVersionId
+                      ? "border-accent/50 bg-accent/10"
+                      : "border-line bg-surface-1 hover:border-line-strong",
+                    publishedBlueprints.length === 0 && "cursor-not-allowed opacity-60"
+                  )}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <input
+                      type="radio"
+                      name="execution_style"
+                      checked={!!blueprintVersionId}
+                      disabled={publishedBlueprints.length === 0}
+                      onChange={() => {
+                        const first = publishedBlueprints[0];
+                        if (first?.latest_version_id) {
+                          setBlueprintVersionId(first.latest_version_id);
+                          setReview(true);
+                        }
+                      }}
+                      className="accent-accent"
+                    />
+                    使用蓝本
+                  </span>
+                  <span className="pl-5 text-[11px] leading-relaxed text-ink-3">
+                    步骤和依赖按蓝本固定编译，负责人只监控和收口。
+                  </span>
+                </label>
+
+                <label
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-1 rounded-md border px-3 py-2 transition-colors",
+                    !blueprintVersionId
+                      ? "border-accent/50 bg-accent/10"
+                      : "border-line bg-surface-1 hover:border-line-strong"
+                  )}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <input
+                      type="radio"
+                      name="execution_style"
+                      checked={!blueprintVersionId}
+                      onChange={() => {
+                        setBlueprintVersionId("");
+                        setReview(false);
+                      }}
+                      className="accent-accent"
+                    />
+                    自动拆解
+                  </span>
+                  <span className="pl-5 text-[11px] leading-relaxed text-ink-3">
+                    不预设步骤，负责人按目标自己拆给人；平台只记录实际结构。
+                  </span>
+                </label>
+              </div>
+
+              {blueprintVersionId && (
+                <select
+                  value={blueprintVersionId}
+                  onChange={(e) => {
+                    setBlueprintVersionId(e.target.value);
+                    setReview(true);
+                  }}
+                  className={inputCls}
+                >
+                  {publishedBlueprints.map((b) => (
+                    <option key={b.latest_version_id} value={b.latest_version_id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {publishedBlueprints.length === 0 ? (
+                <p className="text-[11px] text-ink-3">
+                  还没有已发布的蓝本，这次只能自动拆解。蓝本入口在「资源」里，迁移完成后会收进小队。
+                </p>
+              ) : (
+                <p className="text-[11px] text-ink-3">
+                  小队默认工作流要等工作流归属迁移完成；当前先手动选。选了蓝本后复盘默认打开，可以关掉。
+                </p>
+              )}
+            </>
+          ) : assigneeType === "agent" ? (
+            <p className="text-[12px] text-ink-3">
+              单 Agent 只会自动拆解：它自己决定怎么拆、拆几步，不能钉蓝本。需要固定流程时，把活派给一支小队。
+            </p>
+          ) : (
+            <p className="text-[12px] text-ink-3">先选负责人，再决定用不用蓝本。</p>
+          )}
+
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-line bg-surface-1 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={review}
+              onChange={(e) => setReview(e.target.checked)}
+              className="mt-0.5 accent-accent"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm text-ink">完成后生成复盘</span>
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-3">
+                复盘读这次执行的实际图，找卡点和可改的流程；不是训练模型，也不保存对话正文。小队 + 蓝本默认开，自动拆解默认关。
+              </span>
+            </span>
+          </label>
         </div>
 
-        {executionMode === "train" && (
+        {review && (
           <div className="space-y-3 rounded-md border border-line bg-surface-2/40 p-3">
-            <div className="text-xs font-medium text-ink-2">训练高级项</div>
+            <div className="text-xs font-medium text-ink-2">复盘高级项</div>
             <Field label="内容采集" hint="预留字段：当前仅保存该选项，尚未读取工具正文或参数。">
               <select
                 value={contentCapture}
@@ -338,7 +417,7 @@ export function NewGoalForm({
                   className={inputCls}
                 />
               </Field>
-              <Field label="采样率（%）" hint="低于 100% 时随机跳过训练分析；当前不按任务成败豁免">
+              <Field label="采样率（%）" hint="低于 100% 时随机跳过复盘分析">
                 <input
                   type="number"
                   min={1}
