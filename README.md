@@ -223,6 +223,7 @@ The CLI defaults to `http://localhost:47813`; override with `FLOWLOOP_SERVER_URL
 - [Run identity & instruction ownership](docs/IDENTITY.md) — a run's identity comes from THIS run alone: the shared-workdir hijack postmortem and the three-layer fix
 - [Turn your workflow into a template](docs/TEMPLATES.md) — export with `flowloop-daemon export-template`
 - [Artifact-swap skill](skills/flowloop-artifact-swap/SKILL.md) — the same data-safe flow, portable to the target host
+- [Voice-of-Developer (VOD) skill](skills/flowloop-vod/SKILL.md) — turn a problem found during work into a 问题/背景/诉求 report posted on the source Issue or PR
 - [Design baseline](docs/design/DESIGN.md) — product & architecture decisions, invariants and boundaries (current behavior lives in the spec)
 - [Collaboration model](docs/design/Collaboration.v2.md) — the full owner/role/permission model
 

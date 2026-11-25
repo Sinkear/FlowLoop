@@ -428,3 +428,29 @@ func TestStatsCmdEndToEndEmpty(t *testing.T) {
 		t.Errorf("runs endpoint called %d times with zero goals, want 0", runsEndpointHits)
 	}
 }
+
+// TestIssueCmdParsesSubcommand: `flowloop issue comment --text ...` must read
+// the flag that follows the subcommand. Regression: fs.Parse(args) stopped at
+// the non-flag "comment", so --text was never parsed and the command always
+// failed with "--text is required".
+func TestIssueCmdParsesSubcommand(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/issue-comments" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("FLOWLOOP_SERVER_URL", srv.URL)
+
+	issueCmd("goal-1", []string{"comment", "--text", "问题复现"})
+	if got["goal_id"] != "goal-1" || got["text"] != "问题复现" {
+		t.Fatalf("posted %v, want goal_id=goal-1 text=问题复现", got)
+	}
+}

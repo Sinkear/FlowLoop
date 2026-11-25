@@ -30,8 +30,9 @@ type Skill struct {
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at"`
 	// Builtin marks a skill the platform ships with the daemon binary: it is
-	// re-seeded on every boot (files refreshed, row updated), auto-attached
-	// to the steward, and cannot be deleted by hand.
+	// re-seeded on every boot (files refreshed, row updated), cannot be
+	// deleted by hand, and may be auto-attached to the steward (chat-create
+	// is; flowloop-vod is not, since it only works in issue-sourced runs).
 	Builtin bool `json:"builtin,omitempty"`
 	// Source is the optional remote git repository binding (feature: remote
 	// skill source). nil = the skill is local-only. The repo token lives on
@@ -214,14 +215,22 @@ func (s *SkillService) createSkillFromArchive(ctx context.Context, name, title, 
 // Platform built-in skills. These ship inside the daemon binary (//go:embed
 // under internal/service/assets) and are re-seeded on every boot, so they
 // exist without network access and cannot drift from the binary's UI/docs.
-// The id is a fixed constant (NOT newID) so the steward's agent.skills can
-// reference it as a stable string across restarts and machines.
+// The id is a fixed constant (NOT newID) so agent configs can reference it as
+// a stable string across restarts and machines.
 const (
 	// BuiltinChatCreateID is the stable skill id of the conversation-first
 	// creation skill (创建任务 / 团队 / 智能体 / 蓝本 by talking to the steward).
 	BuiltinChatCreateID    = "7c1f3d5a9b2e4c8d8a6f0b3e5c7d9a21"
 	BuiltinChatCreateName  = "flowloop-chat-create"
 	BuiltinChatCreateTitle = "对话式创建"
+
+	// BuiltinVODID is the stable skill id of the Voice-of-Developer skill:
+	// it turns a problem found while working into a three-section report
+	// (问题 / 背景 / 诉求) and comments it on the run's source Issue/PR.
+	// Not auto-attached to the steward: commenting requires a goal source.
+	BuiltinVODID    = "a02b5e7cefb1ae197f199ae919523b33"
+	BuiltinVODName  = "flowloop-vod"
+	BuiltinVODTitle = "开发者声音"
 )
 
 // EnsureBuiltin installs or refreshes one platform-shipped skill: the row is
