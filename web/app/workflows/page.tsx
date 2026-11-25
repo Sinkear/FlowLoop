@@ -8,7 +8,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, GitBranchPlus, PlusCircle, Search, Trash2, Waypoints } from "lucide-react";
+import { ArrowUpRight, GitBranchPlus, Lock, PlusCircle, Search, Trash2, Waypoints } from "lucide-react";
 import {
   Badge,
   Button,
@@ -24,6 +24,7 @@ import {
 import { useBlueprints, useDeleteBlueprint, useSquads } from "@/lib/queries";
 import type { Blueprint } from "@/lib/types";
 import { relTime } from "@/lib/utils";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import { DASH, fmtInt } from "@/components/training/format";
 
 const LEGACY = "__legacy__";
@@ -119,6 +120,7 @@ function WorkflowRow({ bp, onDelete }: { bp: Blueprint; onDelete: () => void }) 
 }
 
 export default function WorkflowsPage() {
+  const { open } = useCreateDialog();
   const { data: blueprints, isLoading, isError, error, refetch } = useBlueprints();
   const { data: squads } = useSquads();
   const list = blueprints ?? [];
@@ -206,12 +208,9 @@ export default function WorkflowsPage() {
         title="全部工作流"
         desc="工作流归属于一支小队：任务只能钉住本队已发布的版本，跨队复用请复制一份。这里是跨队的搜索视图。"
         action={
-          <Link
-            href="/workflows/new"
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
-          >
-            <PlusCircle className="h-3.5 w-3.5" /> 新建工作流
-          </Link>
+          <Button onClick={() => open("workflow")}>
+            <PlusCircle className="h-4 w-4" /> 新建工作流
+          </Button>
         }
       />
 
@@ -282,17 +281,10 @@ export default function WorkflowsPage() {
           <div className="p-6">
             <Empty icon={<Waypoints className="h-8 w-8" />}>
               {stats.total === 0
-                ? "还没有工作流。工作流隶属于小队，先选一支小队，再从模板起步。"
+                ? "还没有工作流。工作流隶属于小队：先建一支小队，再用右上角「新建工作流」从模板起步。"
                 : "没有匹配的工作流。换个关键词或把「归属」切回全部小队。"}
-              <span className="mt-4 flex justify-center">
-                {stats.total === 0 ? (
-                  <Link
-                    href="/squads"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-                  >
-                    去选一支小队
-                  </Link>
-                ) : (
+              {stats.total > 0 && (
+                <span className="mt-4 flex justify-center">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -302,26 +294,35 @@ export default function WorkflowsPage() {
                   >
                     清除筛选
                   </Button>
-                )}
-              </span>
+                </span>
+              )}
             </Empty>
           </div>
         ) : (
           <div className="space-y-5 p-4">
             {groups.owned.map((group) => (
               <section key={group.key} className="rounded-lg border border-line">
-                <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface-2/40 px-4 py-2.5">
-                  <Waypoints className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+                <div className="flex flex-wrap items-center gap-2.5 border-b border-line bg-surface-2/40 px-4 py-2.5">
+                  <Link
+                    href={`/squads/${group.key}`}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line bg-surface-1 text-[11px] font-semibold text-ink-2 transition-colors hover:border-accent/40 hover:text-accent"
+                    aria-label={`打开小队 ${group.name}`}
+                  >
+                    {(group.name || "?").slice(0, 1)}
+                  </Link>
                   <Link
                     href={`/squads/${group.key}`}
                     className="min-w-0 truncate text-sm font-medium text-ink transition-colors hover:text-accent"
                   >
                     {group.name}
                   </Link>
-                  <span className="font-mono text-[11px] text-ink-3">
+                  <span className="rounded bg-surface-3/70 px-1.5 py-px font-mono text-[10px] text-ink-3">
                     {fmtInt(group.items.length)} 条
                   </span>
-                  <span className="ml-auto text-[11px] text-ink-3">
+                  <span className="ml-auto flex items-center gap-3 text-[11px] text-ink-3">
+                    <Link href={`/workflows/new?squad=${group.key}`} className="hover:text-accent">
+                      + 新建
+                    </Link>
                     <Link href={`/squads/${group.key}`} className="hover:text-accent">
                       查看小队 →
                     </Link>
@@ -345,7 +346,9 @@ export default function WorkflowsPage() {
             {groups.legacy.length > 0 && (
               <section className="rounded-lg border border-line">
                 <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface-2/40 px-4 py-2.5">
-                  <Waypoints className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-amber-500/25 bg-amber-500/5 text-amber-300/80">
+                    <Lock className="h-3.5 w-3.5" />
+                  </span>
                   <span className="text-sm font-medium text-ink">历史 · 未归属小队</span>
                   <span className="font-mono text-[11px] text-ink-3">
                     {fmtInt(groups.legacy.length)} 条

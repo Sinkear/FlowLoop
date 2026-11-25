@@ -78,6 +78,15 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrate blueprint ownership: %w", err)
 	}
 
+	// project_squad is the collaboration relation (squad works for project),
+	// separate from connection (repo webhook binding). Existing connections
+	// and the legacy domain assignee columns are seeded once; INSERT OR IGNORE
+	// keeps this idempotent and preserves an explicit membership's timestamp.
+	if err := backfillProjectSquads(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill project squads: %w", err)
+	}
+
 	// Migrations: ALTER TABLE ADD COLUMN has no IF NOT EXISTS in SQLite, so a
 	// repeated Open on an existing DB errors on "duplicate column." Each
 	// migration is best-effort — ignore the duplicate error, execute the rest.
@@ -316,6 +325,26 @@ func Open(path string) (*Store, error) {
 		// Both columns live in schema.sql for fresh DBs and here for old ones.
 		`ALTER TABLE verification_result ADD COLUMN verify_ms INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE verification_result ADD COLUMN machine_run_id TEXT NOT NULL DEFAULT ''`,
+
+		// Phase C (WEB-IA-REDESIGN §8.9 / D3): a schedule is a goal template, so
+		// it gains the workflow pin + analysis axis the fired goal needs. The
+		// pin is written at SAVE time (never resolved at fire time) so a weekly
+		// run keeps a comparable topology. Defaults keep every existing row on
+		// the old behavior: no workflow, analysis off.
+		`ALTER TABLE schedule ADD COLUMN blueprint_version_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE schedule ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'infer'`,
+		`ALTER TABLE schedule ADD COLUMN content_capture TEXT NOT NULL DEFAULT 'redacted'`,
+		`ALTER TABLE schedule ADD COLUMN sample_rate REAL NOT NULL DEFAULT 1`,
+		`ALTER TABLE schedule ADD COLUMN budget_usd REAL NOT NULL DEFAULT 2`,
+
+		// Phase C (§8.8): attribution snapshots on the review so it stays
+		// attached to its workflow/squad after the goal or version is gone.
+		// Old sessions stay '' (history bucket — not backfilled); the read
+		// paths fall back to the goal's pin so a legacy review still renders.
+		`ALTER TABLE training_session ADD COLUMN squad_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE training_session ADD COLUMN blueprint_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE training_session ADD COLUMN blueprint_version_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_training_session_owner ON training_session(squad_id, blueprint_id, started_at)`,
 	} {
 		if _, err := db.Exec(mig); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
@@ -324,6 +353,29 @@ func Open(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// backfillProjectSquads seeds project_squad from the two older ways a squad
+// could be associated with a project: a repo connection and the legacy
+// domain.issue_assignee / pull_assignee columns. It never removes rows, so an
+// explicit "加入项目" survives later connection edits.
+func backfillProjectSquads(db *sql.DB) error {
+	stmts := []string{
+		`INSERT OR IGNORE INTO project_squad (domain_id, squad_id, created_at)
+		 SELECT domain_id, squad_id, created_at FROM connection WHERE squad_id != '' AND domain_id != ''`,
+		`INSERT OR IGNORE INTO project_squad (domain_id, squad_id, created_at)
+		 SELECT id, issue_assignee, created_at FROM domain
+		 WHERE issue_assignee != '' AND issue_assignee_type = 'squad'`,
+		`INSERT OR IGNORE INTO project_squad (domain_id, squad_id, created_at)
+		 SELECT id, pull_assignee, created_at FROM domain
+		 WHERE pull_assignee != '' AND pull_assignee_type = 'squad'`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateBlueprintOwnership rebuilds the blueprint table once, adding

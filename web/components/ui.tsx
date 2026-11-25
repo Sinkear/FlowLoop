@@ -209,6 +209,7 @@ export function Dialog({
   footer,
   wide,
   size,
+  inline,
 }: {
   title: string;
   onClose: () => void;
@@ -216,6 +217,7 @@ export function Dialog({
   footer: React.ReactNode;
   wide?: boolean; // 兼容旧调用：等价于 size="wide"
   size?: "narrow" | "default" | "wide"; // 普通表单 max-w-3xl，结构化编辑器 max-w-5xl，确认框 max-w-md
+  inline?: boolean; // 独立新建页：渲染成页面内卡片，不铺遮罩
 }) {
   const width =
     size === "narrow" ? "max-w-md" : wide || size === "wide" ? "max-w-5xl" : "max-w-3xl";
@@ -232,6 +234,25 @@ export function Dialog({
   // naive onClick that would close the dialog mid-selection ("selecting all
   // closes the dialog").
   const pressedOnBackdrop = useRef(false);
+
+  if (inline) {
+    return (
+      <div className="flex w-full flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-3.5">
+          <h2 className="text-base font-semibold text-ink">{title}</h2>
+          <button
+            onClick={onClose}
+            className="-mr-1 flex h-7 w-7 items-center justify-center rounded-md text-lg leading-none text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </div>
+        <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-5">{children}</div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3.5">{footer}</div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -451,7 +472,7 @@ export function SectionCard({
     <section className={cn("overflow-hidden rounded-lg border border-line bg-surface-1", className)}>
       {(title || action) && (
         <header className="flex items-center gap-2.5 border-b border-line px-4 py-2.5">
-          {title && <h2 className="text-sm font-medium text-ink">{title}</h2>}
+          {title && <h2 className="shrink-0 whitespace-nowrap text-sm font-medium text-ink">{title}</h2>}
           {typeof count === "number" && (
             <span className="font-mono text-[11px] text-ink-3">{count}</span>
           )}

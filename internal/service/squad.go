@@ -527,6 +527,24 @@ func (s *SquadService) Delete(ctx context.Context, id string) error {
 			fmt.Sprintf("squad %q owns %d workflow(s); delete or move them first", name, n),
 			map[string]any{"name": name, "count": n})
 	}
+	// A squad joined to projects (project_squad) or with a repo connection is
+	// still in use: the connection would fire webhooks for a deleted squad.
+	// Force the caller to remove it from those projects / delete the
+	// connection first.
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM project_squad WHERE squad_id=?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check project memberships: %w", err)
+	}
+	if n > 0 {
+		return NewValidationError(fmt.Sprintf("squad %q is still joined to %d project(s); remove it from those projects first", id, n))
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM connection WHERE squad_id=?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check connections: %w", err)
+	}
+	if n > 0 {
+		return NewValidationError(fmt.Sprintf("squad %q still has %d repo connection(s); delete them first", id, n))
+	}
 	// Guards passed (zero referencing rows). squad_member.squad_id is ON DELETE
 	// CASCADE; the explicit delete is kept for clarity and ordering.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM squad_member WHERE squad_id=?`, id); err != nil {

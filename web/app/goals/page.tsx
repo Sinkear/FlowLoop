@@ -4,11 +4,12 @@ import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGoals, useAgents, useSquads, useDomains, useCancelGoal, useReopenGoal, useDeleteGoal, useGoalEvents } from "@/lib/queries";
-import { Badge, AttentionChip, ReviewPhaseBadge, PageBody, PageHeader, SectionCard, Segmented, Toolbar, Empty } from "@/components/ui";
+import { Badge, AttentionChip, ReviewPhaseBadge, Button, PageBody, PageHeader, SectionCard, Segmented, Toolbar, Empty } from "@/components/ui";
 import { GoalStats } from "@/components/goal-stats";
 import { GoalBoard } from "@/components/goal-board";
 import { GoalBatchBar, GoalSelectCheckbox, CheckIcon } from "@/components/goal-batch-bar";
 import { CategoryBadge } from "@/components/category-badge";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import { cn } from "@/lib/utils";
 import type { Goal, GoalStatus } from "@/lib/types";
 
@@ -48,6 +49,7 @@ export default function GoalsPage() {
 
 function GoalsPageInner() {
   useGoalEvents();
+  const { open } = useCreateDialog();
   const { data: goals, isLoading } = useGoals();
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
@@ -147,12 +149,9 @@ function GoalsPageInner() {
                 { value: "list", label: "列表" },
               ]}
             />
-            <Link
-              href={projectId ? `/goals/new?project=${projectId}` : "/goals/new"}
-              className="inline-flex items-center justify-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-dim"
-            >
+            <Button onClick={() => open("task", projectId ? { projectId } : undefined)}>
               + 新建
-            </Link>
+            </Button>
           </div>
         }
       />

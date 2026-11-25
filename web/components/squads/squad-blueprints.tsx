@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowUpRight, GitBranchPlus, PlusCircle, Waypoints } from "lucide-react";
 import { Badge, Empty, SectionCard, Skeleton } from "@/components/ui";
 import { useBlueprints } from "@/lib/queries";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import type { Blueprint } from "@/lib/types";
 import { relTime } from "@/lib/utils";
 import { DASH, fmtInt } from "@/components/training/format";
@@ -89,6 +90,7 @@ function BlueprintRow({ bp }: { bp: Blueprint }) {
 
 export function SquadBlueprints({ squadId }: { squadId: string }) {
   const { data, isLoading, isError, error } = useBlueprints(squadId);
+  const { open } = useCreateDialog();
   const list = data ?? [];
 
   return (
@@ -98,12 +100,13 @@ export function SquadBlueprints({ squadId }: { squadId: string }) {
       desc="这支小队的作业标准；发布版本后可被小队任务钉住"
       bodyClassName="p-0"
       action={
-        <Link
-          href={`/workflows/new?squad=${squadId}`}
+        <button
+          type="button"
+          onClick={() => open("workflow", { squadId })}
           className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
         >
           <PlusCircle className="h-3.5 w-3.5" /> 新建工作流
-        </Link>
+        </button>
       }
     >
       {isLoading ? (
@@ -118,15 +121,7 @@ export function SquadBlueprints({ squadId }: { squadId: string }) {
         </Empty>
       ) : list.length === 0 ? (
         <Empty icon={<Waypoints className="h-4 w-4" />}>
-          这支小队还没有工作流。
-          <span className="mt-4 block">
-            <Link
-              href={`/workflows/new?squad=${squadId}`}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
-            >
-              <PlusCircle className="h-3.5 w-3.5" /> 新建工作流
-            </Link>
-          </span>
+          这支小队还没有工作流。用卡片右上角「新建工作流」从模板起步。
         </Empty>
       ) : (
         <ul className="divide-y divide-line">

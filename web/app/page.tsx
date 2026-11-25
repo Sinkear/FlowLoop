@@ -7,13 +7,13 @@ import {
   Clock3,
   FolderGit2,
   ListChecks,
-  Plus,
   Server,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import { useAgents, useDomains, useGoals, useMachines, useRsiSessions, useSchedules, useSquads } from "@/lib/queries";
-import { Badge, Button, Empty, PageBody, PageHeader, SectionCard, StatStrip } from "@/components/ui";
+import { useCreateDialog } from "@/components/create/create-dialog";
+import { Badge, Empty, PageBody, PageHeader, SectionCard, StatStrip } from "@/components/ui";
 import { STATUS_LABEL } from "@/components/ui";
 import { relTime } from "@/lib/utils";
 import type { Goal, RsiSession } from "@/lib/types";
@@ -32,6 +32,7 @@ function until(iso: string): string {
 }
 
 export default function WorkbenchPage() {
+  const { open } = useCreateDialog();
   const { data: goals } = useGoals();
   const { data: domains } = useDomains();
   const { data: squads } = useSquads();
@@ -76,15 +77,6 @@ export default function WorkbenchPage() {
       <PageHeader
         title="工作台"
         desc="先看需要你拍板的事，再看正在跑的活；项目和定时任务都在下面。"
-        action={
-          <Link
-            href="/goals/new"
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            新建任务
-          </Link>
-        }
       />
 
       {showOnboarding ? (
@@ -92,23 +84,23 @@ export default function WorkbenchPage() {
           <div className="grid gap-3 md:grid-cols-3">
             <Step
               n="1"
-              title="连一台机器"
+              title="连接运行环境"
               desc={machineCount > 0 ? `已有 ${machineCount} 台机器，运行环境就绪。` : "装好 ouroflow 后，机器会出现在运行环境里。"}
               href="/infra"
               action={machineCount > 0 ? "查看运行环境" : "去连机器"}
             />
             <Step
               n="2"
-              title="建一个项目"
+              title="新建第一个项目"
               desc="挂上代码仓库或无仓库工作区；任务必须落在项目下。"
-              href="/projects?new=1"
+              onClick={() => open("project")}
               action="新建项目"
             />
             <Step
               n="3"
-              title="派第一条任务"
+              title="新建第一条任务"
               desc="选负责人，决定用不用工作流，以及这次要不要复盘。"
-              href="/goals/new"
+              onClick={() => open("task")}
               action="新建任务"
             />
           </div>
@@ -158,7 +150,7 @@ export default function WorkbenchPage() {
             desc="审批、失败和 attention 卡点集中在这里。"
             action={
               <Link href="/goals?status=review" className="text-xs text-ink-3 hover:text-accent">
-                打开任务板
+                查看待审批
               </Link>
             }
             bodyClassName="p-0"
@@ -186,11 +178,6 @@ export default function WorkbenchPage() {
             title="进行中"
             count={active.length}
             desc="负责人已经接活、还没到终态的任务。"
-            action={
-              <Link href="/goals?status=active" className="text-xs text-ink-3 hover:text-accent">
-                查看全部
-              </Link>
-            }
             bodyClassName="p-0"
           >
             {active.length === 0 ? (
@@ -216,11 +203,6 @@ export default function WorkbenchPage() {
             title="最近完成"
             count={done.length}
             desc="完成后复盘是否生成、有没有可看的发现。"
-            action={
-              <Link href="/goals?status=done" className="text-xs text-ink-3 hover:text-accent">
-                查看全部
-              </Link>
-            }
             bodyClassName="p-0"
           >
             {done.length === 0 ? (
@@ -248,6 +230,11 @@ export default function WorkbenchPage() {
             title="复盘待看"
             count={readyReviews.length}
             desc="分析已经跑完，读一下发现再决定改不改。"
+            action={
+              <Link href="/training" className="shrink-0 whitespace-nowrap text-xs text-ink-3 hover:text-accent">
+                全部复盘
+              </Link>
+            }
             bodyClassName="p-0"
           >
             {readyReviews.length === 0 ? (
@@ -269,7 +256,7 @@ export default function WorkbenchPage() {
             desc="下一次自动派活的时间。"
             action={
               <Link href="/schedules" className="text-xs text-ink-3 hover:text-accent">
-                管理
+                查看定时任务
               </Link>
             }
             bodyClassName="p-0"
@@ -307,22 +294,14 @@ export default function WorkbenchPage() {
             desc="项目是任务的归属地。"
             action={
               <Link href="/projects" className="text-xs text-ink-3 hover:text-accent">
-                全部
+                查看项目
               </Link>
             }
             bodyClassName="p-0"
           >
             {projects.length === 0 ? (
               <Empty icon={<FolderGit2 className="h-5 w-5" />}>
-                <span>还没有项目。先建一个，任务才有地方落地。</span>
-                <span className="mt-4 block">
-                  <Link href="/projects?new=1">
-                    <Button className="gap-1.5">
-                      <Plus className="h-3.5 w-3.5" />
-                      新建项目
-                    </Button>
-                  </Link>
-                </span>
+                还没有项目。用左上角「新建」建一个，任务才有地方落地。
               </Empty>
             ) : (
               <div className="divide-y divide-line">
@@ -350,7 +329,7 @@ export default function WorkbenchPage() {
             )}
           </SectionCard>
 
-          {machineCount === 0 && (
+          {!showOnboarding && machineCount === 0 && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-[12px] text-amber-200/90">
               <Server className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
@@ -373,7 +352,21 @@ export default function WorkbenchPage() {
   );
 }
 
-function Step({ n, title, desc, href, action }: { n: string; title: string; desc: string; href: string; action: string }) {
+function Step({
+  n,
+  title,
+  desc,
+  href,
+  action,
+  onClick,
+}: {
+  n: string;
+  title: string;
+  desc: string;
+  href?: string;
+  action: string;
+  onClick?: () => void;
+}) {
   return (
     <div className="rounded-lg border border-line bg-surface-1 p-3">
       <div className="mb-2 flex items-center gap-2">
@@ -383,9 +376,19 @@ function Step({ n, title, desc, href, action }: { n: string; title: string; desc
         <span className="text-sm font-medium text-ink">{title}</span>
       </div>
       <p className="min-h-10 text-[12px] leading-5 text-ink-3">{desc}</p>
-      <Link href={href} className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent hover:text-accent-dim">
-        {action} <ArrowRight className="h-3 w-3" />
-      </Link>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent hover:text-accent-dim"
+        >
+          {action} <ArrowRight className="h-3 w-3" />
+        </button>
+      ) : (
+        <Link href={href ?? "/"} className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent hover:text-accent-dim">
+          {action} <ArrowRight className="h-3 w-3" />
+        </Link>
+      )}
     </div>
   );
 }

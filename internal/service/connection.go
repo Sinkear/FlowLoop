@@ -296,6 +296,15 @@ func (s *ConnectionService) Create(ctx context.Context, in CreateConnectionInput
 		`UPDATE domain SET issue_assignee='', pull_assignee='' WHERE id=?`, c.DomainID); err != nil {
 		return nil, fmt.Errorf("clear legacy domain assignees: %w", err)
 	}
+	// A repo binding implies collaboration: the squad becomes a member of the
+	// project even if it was not added explicitly. This row survives later
+	// webhook changes, so "which squads work on this project" no longer
+	// depends on whether a repo is connected.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO project_squad (domain_id, squad_id, created_at) VALUES (?,?,?)`,
+		c.DomainID, c.SquadID, c.CreatedAt); err != nil {
+		return nil, fmt.Errorf("add project squad: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("create connection: %w", err)
 	}

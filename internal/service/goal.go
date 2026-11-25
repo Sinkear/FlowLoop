@@ -81,6 +81,14 @@ type Goal struct {
 	// (D2: default use, explicit opt-out). It is a creation-time input only —
 	// not persisted; the resolved/pinned version lives in BlueprintVersionID.
 	SkipDefaultWorkflow bool `json:"skip_default_workflow,omitempty"`
+	// BlueprintID/BlueprintName/BlueprintVersion are read-only projections of
+	// BlueprintVersionID (the pin), filled by Get. They exist so the Web can say
+	// which workflow a task ran instead of showing a raw version hash or
+	// re-deriving the name from a version list the page doesn't load. '' / 0
+	// when the goal has no pin (infer mode) or the pinned version was deleted.
+	BlueprintID      string `json:"blueprint_id,omitempty"`
+	BlueprintName    string `json:"blueprint_name,omitempty"`
+	BlueprintVersion int    `json:"blueprint_version,omitempty"`
 }
 
 // goalRunContext is what ReconcileOnRunEnd reasons about. Carried separately
@@ -383,10 +391,14 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 			return nil, fmt.Errorf("load squad default workflow: %w", err)
 		}
 		if defWorkflow != "" {
-			_ = s.st.DB().QueryRowContext(ctx,
+			var defaultPin string
+			if err := s.st.DB().QueryRowContext(ctx,
 				`SELECT bv.id FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id
 				 WHERE b.id=? AND bv.status='published' ORDER BY bv.version DESC LIMIT 1`, defWorkflow).
-				Scan(&g.BlueprintVersionID)
+				Scan(&defaultPin); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("load squad default workflow version: %w", err)
+			}
+			g.BlueprintVersionID = defaultPin
 		}
 	}
 	if g.BlueprintVersionID != "" {
@@ -534,7 +546,10 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
-		     ELSE 'awaiting_review' END
+		     ELSE 'awaiting_review' END,
+		        COALESCE((SELECT bv.blueprint_id FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT b.name FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),0)
 		 FROM goal g ORDER BY g.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -544,7 +559,7 @@ func (s *GoalService) List(ctx context.Context) ([]Goal, error) {
 	for rows.Next() {
 		var g Goal
 		var domainID, currentAgent sql.NullString
-		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase); err != nil {
+		if err := rows.Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase, &g.BlueprintID, &g.BlueprintName, &g.BlueprintVersion); err != nil {
 			return nil, err
 		}
 		g.DomainID = domainID.String
@@ -705,9 +720,12 @@ func (s *GoalService) Get(ctx context.Context, id string) (*Goal, error) {
 		        CASE WHEN g.status != 'review' THEN ''
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status IN ('queued','running')) = 0 THEN 'awaiting_approval'
 		     WHEN (SELECT COUNT(*) FROM run r WHERE r.goal_id=g.id AND r.role='review' AND r.status='running') > 0 THEN 'reviewing'
-		     ELSE 'awaiting_review' END
+		     ELSE 'awaiting_review' END,
+		        COALESCE((SELECT bv.blueprint_id FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT b.name FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=g.blueprint_version_id),''),
+		        COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.id=g.blueprint_version_id),0)
 		 FROM goal g WHERE g.id=?`, id).
-		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase)
+		Scan(&g.ID, &g.Title, &g.Description, &domainID, &g.AssigneeType, &g.AssigneeID, &g.Status, &g.Category, &g.HandoffNote, &g.ReviewRequest, &g.HumanIterations, &g.CreatedByType, &g.CreatedByID, &g.CreatedAt, &g.SourceRef, &g.ConnectionID, &g.Attention, &g.ExecutionMode, &g.ContentCapture, &g.BudgetUSD, &g.SampleRate, &g.BlueprintVersionID, &currentAgent, &g.ReviewPhase, &g.BlueprintID, &g.BlueprintName, &g.BlueprintVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

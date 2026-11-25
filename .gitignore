@@ -29,6 +29,7 @@ go.work.sum
 
 # Build output (local binaries, not committed)
 build/
+bin/
 
 # Guard against binaries built into the repo root (e.g. `go build -o ./ouroflow`).
 # `build/` covers the normal case; these catch stray top-level binaries.

@@ -1,4 +1,4 @@
-import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
+import type { Runtime, Agent, Goal, Run, Comment, Squad, SquadMember, SquadRole, SquadRoleView, Schedule, Domain, TimelineItem, TeamImportResponse, TemplateSummary, TemplateDetail, ApplySquadOverrides, ApplySquadResult, ApplyProjectOverrides, ApplyProjectResult, TemplateFetchResult, WebhookStatus, WebhookRegisterResult, Connection, ConnectionWebhookStatus, ProjectSquad, ExecutionMode, RsiSession, RsiDetail, RsiOverview, RsiRound, RsiFindingStatus, WorkflowGraph, WorkflowGoalSummary } from "./types";
 
 // 默认走同源 /backend/*（Next rewrites 转发到本机 daemon 47813）——反代出
 // 去时浏览器无需直连 daemon。本地直连场景可显式设置 NEXT_PUBLIC_API_URL。
@@ -347,6 +347,17 @@ export const setDomainWebhookSecret = (id: string, secret: string) =>
 // ── Connection（仓库连接：per-connection webhook 地址与 secret） ──
 // 同一仓库可以被多个小队各建一条 connection，各自有独立的
 // /webhooks/{provider}/{id} 端点，注册 hook 时互不覆盖。
+// ── ProjectSquad（小队加入项目：不依赖仓库/webhook） ──
+export const listProjectSquads = (domainId: string) =>
+  api<ProjectSquad[]>(`/domains/${domainId}/squads`);
+export const addProjectSquad = (domainId: string, squadId: string) =>
+  api<ProjectSquad>(`/domains/${domainId}/squads`, {
+    method: "POST",
+    body: JSON.stringify({ squad_id: squadId }),
+  });
+export const removeProjectSquad = (domainId: string, squadId: string) =>
+  api<void>(`/domains/${domainId}/squads/${squadId}`, { method: "DELETE" });
+
 export const listConnections = (squadId?: string) =>
   api<Connection[]>(`/connections${squadId ? `?squad_id=${encodeURIComponent(squadId)}` : ""}`);
 // Create returns the connection with a one-time plaintext `secret` field.
@@ -419,7 +430,10 @@ export const savePlatformSettings = (body: PlatformSettings) =>
 
 // ── Schedule ──
 export const listSchedules = () => api<Schedule[]>("/schedules");
-export const createSchedule = (body: {
+// ScheduleBody is the full "saved task template" a schedule carries (Phase C):
+// the same workflow/analysis fields a hand-created goal uses. The pin is
+// resolved at SAVE time ('' = auto-decompose), never re-resolved at fire time.
+export interface ScheduleBody {
   name: string;
   title_template: string;
   description?: string;
@@ -429,18 +443,18 @@ export const createSchedule = (body: {
   cron_expression: string;
   timezone?: string;
   category?: string; // hitl | hootl
-}) => api<Schedule>("/schedules", { method: "POST", body: JSON.stringify(body) });
-export const updateSchedule = (id: string, body: {
-  name: string;
-  title_template: string;
-  description?: string;
-  assignee_type?: string;
-  assignee_id: string;
-  domain_id: string;
-  cron_expression: string;
-  timezone?: string;
-  category?: string; // hitl | hootl
-}) => api<Schedule>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  blueprint_version_id?: string; // '' = 自动拆解（不挂工作流）
+  execution_mode?: string; // infer | train（train = 执行后生成复盘）
+  content_capture?: string; // none | redacted | full
+  sample_rate?: number; // 0..1
+  budget_usd?: number;
+}
+export const createSchedule = (body: ScheduleBody) =>
+  api<Schedule>("/schedules", { method: "POST", body: JSON.stringify(body) });
+// The API is a full replacement: send the complete body, including the Phase C
+// fields — omitting them would clear the saved pin/mode ('' is a real value).
+export const updateSchedule = (id: string, body: ScheduleBody) =>
+  api<Schedule>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) });
 export const deleteSchedule = (id: string) =>
   api<void>(`/schedules/${id}`, { method: "DELETE" });
 export const listScheduleRuns = (id: string) =>
@@ -495,6 +509,14 @@ export const updateRsiFinding = (id: string, status: Exclude<RsiFindingStatus, "
   });
 export const retryRsiSession = (id: string) =>
   api<{ ok: true }>(`/rsi/sessions/${id}/retry`, { method: "POST" });
+// Phase C: 把一条发现变成待审提案（只对已钉版本且已编译的任务有效）。后端
+// 对不可转的情况返回真实原因（无工作流/未编译/节点已被占用/校验拒绝），
+// 调用方必须把错误显示出来，不做乐观成功。
+export const draftProposalFromFinding = (findingId: string) =>
+  api<{ proposal: import("./types").BlueprintProposal }>(
+    `/rsi/findings/${findingId}/proposal`,
+    { method: "POST" },
+  );
 
 // ── 编排图（W-RSI v2） ──
 // goal 详情读 live 图（未冻结，随子任务/验证推进变化）；squad 详情读最近

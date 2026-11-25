@@ -58,7 +58,7 @@ function KVRows({ rows, onChange, keyPlaceholder, valuePlaceholder }: {
 // AgentForm: 新建/编辑 Agent。基础配置平铺，运维项（并发/环境变量/额外
 // MCP 服务器）收进"高级设置"折叠区——env 是键值对行，MCP 服务器是结构化
 // 条目，都不要求手写 JSON。
-export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => void }) {
+export function AgentForm({ agent, onClose, onCreated, embedded }: { agent?: Agent; onClose: () => void; onCreated?: (agent: Agent) => void; embedded?: boolean }) {
   const create = useCreateAgent();
   const update = useUpdateAgent();
   const { data: runtimes } = useRuntimes();
@@ -134,7 +134,7 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
     if (agent) {
       update.mutate({ id: agent.id, ...body }, { onSuccess: onClose });
     } else {
-      create.mutate(body, { onSuccess: onClose });
+      create.mutate(body, { onSuccess: (created) => { onCreated?.(created); onClose(); } });
     }
   };
 
@@ -143,6 +143,7 @@ export function AgentForm({ agent, onClose }: { agent?: Agent; onClose: () => vo
       title={agent ? `编辑 Agent：${agent.name}` : "新建 Agent"}
       onClose={onClose}
       wide
+      inline={embedded}
       footer={
         <>
           <Button variant="outline" onClick={onClose}>取消</Button>

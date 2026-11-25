@@ -21,7 +21,7 @@ const GROUPS: TreeNode[] = [
     href: "/projects?new=1",
     hint: "新建项目",
     children: [
-      { label: "任务", href: "/goals/new", hint: "当前页", accent: true },
+      { label: "任务", hint: "当前页", accent: true },
       { label: "定时任务", href: "/schedules" },
       { label: "接入小队", href: "/squads" },
     ],
@@ -62,7 +62,7 @@ const GROUPS: TreeNode[] = [
   },
 ];
 
-function Row({ node }: { node: TreeNode }) {
+function Row({ node, interactive = true }: { node: TreeNode; interactive?: boolean }) {
   const body = (
     <>
       <span className="flex min-w-0 items-center gap-1.5">
@@ -77,7 +77,7 @@ function Row({ node }: { node: TreeNode }) {
     </>
   );
 
-  return node.href ? (
+  return interactive && node.href ? (
     <Link
       href={node.href}
       className={cn(
@@ -96,7 +96,7 @@ function Row({ node }: { node: TreeNode }) {
   );
 }
 
-function Tree({ nodes, group }: { nodes: TreeNode[]; group?: boolean }) {
+function Tree({ nodes, group, interactive = true }: { nodes: TreeNode[]; group?: boolean; interactive?: boolean }) {
   if (nodes.length === 0) return null;
   return (
     <ul className={cn("space-y-0.5", !group && "ml-2.5 border-l border-line pl-3")}>
@@ -108,15 +108,29 @@ function Tree({ nodes, group }: { nodes: TreeNode[]; group?: boolean }) {
               aria-hidden
             />
           )}
-          <Row node={node} />
-          {node.children ? <Tree nodes={node.children} /> : null}
+          <Row node={node} interactive={interactive} />
+          {node.children ? <Tree nodes={node.children} interactive={interactive} /> : null}
         </li>
       ))}
     </ul>
   );
 }
 
-export function CreateTree({ className }: { className?: string }) {
+export function CreateTree({ className, interactive = true, plain = false }: { className?: string; interactive?: boolean; plain?: boolean }) {
+  const body = (
+      <div className="space-y-3.5">
+        {GROUPS.map((group) => (
+          <div key={group.label} className="space-y-0.5">
+            <Row node={group} interactive={interactive} />
+            {group.children ? <Tree nodes={group.children} interactive={interactive} /> : null}
+          </div>
+        ))}
+        <p className="rounded-md border border-line bg-surface-2/60 px-2.5 py-2 text-[11px] leading-relaxed text-ink-3">
+          任务挂项目，工作流归小队，智能体是公共资源。
+        </p>
+      </div>
+  );
+  if (plain) return <div className={className}>{body}</div>;
   return (
     <SectionCard
       title="创建什么？"
@@ -124,17 +138,7 @@ export function CreateTree({ className }: { className?: string }) {
       className={className}
       bodyClassName="p-3.5"
     >
-      <div className="space-y-3.5">
-        {GROUPS.map((group) => (
-          <div key={group.label} className="space-y-0.5">
-            <Row node={group} />
-            {group.children ? <Tree nodes={group.children} /> : null}
-          </div>
-        ))}
-        <p className="rounded-md border border-line bg-surface-2/60 px-2.5 py-2 text-[11px] leading-relaxed text-ink-3">
-          任务挂项目，工作流归小队，智能体是公共资源。
-        </p>
-      </div>
+      {body}
     </SectionCard>
   );
 }

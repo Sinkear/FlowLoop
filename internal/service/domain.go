@@ -448,10 +448,9 @@ func (s *DomainService) ListWebhookDeliveries(ctx context.Context, domainID stri
 }
 
 // SetAssignees edits ONLY the four routing fields (issue/PR assignee + type)
-// and deliberately skips the git-connectivity gate that updateDomain enforces:
-// the squad page rebinds repos directly, and a temporarily unreachable repo
-// must not block that. The assignee existence/shape validation still runs
-// (validateIssueTracking: agent/squad must exist, type must be agent|squad).
+// and deliberately skips the git-connectivity gate that updateDomain enforces.
+// It also does not require git_credentials: a project can receive webhook
+// events without a polling token. Assignee existence/shape is still checked.
 func (s *DomainService) SetAssignees(ctx context.Context, id, issueAssignee, issueAssigneeType, pullAssignee, pullAssigneeType string) (*Domain, error) {
 	d, err := s.Get(ctx, id)
 	if err != nil {
@@ -467,7 +466,7 @@ func (s *DomainService) SetAssignees(ctx context.Context, id, issueAssignee, iss
 		return nil, fmt.Errorf("count domain connections: %w", err)
 	}
 	if connCount > 0 && (issueAssignee != "" || pullAssignee != "") {
-		return nil, NewValidationError("该仓库已有小队连接接管 issue/PR 路由；请到小队详情页调整连接，或先删除连接再使用 domain 处理方")
+		return nil, NewValidationError("该仓库已有旧的小队级仓库连接接管 issue/PR 路由；请先在项目的「接入」页移除旧连接，再配置项目级派发")
 	}
 	d.IssueAssignee = issueAssignee
 	d.IssueAssigneeType = issueAssigneeType
@@ -487,7 +486,7 @@ func (s *DomainService) SetAssignees(ctx context.Context, id, issueAssignee, iss
 	if d.PullAssigneeType != "agent" && d.PullAssigneeType != "squad" {
 		return nil, NewValidationError("pull_assignee_type must be agent or squad")
 	}
-	if err := s.validateIssueTracking(ctx, d); err != nil {
+	if err := s.validateAssigneeRouting(ctx, d); err != nil {
 		return nil, err
 	}
 	if _, err := s.st.DB().ExecContext(ctx,
@@ -496,6 +495,69 @@ func (s *DomainService) SetAssignees(ctx context.Context, id, issueAssignee, iss
 		return nil, fmt.Errorf("set domain assignees: %w", err)
 	}
 	return s.Get(ctx, id)
+}
+
+// validateAssigneeRouting checks the routing shape only: the repo must exist
+// and the assignee must be a real agent/squad. It deliberately does NOT require
+// git_credentials — webhook deliveries can create goals without a polling
+// token, and routing should not be blocked by a missing platform token.
+func (s *DomainService) validateAssigneeRouting(ctx context.Context, d *Domain) error {
+	if d.Type == "scratch" && (d.IssueRepo != "" || d.IssueAssignee != "" || d.PullAssignee != "") {
+		return NewValidationError("issue tracking needs a repository — not available on a scratch domain")
+	}
+	if d.IssueAssignee != "" {
+		if d.IssueRepo == "" {
+			return NewValidationError("issue tracking needs an issue_repo (derivable from git_url)")
+		}
+		if d.IssueProvider == "" {
+			d.IssueProvider = "github"
+		}
+		if d.IssueProvider != "github" && d.IssueProvider != "gitcode" {
+			return NewValidationError("issue_provider must be github or gitcode")
+		}
+		if d.IssueAssigneeType == "" {
+			d.IssueAssigneeType = "agent"
+		}
+		switch d.IssueAssigneeType {
+		case "agent":
+			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, d.IssueAssignee, "issue assignee"); err != nil {
+				return err
+			}
+		case "squad":
+			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.IssueAssignee, "issue assignee squad"); err != nil {
+				return err
+			}
+		default:
+			return NewValidationError("issue_assignee_type must be agent or squad")
+		}
+	}
+	if d.PullAssignee != "" {
+		if d.IssueRepo == "" {
+			return NewValidationError("PR pulling needs a repository (derivable from git_url)")
+		}
+		if d.IssueProvider == "" {
+			d.IssueProvider = "github"
+		}
+		if d.IssueProvider != "github" && d.IssueProvider != "gitcode" {
+			return NewValidationError("issue_provider must be github or gitcode")
+		}
+		if d.PullAssigneeType == "" {
+			d.PullAssigneeType = "agent"
+		}
+		switch d.PullAssigneeType {
+		case "agent":
+			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM agent WHERE id=?`, d.PullAssignee, "PR assignee"); err != nil {
+				return err
+			}
+		case "squad":
+			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.PullAssignee, "PR assignee squad"); err != nil {
+				return err
+			}
+		default:
+			return NewValidationError("pull_assignee_type must be agent or squad")
+		}
+	}
+	return nil
 }
 
 // SetWebhookSecret sets or clears the repo-level webhook secret. Values are

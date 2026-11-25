@@ -27,24 +27,35 @@ import (
 // reviewable findings. RSI never changes executing behavior by itself — the
 // human decides what to adopt.
 type RsiSession struct {
-	ID              string  `json:"id"`
-	GoalID          string  `json:"goal_id"`
-	GoalTitle       string  `json:"goal_title"`
-	DomainID        string  `json:"domain_id"`
-	Status          string  `json:"status"` // waiting|analyzing|ready|failed|skipped
-	ContentCapture  string  `json:"content_capture"`
-	SampleRate      float64 `json:"sample_rate"`
-	BudgetUSD       float64 `json:"budget_usd"`
-	NodeCount       int     `json:"node_count"`
-	CriticalPathMS  int64   `json:"critical_path_ms"`
-	ParallelSpeedup float64 `json:"parallel_speedup"`
-	FindingCount    int     `json:"finding_count"`
-	TopCategory     string  `json:"top_category"`
-	TopTitle        string  `json:"top_title"`
-	Error           string  `json:"error"`
-	StartedAt       string  `json:"started_at"`
-	SealedAt        string  `json:"sealed_at"`
-	FinishedAt      string  `json:"finished_at"`
+	ID             string  `json:"id"`
+	GoalID         string  `json:"goal_id"`
+	GoalTitle      string  `json:"goal_title"`
+	DomainID       string  `json:"domain_id"`
+	Status         string  `json:"status"` // waiting|analyzing|ready|failed|skipped
+	ContentCapture string  `json:"content_capture"`
+	SampleRate     float64 `json:"sample_rate"`
+	BudgetUSD      float64 `json:"budget_usd"`
+	// Phase C (WEB-IA-REDESIGN §8.8): the owning squad + workflow, snapshotted
+	// on the session when it is created so a review stays attributable after the
+	// goal is re-pinned or the pinned version is deleted. Legacy sessions have
+	// '' in the columns; the read selects fall back to the goal's own
+	// assignment/pin, so an old review still renders its owner instead of "—".
+	SquadID           string  `json:"squad_id"`
+	SquadName         string  `json:"squad_name"`
+	BlueprintID       string  `json:"blueprint_id"`
+	BlueprintName     string  `json:"blueprint_name"`
+	BlueprintVersion  int     `json:"blueprint_version"`
+	WorkflowVersionID string  `json:"workflow_version_id"`
+	NodeCount         int     `json:"node_count"`
+	CriticalPathMS    int64   `json:"critical_path_ms"`
+	ParallelSpeedup   float64 `json:"parallel_speedup"`
+	FindingCount      int     `json:"finding_count"`
+	TopCategory       string  `json:"top_category"`
+	TopTitle          string  `json:"top_title"`
+	Error             string  `json:"error"`
+	StartedAt         string  `json:"started_at"`
+	SealedAt          string  `json:"sealed_at"`
+	FinishedAt        string  `json:"finished_at"`
 }
 
 // RsiReport is the deterministic analysis output for one session.
@@ -75,6 +86,11 @@ type RsiFinding struct {
 	Score       float64  `json:"score"`
 	Status      string   `json:"status"` // open|confirmed|dismissed
 	CreatedAt   string   `json:"created_at"`
+	// ProposalID is the proposal this finding was already turned into ('' =
+	// none yet). Phase C: the review detail offers "生成提案" only when this is
+	// empty, and links to the proposal otherwise — so the UI never offers a
+	// button that would duplicate an existing proposal.
+	ProposalID string `json:"proposal_id"`
 }
 
 // RsiOverview is the aggregate strip above the Training list.
@@ -170,11 +186,29 @@ func (s *RSIService) EnsureSession(ctx context.Context, g *Goal) error {
 	if g.SampleRate > 0 && g.SampleRate < 1 && rand.Float64() > g.SampleRate {
 		status = "skipped"
 	}
+	// Phase C (§8.8): snapshot the owner at creation. The squad is the goal's
+	// own squad; for an agent goal that somehow pinned a squad workflow (legacy
+	// rows predating the squad guard) it is the workflow's owner, so a review
+	// never floats owner-less. Both stay '' for a goal without a workflow or a
+	// squad — the read path then falls back to the goal, and '' renders as
+	// "自动拆解".
+	var blueprintID, squadID string
+	if g.BlueprintVersionID != "" {
+		_ = s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(blueprint_id,'') FROM blueprint_version WHERE id=?`, g.BlueprintVersionID).Scan(&blueprintID)
+	}
+	if g.AssigneeType == "squad" {
+		squadID = g.AssigneeID
+	}
+	if squadID == "" && blueprintID != "" {
+		_ = s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(squad_id,'') FROM blueprint WHERE id=?`, blueprintID).Scan(&squadID)
+	}
 	_, err := s.st.DB().ExecContext(ctx,
 		`INSERT OR IGNORE INTO training_session
-		 (id,goal_id,content_capture,sample_rate,budget_usd,status,started_at)
-		 VALUES (?,?,?,?,?,?,?)`,
-		newID(), g.ID, g.ContentCapture, g.SampleRate, g.BudgetUSD, status, now())
+		 (id,goal_id,squad_id,blueprint_id,blueprint_version_id,content_capture,sample_rate,budget_usd,status,started_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		newID(), g.ID, squadID, blueprintID, g.BlueprintVersionID, g.ContentCapture, g.SampleRate, g.BudgetUSD, status, now())
 	if err != nil {
 		return fmt.Errorf("insert training session: %w", err)
 	}
@@ -256,14 +290,50 @@ func (s *RSIService) Retry(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// sessionColumns is the canonical review read shape: the session row, the
+// goal's title/domain, and the Phase C owner attribution. The owner columns are
+// snapshotted when the session is created; for sessions that predate Phase C
+// (” columns — the history bucket, deliberately NOT backfilled) the
+// expression falls back to the goal's own assignment/pin, so an old review
+// still renders its squad/workflow instead of "—", while claiming nothing the
+// run never had. Callers must join `g` (goal) and `gbv`
+// (LEFT JOIN blueprint_version gbv ON gbv.id=g.blueprint_version_id).
+// The three owner expressions are snapshots taken at session creation (Phase
+// C), with a goal fallback so sessions created before the snapshot columns
+// existed still render their owner. They are shared with the round-numbering
+// scope in rsi_analyze.go — the same string must mean the same owner in both
+// places, or a review would be compared against a different cohort than it
+// claims to belong to.
+const (
+	squadSnapshotSQL = `COALESCE(NULLIF(ts.squad_id,''),CASE WHEN g.assignee_type='squad' THEN g.assignee_id ELSE '' END)`
+	// workflowSnapshotSQL is the workflow a session RUNS, not the one the goal
+	// currently pins: a reassignment/drift must not rewrite history.
+	workflowSnapshotSQL        = `COALESCE(NULLIF(ts.blueprint_id,''),COALESCE(gbv.blueprint_id,''))`
+	workflowVersionSnapshotSQL = `COALESCE(NULLIF(ts.blueprint_version_id,''),COALESCE(g.blueprint_version_id,''))`
+)
+
 const sessionColumns = `ts.id,ts.goal_id,g.title,COALESCE(g.domain_id,''),ts.status,ts.content_capture,ts.sample_rate,ts.budget_usd,
+	` + squadSnapshotSQL + `,
+	COALESCE((SELECT sq.name FROM squad sq WHERE sq.id=` + squadSnapshotSQL + `),''),
+	` + workflowSnapshotSQL + `,
+	COALESCE((SELECT b.name FROM blueprint b WHERE b.id=` + workflowSnapshotSQL + `),''),
+	COALESCE((SELECT bv.version FROM blueprint_version bv WHERE bv.id=` + workflowVersionSnapshotSQL + `),0),
+	` + workflowVersionSnapshotSQL + `,
 	COALESCE(ts.node_count,0),COALESCE(ts.critical_path_ms,0),COALESCE(ts.parallel_speedup,0),
 	ts.error,ts.started_at,ts.sealed_at,ts.finished_at,
 	(SELECT COUNT(*) FROM rsi_finding f JOIN rsi_report rp ON f.report_id=rp.id WHERE rp.session_id=ts.id)`
 
+// sessionFrom is the shared FROM clause for sessionColumns (see the join note
+// on the const). List and detail MUST use the same one — the columns above
+// reference both aliases.
+const sessionFrom = `FROM training_session ts
+	JOIN goal g ON g.id=ts.goal_id
+	LEFT JOIN blueprint_version gbv ON gbv.id=g.blueprint_version_id`
+
 func scanSession(sc func(...any) error) (*RsiSession, error) {
 	var x RsiSession
 	if err := sc(&x.ID, &x.GoalID, &x.GoalTitle, &x.DomainID, &x.Status, &x.ContentCapture, &x.SampleRate, &x.BudgetUSD,
+		&x.SquadID, &x.SquadName, &x.BlueprintID, &x.BlueprintName, &x.BlueprintVersion, &x.WorkflowVersionID,
 		&x.NodeCount, &x.CriticalPathMS, &x.ParallelSpeedup,
 		&x.Error, &x.StartedAt, &x.SealedAt, &x.FinishedAt, &x.FindingCount); err != nil {
 		return nil, err
@@ -277,7 +347,7 @@ func (s *RSIService) ListSessions(ctx context.Context, limit int) ([]RsiSession,
 		limit = 100
 	}
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT `+sessionColumns+` FROM training_session ts JOIN goal g ON g.id=ts.goal_id
+		`SELECT `+sessionColumns+` `+sessionFrom+`
 		 ORDER BY ts.started_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -310,7 +380,7 @@ func (s *RSIService) ListSessions(ctx context.Context, limit int) ([]RsiSession,
 func (s *RSIService) GetSession(ctx context.Context, id string) (*RsiSession, *RsiReport, []RsiFinding, *WorkflowGraph, error) {
 	x, err := scanSession(func(dst ...any) error {
 		return s.st.DB().QueryRowContext(ctx,
-			`SELECT `+sessionColumns+` FROM training_session ts JOIN goal g ON g.id=ts.goal_id WHERE ts.id=?`, id).
+			`SELECT `+sessionColumns+` `+sessionFrom+` WHERE ts.id=?`, id).
 			Scan(dst...)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -347,8 +417,9 @@ func (s *RSIService) GetSession(ctx context.Context, id string) (*RsiSession, *R
 	findings := []RsiFinding{}
 	if report != nil {
 		rows, err := s.st.DB().QueryContext(ctx,
-			`SELECT id,report_id,category,severity,confidence,title,explanation,suggestion,evidence_json,score,status,created_at
-			 FROM rsi_finding WHERE report_id=? ORDER BY score DESC, created_at ASC`, report.ID)
+			`SELECT f.id,f.report_id,f.category,f.severity,f.confidence,f.title,f.explanation,f.suggestion,f.evidence_json,f.score,f.status,f.created_at,
+			        COALESCE((SELECT p.id FROM blueprint_proposal p WHERE p.finding_id=f.id AND p.status IN ('pending','approved','rejected') ORDER BY p.created_at DESC LIMIT 1),'')
+			 FROM rsi_finding f WHERE f.report_id=? ORDER BY f.score DESC, f.created_at ASC`, report.ID)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -356,7 +427,7 @@ func (s *RSIService) GetSession(ctx context.Context, id string) (*RsiSession, *R
 		for rows.Next() {
 			var f RsiFinding
 			var ev string
-			if err := rows.Scan(&f.ID, &f.ReportID, &f.Category, &f.Severity, &f.Confidence, &f.Title, &f.Explanation, &f.Suggestion, &ev, &f.Score, &f.Status, &f.CreatedAt); err != nil {
+			if err := rows.Scan(&f.ID, &f.ReportID, &f.Category, &f.Severity, &f.Confidence, &f.Title, &f.Explanation, &f.Suggestion, &ev, &f.Score, &f.Status, &f.CreatedAt, &f.ProposalID); err != nil {
 				return nil, nil, nil, nil, err
 			}
 			f.Evidence = decodeStrings(ev)

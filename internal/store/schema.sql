@@ -604,6 +604,18 @@ CREATE TABLE IF NOT EXISTS schedule (
     cron_expression TEXT NOT NULL,             -- 5-field standard cron
     timezone        TEXT NOT NULL DEFAULT 'UTC',
     category        TEXT NOT NULL DEFAULT 'hitl', -- cloned goal category: hitl | hootl
+    -- Phase C (WEB-IA-REDESIGN D3/D4): a schedule is a goal template, so it
+    -- carries the same two axes as a goal — an optional workflow pin and
+    -- whether the fired run is analyzed. The pin is resolved when the schedule
+    -- is SAVED, never at fire time: a weekly run must keep a comparable
+    -- topology or its reviews cannot be compared across versions. '' = the
+    -- fired goal auto-decomposes (no workflow). execution_mode mirrors
+    -- goal.execution_mode: 'infer' (no review) | 'train' (review on).
+    blueprint_version_id TEXT NOT NULL DEFAULT '',
+    execution_mode  TEXT NOT NULL DEFAULT 'infer',
+    content_capture TEXT NOT NULL DEFAULT 'redacted', -- none|redacted|full
+    sample_rate     REAL NOT NULL DEFAULT 1,
+    budget_usd      REAL NOT NULL DEFAULT 2,
     enabled         INTEGER NOT NULL DEFAULT 1,
     next_run_at     TEXT NOT NULL DEFAULT '',  -- next fire time RFC3339; '' = unset
     last_run_at     TEXT NOT NULL DEFAULT '',
@@ -690,6 +702,19 @@ CREATE TABLE IF NOT EXISTS connection (
 CREATE INDEX IF NOT EXISTS idx_connection_squad ON connection(squad_id);
 CREATE INDEX IF NOT EXISTS idx_connection_domain ON connection(domain_id);
 
+-- project_squad: a squad working for a project. This is deliberately separate
+-- from connection: joining a project is a collaboration relation, while a
+-- connection is the optional repo/webhook binding of that squad. A project
+-- with no repo (scratch) can still have squads; a squad can serve many
+-- projects without any webhook.
+CREATE TABLE IF NOT EXISTS project_squad (
+    domain_id  TEXT NOT NULL,
+    squad_id   TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (domain_id, squad_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_squad_squad ON project_squad(squad_id);
+
 
 -- ── RSI (recursive self-improvement) ─────────────────────────────────────
 -- One training session per goal whose execution_mode='train'. Created with
@@ -700,6 +725,14 @@ CREATE INDEX IF NOT EXISTS idx_connection_domain ON connection(domain_id);
 CREATE TABLE IF NOT EXISTS training_session (
     id              TEXT PRIMARY KEY,
     goal_id         TEXT NOT NULL REFERENCES goal(id),
+    -- Phase C (WEB-IA-REDESIGN §8.8): attribution SNAPSHOT taken at session
+    -- creation. The goal may later be deleted, or its pinned version retired;
+    -- these columns keep the review attached to its workflow/squad regardless.
+    -- '' = history bucket (old sessions are NOT backfilled) — read paths fall
+    -- back to the goal's own pin so a legacy session still renders its owner.
+    squad_id     TEXT NOT NULL DEFAULT '',
+    blueprint_id TEXT NOT NULL DEFAULT '',
+    blueprint_version_id TEXT NOT NULL DEFAULT '',
     content_capture TEXT NOT NULL DEFAULT 'redacted',  -- none|redacted|full
     sample_rate     REAL NOT NULL DEFAULT 1,
     budget_usd      REAL NOT NULL DEFAULT 2,
@@ -715,6 +748,8 @@ CREATE TABLE IF NOT EXISTS training_session (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_training_session_goal ON training_session(goal_id);
 CREATE INDEX IF NOT EXISTS idx_training_session_status ON training_session(status, started_at);
+-- Phase C: review aggregation by workflow / squad (the design's "复盘不是独立的家"
+-- lenses). Old rows keep '' so they never leak into an owner's list by accident.
 
 -- workflow_edge: edges of the orchestration graph, stored separately from
 -- nodes so the graph never duplicates execution state. Nodes are assembled

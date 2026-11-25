@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useCreateDialog } from "@/components/create/create-dialog";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   useSquads,
@@ -35,27 +36,25 @@ import {
 import { Users, Trash2, BookA } from "lucide-react";
 import { cn, relTime } from "@/lib/utils";
 import type { SquadMember } from "@/lib/types";
-import { SquadConnections } from "@/components/squad-connections";
 import { SquadRecentExecutions } from "@/components/squads/squad-recent-executions";
 import { SquadBlueprints } from "@/components/squads/squad-blueprints";
-import { SquadReviews } from "@/components/squads/squad-reviews";
 
 // 小队详情最多 6 个 tab（IA 4.5）。Phase B 起「工作流」只显示本队工作流；
 // 跨队浏览走 /workflows 搜索视图，不再有「全局工作流」的说法。
-type SquadTab = "overview" | "members" | "workflows" | "reviews" | "access" | "settings";
+type SquadTab = "overview" | "members" | "workflows";
 
 const SQUAD_TABS: { value: SquadTab; label: string }[] = [
   { value: "overview", label: "概览" },
   { value: "members", label: "成员" },
   { value: "workflows", label: "工作流" },
-  { value: "reviews", label: "复盘" },
-  { value: "access", label: "接入" },
-  { value: "settings", label: "设置" },
 ];
 
 export default function SquadDetailPage() {
+  const { open } = useCreateDialog();
   useGoalEvents();
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id;
   const { data: squads } = useSquads();
   const { data: agents } = useAgents();
@@ -66,7 +65,10 @@ export default function SquadDetailPage() {
   const { data: blueprints } = useBlueprints(id);
   const updateSquad = useUpdateSquad();
   const removeMember = useRemoveSquadMember();
-  const [tab, setTab] = useState<SquadTab>("overview");
+  const [tab, setTab] = useState<SquadTab>(() => {
+    const wanted = searchParams.get("tab");
+    return SQUAD_TABS.some((t) => t.value === wanted) ? (wanted as SquadTab) : "overview";
+  });
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState("");
@@ -109,10 +111,14 @@ export default function SquadDetailPage() {
     setEditDefaultWorkflow(squad.default_workflow_id || "");
   };
 
-  // 切 tab 时同步设置表单：进去总是当前数据，且不在输入过程中被后台刷新覆盖。
   const changeTab = (next: SquadTab) => {
-    if (next === "settings") syncEditForm();
     setTab(next);
+    // 让工作流详情能返回「工作流」tab，而不是总落回概览。
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "overview") params.delete("tab");
+    else params.set("tab", next);
+    const query = params.toString();
+    router.replace(`/squads/${id}${query ? `?${query}` : ""}`, { scroll: false });
   };
 
   const openEdit = () => {
@@ -260,6 +266,67 @@ export default function SquadDetailPage() {
             )}
           </SectionCard>
 
+          {/* 工作流是本队最重要的资产：概览必须能一眼看到并点进去，
+              不能只藏在第 4 个 tab 里。 */}
+          <SectionCard
+            title="本队工作流"
+            count={blueprints?.length ?? 0}
+            desc="任务只能钉本队已发布的版本；工作流归小队，跨队复用请复制一份。"
+            action={
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => changeTab("workflows")}
+                  className="text-[11px] text-ink-3 underline decoration-dotted underline-offset-2 hover:text-ink"
+                >
+                  查看全部工作流
+                </button>
+                <Link
+                  href={`/goals/new?kind=workflow&squad=${id}`}
+                  className="rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-white hover:opacity-90"
+                >
+                  新建工作流
+                </Link>
+              </div>
+            }
+          >
+            {!blueprints ? (
+              <div className="p-4"><Skeleton className="h-16 w-full" /></div>
+            ) : blueprints.length === 0 ? (
+              <div className="px-4 py-5">
+                <div className="text-sm text-ink-2">这支小队还没有工作流。</div>
+                <p className="mt-1 text-xs leading-relaxed text-ink-3">
+                  工作流把步骤、依赖和执行者固定成一张图。先建一份，任务才能钉住它；不建也能用自动拆解。
+                </p>
+                <p className="mt-2 text-xs text-ink-3">用本卡片右上角「新建工作流」从模板起步。</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-line">
+                {blueprints.slice(0, 3).map((b) => (
+                  <li key={b.id}>
+                    <Link href={`/workflows/${b.id}`} className="group flex items-center gap-3 px-4 py-3 hover:bg-surface-2">
+                      <BookA className="h-4 w-4 shrink-0 text-ink-3 group-hover:text-primary" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-ink">{b.name}</div>
+                        <div className="mt-0.5 text-[11px] text-ink-3">
+                          {b.latest_version_id
+                            ? `最新 v${b.latest_version ?? "?"} · ${b.latest_version_status === "published" ? "已发布" : "草稿"} · 可绑定任务`
+                            : "还没有发布版本"}
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[11px] text-ink-3 group-hover:text-primary">打开 →</span>
+                    </Link>
+                  </li>
+                ))}
+                {(blueprints?.length ?? 0) > 3 && (
+                  <li className="px-4 py-2 text-[11px] text-ink-3">
+                    还有 {(blueprints?.length ?? 0) - 3} 份，去「工作流」tab 看全部。
+                  </li>
+                )}
+              </ul>
+            )}
+          </SectionCard>
+
           {/* 编排摘要并进概览：原「编排」tab 去掉后不允许功能凭空消失。 */}
           <SquadRecentExecutions squadId={id} />
         </div>
@@ -367,84 +434,10 @@ export default function SquadDetailPage() {
       )}
 
       {/* 接入：仓库连接与 webhook */}
-      {tab === "access" && <SquadConnections squadId={id} />}
-
       {/* 工作流：本队列表（useBlueprints(id)），新建深链带上 ?squad= */}
       {tab === "workflows" && <SquadBlueprints squadId={id} />}
 
-      {/* 复盘：本队任务的 RSI session（只有开启复盘的任务才会生成） */}
-      {tab === "reviews" && <SquadReviews squadId={id} />}
-
-      {/* 设置：与编辑对话框共用表单，避免两处字段漂移 */}
-      {tab === "settings" && (
-        <SectionCard
-          title="设置"
-          desc="名称、Leader、描述与 Instructions；Leader 变更会让旧 leader 的 in-flight run 孤儿化"
-          action={
-            <Button
-              onClick={() => saveSquad()}
-              disabled={updateSquad.isPending || !editName.trim() || !editLeader}
-            >
-              {updateSquad.isPending ? "保存中…" : "保存"}
-            </Button>
-          }
-        >
-          <div className="space-y-4 p-4">
-            <Field
-              label="默认工作流"
-              hint="小队任务默认使用它；任务里可勾选不使用"
-            >
-              <select
-                className={inputCls}
-                value={editDefaultWorkflow}
-                onChange={(e) => setEditDefaultWorkflow(e.target.value)}
-                aria-label="默认工作流"
-              >
-                <option value="">自动拆解（不使用工作流）</option>
-                {blueprints !== undefined &&
-                  editDefaultWorkflow &&
-                  !blueprints.some((b) => b.id === editDefaultWorkflow) && (
-                    <option value={editDefaultWorkflow}>
-                      当前默认：{editDefaultWorkflow.slice(0, 8)}（不在本队列表中）
-                    </option>
-                  )}
-                {(blueprints ?? []).map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name || b.id.slice(0, 8)}
-                    {b.latest_version_id ? "" : "（未发布）"}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {blueprints && blueprints.length === 0 ? (
-              <p className="text-xs leading-relaxed text-ink-3">
-                这支小队还没有工作流，暂时只能选「自动拆解」。
-                <Link href={`/workflows/new?squad=${id}`} className="ml-1 text-accent hover:text-accent-dim">
-                  新建工作流 →
-                </Link>
-              </p>
-            ) : null}
-            <SquadBasicFields
-              agents={agents}
-              name={editName}
-              setName={setEditName}
-              leader={editLeader}
-              setLeader={setEditLeader}
-              description={editDesc}
-              setDescription={setEditDesc}
-              instructions={editInstr}
-              setInstructions={setEditInstr}
-            />
-            {updateSquad.isError && (
-              <p className="text-sm text-red-400">{String(updateSquad.error)}</p>
-            )}
-            <p className="text-xs leading-relaxed text-ink-3">
-              角色词汇表在「成员」tab 内维护；仓库连接在「接入」tab。
-            </p>
-          </div>
-        </SectionCard>
-      )}
-
+      {/* 设置已并入右上角「编辑」对话框；这里不再保留重复的 settings tab。 */}
       {/* Add member dialog */}
       {showAdd && (
         <AddMemberDialog
@@ -482,6 +475,41 @@ export default function SquadDetailPage() {
               instructions={editInstr}
               setInstructions={setEditInstr}
             />
+            <Field label="默认工作流" hint="小队任务默认使用它；任务里可以勾选不使用">
+              <select
+                className={inputCls}
+                value={editDefaultWorkflow}
+                onChange={(e) => setEditDefaultWorkflow(e.target.value)}
+                aria-label="默认工作流"
+              >
+                <option value="">自动拆解（不使用工作流）</option>
+                {blueprints !== undefined &&
+                  editDefaultWorkflow &&
+                  !blueprints.some((b) => b.id === editDefaultWorkflow) && (
+                    <option value={editDefaultWorkflow}>
+                      当前默认：{editDefaultWorkflow.slice(0, 8)}（不在本队列表中）
+                    </option>
+                  )}
+                {(blueprints ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name || b.id.slice(0, 8)}
+                    {b.latest_version_id ? "" : "（未发布）"}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {blueprints && blueprints.length === 0 ? (
+              <p className="text-xs leading-relaxed text-ink-3">
+                这支小队还没有工作流，暂时只能选「自动拆解」。
+                <button
+                  type="button"
+                  onClick={() => open("workflow", { squadId: id })}
+                  className="ml-1 text-accent hover:text-accent-dim"
+                >
+                  新建工作流 →
+                </button>
+              </p>
+            ) : null}
             {/* 保存失败必须显示——leader 校验等后端 400 错误静默等于「点了没反应」。 */}
             {updateSquad.isError && (
               <p className="text-sm text-red-400">{String(updateSquad.error)}</p>
@@ -599,6 +627,11 @@ function SquadRoleRegistry({ squadId }: { squadId: string }) {
         </Button>
       }
     >
+      <div className="border-b border-line bg-surface-2/30 px-4 py-3 text-[11px] leading-relaxed text-ink-3">
+        <p><span className="text-ink-2">这是什么：</span>给工作流用的岗位名。工作流节点写 <span className="font-mono text-teal-300">capability:reviewer</span>，平台就会在本队找角色是 reviewer 的成员来干。</p>
+        <p className="mt-1"><span className="text-ink-2">不用也可以：</span>不注册时成员角色是自由文本，按名字直接派活；注册第一个词后才切换成词表制。</p>
+        <p className="mt-1"><span className="text-ink-2">怎么配：</span>先想清楚小队里有哪些固定岗位（如 reviewer / implementer），在这里注册词并写岗位说明；成员角色再从词表里选。</p>
+      </div>
       {isLoading ? (
         <div className="space-y-2">
           {[0, 1].map((i) => (

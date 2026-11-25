@@ -115,17 +115,17 @@ export function ABRow({
       : "";
   return (
     <tr className="border-b border-line/60 last:border-b-0">
-      <td className="px-3 py-1.5 text-ink-3" title={metric}>
+      <td className="px-3 py-2 text-[12px] text-ink-3" title={metric}>
         {AB_METRIC_LABELS[metric] ?? metric}
       </td>
-      <td className="px-3 py-1.5 text-right font-mono text-[11px] tabular-nums text-ink-2">
+      <td className="px-3 py-2 text-right font-mono text-[12px] tabular-nums text-ink-2">
         {fmtABValue(metric, a)}
       </td>
-      <td className="px-3 py-1.5 text-right font-mono text-[11px] tabular-nums text-ink-2">
+      <td className="px-3 py-2 text-right font-mono text-[12px] tabular-nums text-ink-2">
         {fmtABValue(metric, b)}
       </td>
       <td
-        className={cn("px-3 py-1.5 text-right text-[11px]", hasBoth ? AB_TONE_TEXT[tone] : "text-ink-3")}
+        className={cn("px-3 py-2 text-right text-[12px]", hasBoth ? AB_TONE_TEXT[tone] : "text-ink-3")}
         title={deltaText}
       >
         {hasBoth ? (

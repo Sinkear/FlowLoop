@@ -96,6 +96,9 @@ import {
   setDomainAcceptanceLevel,
   setDomainWebhookSecret,
   listConnections,
+  listProjectSquads,
+  addProjectSquad,
+  removeProjectSquad,
   createSquadConnection,
   updateConnection,
   deleteConnection,
@@ -119,6 +122,7 @@ import {
   listRsiRounds,
   updateRsiFinding,
   retryRsiSession,
+  draftProposalFromFinding,
   getGoalWorkflow,
   listSquadWorkflows,
   listBlueprints,
@@ -187,6 +191,7 @@ export const qk = {
   domain: (id: string) => ["domains", id] as const,
   domainWebhook: (id: string) => ["domainWebhook", id] as const,
   connections: ["connections"] as const,
+  projectSquads: (domainId: string) => ["project-squads", domainId] as const,
   connectionsBySquad: (squadId: string) => ["connections", { squad_id: squadId }] as const,
   connectionWebhook: (id: string) => ["connectionWebhook", id] as const,
   im: ["im"] as const,
@@ -890,6 +895,35 @@ export function usePatchDomainAssignees(id?: string) {
 // ── Connection hooks（仓库连接：每条连接独立 webhook + secret） ──
 // A squad-scoped key lives under the same ["connections"] prefix, so every
 // mutation invalidates both the global list and any open squad's filtered view.
+export function useProjectSquads(domainId: string) {
+  return useQuery({
+    queryKey: qk.projectSquads(domainId),
+    queryFn: () => listProjectSquads(domainId),
+    enabled: !!domainId,
+  });
+}
+export function useAddProjectSquad() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domainId, squadId }: { domainId: string; squadId: string }) =>
+      addProjectSquad(domainId, squadId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.projectSquads(vars.domainId) });
+      qc.invalidateQueries({ queryKey: qk.domains });
+    },
+  });
+}
+export function useRemoveProjectSquad() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domainId, squadId }: { domainId: string; squadId: string }) =>
+      removeProjectSquad(domainId, squadId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: qk.projectSquads(vars.domainId) });
+      qc.invalidateQueries({ queryKey: qk.domains });
+    },
+  });
+}
 export function useConnections(squadId?: string) {
   return useQuery({
     queryKey: squadId ? qk.connectionsBySquad(squadId) : qk.connections,
@@ -903,8 +937,9 @@ export function useCreateConnection() {
       createSquadConnection(squadId, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.connections });
-      // 创建 connection 会清空该 domain 的旧版 assignee，列表页/详情页的
-      // legacy 视图也要跟着刷新。
+      // 创建 connection 同时把小队加入项目（project_squad）；项目详情的
+      // 小队卡与 legacy assignee 视图都要刷新。
+      qc.invalidateQueries({ queryKey: ["project-squads"] });
       qc.invalidateQueries({ queryKey: qk.domains });
     },
   });
@@ -1248,6 +1283,20 @@ export function useRetryRsiSession() {
   return useMutation({
     mutationFn: retryRsiSession,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rsi"] }),
+  });
+}
+// Phase C：单条发现 → 待审提案。成功后要刷两处：复盘的 findings
+// （proposal_id 变了 → 按钮变"查看提案"）和该工作流的提案列表（工作流页）。
+// 不吞错误：mutation 的 error 由调用点直接渲染给用户。
+export function useDraftProposalFromFinding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (findingId: string) => draftProposalFromFinding(findingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rsi"] });
+      qc.invalidateQueries({ queryKey: ["blueprints"] });
+      qc.invalidateQueries({ queryKey: ["blueprintProposals"] });
+    },
   });
 }
 

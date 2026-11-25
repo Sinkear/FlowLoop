@@ -209,13 +209,7 @@ function ProjectsInner() {
           </div>
         ) : list.length === 0 ? (
           <Empty icon={<FolderGit2 className="h-5 w-5" />}>
-            <span>还没有项目。创建一个项目并挂上代码仓库，任务就有地方落地了。</span>
-            <span className="mt-4 block">
-              <Button onClick={() => setEditor("new")} className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" />
-                新建项目
-              </Button>
-            </span>
+            还没有项目。用右上角「新建项目」创建一个并挂上代码仓库，任务就有地方落地了。
           </Empty>
         ) : (
           <div className="divide-y divide-line">

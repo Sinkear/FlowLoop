@@ -8,6 +8,7 @@ import {
   useAgents,
   useSquads,
   useDomains,
+  useBlueprints,
   useCreateSchedule,
   useUpdateSchedule,
   useDeleteSchedule,
@@ -31,7 +32,81 @@ import {
 } from "@/components/ui";
 import { cn, relTime } from "@/lib/utils";
 import { CategoryBadge } from "@/components/category-badge";
-import type { Schedule } from "@/lib/types";
+import type { Blueprint, Schedule } from "@/lib/types";
+
+// WorkflowChip：列表行只回答两个问题——「触发时会按哪个工作流跑」和
+// 「这一条复盘开不开」。固定版本号来自后端投影（blueprint_version），
+// 不拿 latest_version 顶替：草稿版本号会让「v3」看起来像已发布的 v3。
+function WorkflowChip({ schedule, blueprints }: { schedule: Schedule; blueprints?: Blueprint[] }) {
+  const review = schedule.execution_mode === "train";
+  const reviewChip = review ? (
+    <span
+      className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300"
+      title="任务进入终态时分析本次执行，发现可转成该工作流的提案"
+    >
+      复盘 开
+    </span>
+  ) : (
+    <span
+      className="rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
+      title="不分析本次执行；任务卡上会显示「本次未开启复盘」"
+    >
+      复盘 关
+    </span>
+  );
+
+  if (!schedule.blueprint_version_id) {
+    return (
+      <>
+        <span
+          className="rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
+          title="每次触发由执行 agent 现场拆解；没有固定工作流，发现不会转成提案"
+        >
+          自动拆解
+        </span>
+        {reviewChip}
+      </>
+    );
+  }
+
+  // 固定版本被删除/退役时 projectPin 投影为空：显示「已删除」，不静默当成自动拆解。
+  if (!schedule.blueprint_id) {
+    return (
+      <>
+        <span
+          className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300"
+          title="固定的工作流版本已不存在；下一次触发会退回自动拆解并记日志"
+        >
+          工作流已删除
+        </span>
+        {reviewChip}
+      </>
+    );
+  }
+
+  const bp = blueprints?.find((b) => b.id === schedule.blueprint_id);
+  const stale = !!bp?.latest_version_id && bp.latest_version_id !== schedule.blueprint_version_id;
+  return (
+    <>
+      <Link
+        href={`/workflows/${schedule.blueprint_id}`}
+        className="rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-2 hover:border-accent/40 hover:text-accent"
+        title="固定的是保存时选中的版本；工作流发布新版本不会自动改这条任务"
+      >
+        {schedule.blueprint_name || "工作流"} · v{schedule.blueprint_version || "?"}
+      </Link>
+      {stale && (
+        <span
+          className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300"
+          title="该工作流已发布更新的版本；点「编辑」可一键固定到最新发布版本"
+        >
+          有新版本
+        </span>
+      )}
+      {reviewChip}
+    </>
+  );
+}
 
 export default function SchedulesPage() {
   useGoalEvents();
@@ -39,6 +114,9 @@ export default function SchedulesPage() {
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
   const { data: domains } = useDomains();
+  // 工作流列表只用于两件事：把固定版本显示成「名字 · vN」，以及判断有没有新发布
+  // 版本。固定的是版本 id，名称/版本号由后端 projectPin 投影，页面上不猜。
+  const { data: blueprints } = useBlueprints();
   const createSchedule = useCreateSchedule();
   const deleteSchedule = useDeleteSchedule();
   const setEnabled = useSetScheduleEnabled();
@@ -75,7 +153,7 @@ export default function SchedulesPage() {
         action={
           <Button onClick={() => setShowForm(true)} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
-            新建
+            新建定时任务
           </Button>
         }
       />
@@ -135,7 +213,7 @@ export default function SchedulesPage() {
           </div>
         ) : list.length === 0 ? (
           <Empty icon={<CalendarClock className="h-5 w-5" />}>
-            暂无定时任务。点右上角「新建」创建一条 cron 任务——它会按计划自动创建 goal。
+            暂无定时任务。点右上角「新建定时任务」创建一条 cron 任务——它会按计划自动创建任务。
           </Empty>
         ) : (
           <div className="divide-y divide-line">
@@ -154,6 +232,7 @@ export default function SchedulesPage() {
                     </code>
                     <span className="font-mono text-[10px] text-ink-3">{s.timezone || "UTC"}</span>
                     <CategoryBadge category={s.category} className="scale-90" />
+                    <WorkflowChip schedule={s} blueprints={blueprints} />
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-3">
                     <span>负责人 {assigneeLabel(s)}</span>
@@ -201,7 +280,7 @@ export default function SchedulesPage() {
         )}
       </SectionCard>
 
-      {showForm && <NewScheduleForm agents={agents} squads={squads} domains={domains} onClose={() => setShowForm(false)} />}
+      {showForm && <NewScheduleForm agents={agents} squads={squads} domains={domains} blueprints={blueprints} onClose={() => setShowForm(false)} />}
       {detail && (
         <ScheduleDetail
           schedule={detail}
@@ -218,6 +297,7 @@ export default function SchedulesPage() {
           agents={agents}
           squads={squads}
           domains={domains}
+          blueprints={blueprints}
           onClose={() => setEditTarget(null)}
         />
       )}
@@ -395,32 +475,54 @@ function ScheduleFormFields({
   agents,
   squads,
   domains,
+  blueprints,
 }: {
   form: ScheduleFormState;
   set: (patch: Partial<ScheduleFormState>) => void;
   agents?: { id: string; name: string }[];
-  squads?: { id: string; name: string }[];
+  squads?: { id: string; name: string; default_workflow_id?: string }[];
   domains?: { id: string; name: string }[];
+  blueprints?: Blueprint[];
 }) {
+  // 可选工作流 = 本队已发布的版本（latest_version_id 就是最新发布版本的 id）。
+  // 没发布过的队只给「自动拆解」，不给一个钉上去必然 400 的选项。
+  const squadId = form.assignee_type === "squad" ? form.assignee_id : "";
+  const options = (blueprints ?? []).filter((b) => b.squad_id === squadId && b.latest_version_id);
+  // 固定的版本可能已经被删除（历史数据），或来自别的队（Phase B 之前）。
+  // 这类值必须作为「当前值」出现在下拉里，否则保存时会被悄悄清空。
+  const orphanPin =
+    !!form.blueprint_version_id && !options.some((b) => b.latest_version_id === form.blueprint_version_id);
+
   return (
     <>
       <Field label="名称" hint="必填">
         <input value={form.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} required placeholder="定时任务名称…" />
       </Field>
-      <Field label="标题模板" hint="必填，每次触发时使用此模板创建 Goal 标题">
+      <Field label="标题模板" hint="必填，每次触发时使用此模板创建任务标题">
         <input value={form.title_template} onChange={(e) => set({ title_template: e.target.value })} className={inputCls} required placeholder="每日站会 {{date}}" />
       </Field>
       <Field label="描述">
         <textarea value={form.description} onChange={(e) => set({ description: e.target.value })} className={inputCls} rows={2} />
       </Field>
-      <Field label="负责人类型">
-        <select value={form.assignee_type} onChange={(e) => { set({ assignee_type: e.target.value, assignee_id: "" }); }} className={inputCls}>
-          <option value="agent">Agent</option>
-          <option value="squad">Squad</option>
+      <Field label="负责人类型" hint="要跑工作流请选小队；单个智能体的任务不能固定工作流">
+        <select
+          value={form.assignee_type}
+          onChange={(e) => {
+            set({
+              assignee_type: e.target.value,
+              assignee_id: "",
+              blueprint_version_id: "",
+              blueprint_name: "",
+            });
+          }}
+          className={inputCls}
+        >
+          <option value="agent">智能体</option>
+          <option value="squad">小队</option>
         </select>
       </Field>
       {form.assignee_type === "agent" && (
-        <Field label="选择 Agent" hint="必填">
+        <Field label="选择智能体" hint="必填">
           <select value={form.assignee_id} onChange={(e) => set({ assignee_id: e.target.value })} className={inputCls} required>
             <option value="">选择…</option>
             {agents?.map((a) => (
@@ -430,8 +532,29 @@ function ScheduleFormFields({
         </Field>
       )}
       {form.assignee_type === "squad" && (
-        <Field label="选择 Squad" hint="必填">
-          <select value={form.assignee_id} onChange={(e) => set({ assignee_id: e.target.value })} className={inputCls} required>
+        <Field label="选择小队" hint="必填">
+          <select
+            value={form.assignee_id}
+            onChange={(e) => {
+              const sid = e.target.value;
+              // 选定小队时预选该队默认工作流（如果它有已发布版本）。
+              // 这只是表单默认值：后端不做任何「保存时自动解析」，空值就是自动拆解。
+              const sq = squads?.find((x) => x.id === sid);
+              const def = blueprints?.find(
+                (b) => b.id === (sq?.default_workflow_id ?? "") && b.latest_version_id
+              );
+              set({
+                assignee_id: sid,
+                blueprint_version_id: def?.latest_version_id ?? "",
+                blueprint_name: def?.name ?? "",
+                // 与新建任务同一默认：钉了工作流就默认开复盘，自动拆解默认关。
+                // 用户仍可在下面的“复盘”字段手动改。
+                execution_mode: def?.latest_version_id ? "train" : "infer",
+              });
+            }}
+            className={inputCls}
+            required
+          >
             <option value="">选择…</option>
             {squads?.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
@@ -447,6 +570,100 @@ function ScheduleFormFields({
           ))}
         </select>
       </Field>
+      {form.assignee_type === "squad" ? (
+        <Field
+          label="工作流"
+          hint="固定的是版本：触发时按这个版本编排。空 = 自动拆解（不产生提案）。发布新版本不会改这条任务"
+        >
+          <select
+            value={form.blueprint_version_id}
+            onChange={(e) => {
+              const vid = e.target.value;
+              const bp = options.find((b) => b.latest_version_id === vid);
+              set({
+                blueprint_version_id: vid,
+                blueprint_name: bp?.name ?? (vid ? form.blueprint_name : ""),
+                // 选择/清空工作流时同步复盘默认；手动改过复盘则以此后手动值为准。
+                execution_mode: vid ? "train" : "infer",
+              });
+            }}
+            className={inputCls}
+          >
+            <option value="">自动拆解（不固定工作流）</option>
+            {options.map((b) => (
+              <option key={b.id} value={b.latest_version_id}>
+                {b.name} · v{b.latest_version}
+              </option>
+            ))}
+            {orphanPin && (
+              <option value={form.blueprint_version_id}>
+                {form.blueprint_name || "已固定的工作流"}（当前值 · 版本可能已删除）
+              </option>
+            )}
+          </select>
+        </Field>
+      ) : (
+        <Field label="工作流" hint="单个智能体的任务不能固定工作流；要跑工作流请把负责人改成小队">
+          <div className={`${inputCls} cursor-not-allowed text-ink-3`}>自动拆解</div>
+        </Field>
+      )}
+
+      <Field
+        label="复盘"
+        hint={
+          form.execution_mode === "train"
+            ? "任务进入终态时分析本次执行，发现可转成该工作流的提案"
+            : "不分析本次执行；任务卡上显示「本次未开启复盘」"
+        }
+      >
+        <select
+          value={form.execution_mode}
+          onChange={(e) => set({ execution_mode: e.target.value })}
+          className={inputCls}
+        >
+          <option value="infer">关 · 不分析本次执行</option>
+          <option value="train">开 · 分析本次执行</option>
+        </select>
+      </Field>
+      {form.execution_mode === "train" && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="分析预算 (USD)" hint="上限 100；超预算即停止分析">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                value={form.budget_usd}
+                onChange={(e) => set({ budget_usd: Number(e.target.value) || 0 })}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="采样率" hint="(0,1]；1 = 每次都分析，未命中记为「跳过」">
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={form.sample_rate}
+                onChange={(e) => set({ sample_rate: Number(e.target.value) || 0 })}
+                className={inputCls}
+              />
+            </Field>
+          </div>
+          <Field label="内容采集" hint="完整内容分析更准，但占用更多空间">
+            <select
+              value={form.content_capture}
+              onChange={(e) => set({ content_capture: e.target.value })}
+              className={inputCls}
+            >
+              <option value="none">不采集</option>
+              <option value="redacted">脱敏摘要（默认）</option>
+              <option value="full">完整内容</option>
+            </select>
+          </Field>
+        </>
+      )}
       {/* Feature B：触发出来的 Goal 继承此验收分类。 */}
       <Field
         label="验收分类"
@@ -467,6 +684,13 @@ function ScheduleFormFields({
   );
 }
 
+// blueprint_name 是表单里的回显标签（下拉里「当前值 · 可能已删除」那种），
+// 不是可提交字段：后端只存版本 id，名称由 projectPin 从 pin 投影出来。
+function scheduleBody(form: ScheduleFormState) {
+  const { blueprint_name, ...body } = form;
+  return body;
+}
+
 type ScheduleFormState = {
   name: string;
   title_template: string;
@@ -477,17 +701,27 @@ type ScheduleFormState = {
   cron_expression: string;
   timezone: string;
   category: string; // hitl | hootl
+  // Phase C：固定工作流版本（'' = 自动拆解）+ 复盘三件套。
+  // 字段与 goal 同名同义，触发时原样写进 goal，不在这里做二次解释。
+  blueprint_version_id: string;
+  blueprint_name: string; // 仅用于回显（后端会投影，这里是表单内的临时标签）
+  execution_mode: string; // infer | train
+  content_capture: string; // none | redacted | full
+  sample_rate: number;
+  budget_usd: number;
 };
 
 function NewScheduleForm({
   agents,
   squads,
   domains,
+  blueprints,
   onClose,
 }: {
   agents?: { id: string; name: string }[];
-  squads?: { id: string; name: string }[];
+  squads?: { id: string; name: string; default_workflow_id?: string }[];
   domains?: { id: string; name: string }[];
+  blueprints?: Blueprint[];
   onClose: () => void;
 }) {
   const createSchedule = useCreateSchedule();
@@ -495,17 +729,20 @@ function NewScheduleForm({
     name: "", title_template: "", description: "",
     assignee_type: "agent", assignee_id: "", domain_id: "",
     cron_expression: "", timezone: "UTC", category: "hitl",
+    blueprint_version_id: "", blueprint_name: "",
+    execution_mode: "infer", content_capture: "redacted",
+    sample_rate: 1, budget_usd: 2,
   });
   const set = (patch: Partial<ScheduleFormState>) => setForm((f) => ({ ...f, ...patch }));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createSchedule.mutate(form, { onSuccess: onClose });
+    createSchedule.mutate(scheduleBody(form), { onSuccess: onClose });
   };
 
   return (
     <Dialog
-      title="新建 Schedule"
+      title="新建定时任务"
       onClose={onClose}
       footer={
         <>
@@ -517,7 +754,14 @@ function NewScheduleForm({
       }
     >
       <form id="schedule-form" onSubmit={handleSubmit} className="space-y-4">
-        <ScheduleFormFields form={form} set={set} agents={agents} squads={squads} domains={domains} />
+        <ScheduleFormFields
+          form={form}
+          set={set}
+          agents={agents}
+          squads={squads}
+          domains={domains}
+          blueprints={blueprints}
+        />
         {createSchedule.isError && (
           <p className="text-sm text-red-400">{String(createSchedule.error)}</p>
         )}
@@ -533,12 +777,14 @@ function EditScheduleDialog({
   agents,
   squads,
   domains,
+  blueprints,
   onClose,
 }: {
   schedule: Schedule;
   agents?: { id: string; name: string }[];
-  squads?: { id: string; name: string }[];
+  squads?: { id: string; name: string; default_workflow_id?: string }[];
   domains?: { id: string; name: string }[];
+  blueprints?: Blueprint[];
   onClose: () => void;
 }) {
   const updateSchedule = useUpdateSchedule();
@@ -552,16 +798,30 @@ function EditScheduleDialog({
     cron_expression: schedule.cron_expression,
     timezone: schedule.timezone || "UTC",
     category: schedule.category || "hitl",
+    blueprint_version_id: schedule.blueprint_version_id || "",
+    blueprint_name: schedule.blueprint_name || "",
+    // 旧行（Phase C 之前创建）后端补的默认值就是 infer/redacted/1/2，
+    // 这里仍给 fallback，避免把 '' 当成"开启"提交。
+    execution_mode: schedule.execution_mode || "infer",
+    content_capture: schedule.content_capture || "redacted",
+    sample_rate: typeof schedule.sample_rate === "number" && schedule.sample_rate > 0 ? schedule.sample_rate : 1,
+    budget_usd: typeof schedule.budget_usd === "number" ? schedule.budget_usd : 2,
   });
   const set = (patch: Partial<ScheduleFormState>) => setForm((f) => ({ ...f, ...patch }));
 
   // assignee/domain 与原值不同时显示"仅影响后续触发"提示。
   const assigneeChanged = form.assignee_id !== schedule.assignee_id || form.assignee_type !== schedule.assignee_type;
   const domainChanged = form.domain_id !== schedule.domain_id;
+  const pinChanged = form.blueprint_version_id !== (schedule.blueprint_version_id || "");
+  const reviewChanged = form.execution_mode !== (schedule.execution_mode || "infer");
+  // 该工作流已发布更新的版本时，给一个「固定到最新」的入口（D3）。
+  const bp = blueprints?.find((b) => b.id === schedule.blueprint_id);
+  const newerPin = !!bp?.latest_version_id && bp.latest_version_id !== form.blueprint_version_id;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSchedule.mutate({ id: schedule.id, ...form }, { onSuccess: onClose });
+    // PUT 是整条替换：Phase C 字段必须一起提交，否则会被清成空/默认值。
+    updateSchedule.mutate({ id: schedule.id, ...scheduleBody(form) }, { onSuccess: onClose });
   };
 
   return (
@@ -578,10 +838,39 @@ function EditScheduleDialog({
       }
     >
       <form id="schedule-edit-form" onSubmit={handleSubmit} className="space-y-4">
-        <ScheduleFormFields form={form} set={set} agents={agents} squads={squads} domains={domains} />
+        <ScheduleFormFields
+          form={form}
+          set={set}
+          agents={agents}
+          squads={squads}
+          domains={domains}
+          blueprints={blueprints}
+        />
+        {newerPin && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+            <p className="text-xs text-amber-400">
+              该工作流已发布<strong> v{bp?.latest_version}</strong>
+              ，这条任务还固定在 v{schedule.blueprint_version || "?"}。
+            </p>
+            <button
+              type="button"
+              onClick={() =>
+                set({ blueprint_version_id: bp?.latest_version_id ?? "", blueprint_name: bp?.name ?? "" })
+              }
+              className="text-xs font-medium text-amber-300 underline-offset-2 hover:underline"
+            >
+              固定到最新发布版本
+            </button>
+          </div>
+        )}
         {(assigneeChanged || domainChanged) && (
           <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
             改动负责人或项目仅影响<strong>后续触发</strong>，已派生的 goal 保持原值不变。
+          </p>
+        )}
+        {(pinChanged || reviewChanged) && (
+          <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
+            工作流固定版本或复盘开关只影响<strong>后续触发</strong>；已派生的 goal 保持创建时的版本与开关，复盘按当时的图对比，不会改写历史。
           </p>
         )}
         {updateSchedule.isError && (

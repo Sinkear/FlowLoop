@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Activity, ArrowRight } from "lucide-react";
 import { Badge, Empty, SectionCard, Segmented, Skeleton } from "@/components/ui";
 import { useGoals, useRsiSessions } from "@/lib/queries";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import type { RsiSession, RsiSessionStatus } from "@/lib/types";
 import { relTime } from "@/lib/utils";
 import { DASH, fmtInt, fmtMs, fmtSpeedup, measured } from "@/components/training/format";
@@ -109,7 +110,8 @@ function ReviewRow({ session }: { session: RsiSession }) {
   );
 }
 
-export function SquadReviews({ squadId }: { squadId: string }) {
+export function SquadReviews({ squadId, blueprintId }: { squadId?: string; blueprintId?: string }) {
+  const { open } = useCreateDialog();
   const { data: goals, isLoading: goalsLoading } = useGoals();
   const { data: sessions, isLoading: sessionsLoading } = useRsiSessions();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -124,16 +126,16 @@ export function SquadReviews({ squadId }: { squadId: string }) {
     [goals, squadId],
   );
 
-  const rows = useMemo(
-    () =>
-      (sessions ?? [])
-        .filter((s) => squadGoalIds.has(s.goal_id))
-        .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0)),
-    [sessions, squadGoalIds],
-  );
+  const rows = useMemo(() => {
+    const all = sessions ?? [];
+    const scoped = blueprintId
+      ? all.filter((s) => s.blueprint_id === blueprintId)
+      : all.filter((s) => squadGoalIds.has(s.goal_id));
+    return scoped.sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0));
+  }, [sessions, squadGoalIds, blueprintId]);
 
   const visible = rows.filter((s) => matchesStatus(s.status, statusFilter));
-  const isLoading = goalsLoading || sessionsLoading;
+  const isLoading = (blueprintId ? false : goalsLoading) || sessionsLoading;
   const analyzed = rows.filter((s) => s.status === "ready").length;
 
   return (
@@ -141,9 +143,13 @@ export function SquadReviews({ squadId }: { squadId: string }) {
       title="复盘"
       count={isLoading ? undefined : rows.length}
       desc={
-        rows.length > 0
-          ? `本队任务的复盘 · 已分析 ${analyzed} 条 · 按开始时间倒序`
-          : "本队任务的复盘（仅开启复盘的任务）"
+        blueprintId
+          ? rows.length > 0
+            ? `使用这个工作流的任务复盘 · 已分析 ${analyzed} 条 · 按开始时间倒序`
+            : "使用这个工作流的任务复盘（仅开启复盘的任务）"
+          : rows.length > 0
+            ? `本队任务的复盘 · 已分析 ${analyzed} 条 · 按开始时间倒序`
+            : "本队任务的复盘（仅开启复盘的任务）"
       }
       bodyClassName="p-0"
     >
@@ -158,21 +164,25 @@ export function SquadReviews({ squadId }: { squadId: string }) {
         </div>
       ) : rows.length === 0 ? (
         <Empty icon={<Activity className="h-4 w-4" />}>
-          这支小队还没有复盘。复盘只对开启「完成后生成复盘」的任务生成（小队 + 工作流默认开启，
-          自动拆解默认关闭）；任务进入终态后才会出现在这里，所以为空不代表任务没跑过。
+          {blueprintId
+            ? "还没有使用这个工作流的任务复盘。任务开启「完成后生成复盘」并且进入终态后，复盘会出现在这里。"
+            : "这支小队还没有复盘。复盘只对开启「完成后生成复盘」的任务生成（小队 + 工作流默认开启，自动拆解默认关闭）；任务进入终态后才会出现在这里，所以为空不代表任务没跑过。"}
           <span className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <Link
-              href="/training"
-              className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              去复盘看看
-            </Link>
-            <Link
-              href="/goals/new"
+            {!blueprintId && (
+              <Link
+                href="/training"
+                className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                查看全部复盘
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => open("task")}
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
               新建复盘任务
-            </Link>
+            </button>
           </span>
         </Empty>
       ) : (

@@ -49,11 +49,23 @@ func (h *Handlers) getRsiSession(w http.ResponseWriter, r *http.Request) {
 	if findings == nil {
 		findings = []service.RsiFinding{}
 	}
+	// Phase C: the review renders findings and their proposals side by side.
+	// The proposals live on the workflow the review belongs to (session
+	// snapshot, with the goal-pin fallback baked into the read); a review of an
+	// auto-decomposed run has no workflow and therefore no proposals — an empty
+	// array, never a fabricated one.
+	proposals := []service.BlueprintProposal{}
+	if session != nil && session.BlueprintID != "" && h.Blueprint != nil {
+		if list, perr := h.Blueprint.ListProposals(r.Context(), session.BlueprintID); perr == nil {
+			proposals = list
+		}
+	}
 	writeJSON(w, map[string]any{
-		"session":  session,
-		"report":   report,
-		"findings": findings,
-		"workflow": graph,
+		"session":   session,
+		"report":    report,
+		"findings":  findings,
+		"workflow":  graph,
+		"proposals": proposals,
 	}, nil)
 }
 
@@ -119,6 +131,23 @@ func (h *Handlers) squadWorkflows(w http.ResponseWriter, r *http.Request) {
 		out = []service.WorkflowGoalSummary{}
 	}
 	writeJSON(w, out, err)
+}
+
+// draftProposalFromFinding turns ONE finding into a pending blueprint proposal
+// on the pinned (and compiled) workflow (Phase C). Unlike the analysis-time
+// auto-drafts it never swallows a refusal: every reason is returned so the
+// review UI can show what actually happened (no fake success).
+func (h *Handlers) draftProposalFromFinding(w http.ResponseWriter, r *http.Request) {
+	if h.RSI == nil {
+		writeErr(w, http.StatusNotFound, service.ErrNotFound)
+		return
+	}
+	p, err := h.RSI.DraftProposalFromFinding(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]any{"proposal": p}, nil)
 }
 
 // patchRsiFinding confirms or dismisses one finding.

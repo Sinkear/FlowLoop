@@ -35,6 +35,7 @@ import {
   measured,
 } from "@/components/training/format";
 import { cn } from "@/lib/utils";
+import type { RsiSession } from "@/lib/types";
 
 type Tab = "overview" | "findings" | "workflow" | "insights";
 
@@ -50,9 +51,11 @@ const IN_FLIGHT = ["waiting", "analyzing"];
 // 要从 goal + domains/squads/agents 里 join。拆成独立组件，useGoal 才只在
 // 会话确实关联任务时挂载（goal_id 为空时不发请求）。
 function ReviewContext({
+  session,
   goalId,
   fallbackDomainId,
 }: {
+  session: RsiSession;
   goalId: string;
   fallbackDomainId: string;
 }) {
@@ -63,23 +66,27 @@ function ReviewContext({
 
   const domainId = goal?.domain_id || fallbackDomainId;
   const domain = domains?.find((d) => d.id === domainId);
-  const squad =
-    goal?.assignee_type === "squad"
-      ? squads?.find((s) => s.id === goal.assignee_id)
-      : undefined;
+  // 归属优先取会话快照（复盘发生时的 squad/工作流），旧会话没有快照才回退到 goal：
+  // 任务被改派之后，历史复盘的归属不应该跟着变。
+  const squadId = session.squad_id || (goal?.assignee_type === "squad" ? goal.assignee_id : "");
+  const squad = squads?.find((s) => s.id === squadId);
   const agent =
     goal?.assignee_type === "agent"
       ? agents?.find((a) => a.id === goal.assignee_id)
       : undefined;
-  const version = goal?.blueprint_version_id ?? "";
+  const version = session.workflow_version_id || goal?.blueprint_version_id || "";
+  const workflowId = session.blueprint_id || "";
+  const workflowVersion = session.blueprint_version || 0;
   // goal 尚未加载完时只显示占位，不把 assignee_type 猜成小队/单干。
   const squadText = squad?.name
     ? squad.name
-    : goal
-      ? goal.assignee_type === "squad"
-        ? "已删除小队"
-        : "不适用（单干）"
-      : "—";
+    : session.squad_name
+      ? session.squad_name
+      : goal
+        ? goal.assignee_type === "squad"
+          ? "已删除小队"
+          : "不适用（单干）"
+        : "—";
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
@@ -106,14 +113,24 @@ function ReviewContext({
         </span>
       )}
       <span>
-        工作流版本{" "}
-        {version ? (
-          <span className="font-mono text-ink-2" title={version}>
-            {version.slice(0, 8)}
-          </span>
+        工作流{" "}
+        {workflowId ? (
+          <>
+            <Link
+              href={`/workflows/${workflowId}`}
+              className="text-ink-2 transition-colors hover:text-accent"
+              title={workflowId}
+            >
+              {session.blueprint_name || workflowId.slice(0, 8)}
+            </Link>
+            {" · "}
+            <span className="font-mono text-ink-2" title={version}>
+              {workflowVersion ? `v${workflowVersion}` : version.slice(0, 8)}
+            </span>
+          </>
         ) : (
           <span className="text-ink-2">
-            {goal ? "未使用工作流（自动拆解）" : "—"}
+            {goal || session.id ? "未使用工作流（自动拆解）" : "—"}
           </span>
         )}
       </span>
@@ -231,7 +248,11 @@ export default function TrainingDetailPage() {
       />
 
       {session.goal_id && (
-        <ReviewContext goalId={session.goal_id} fallbackDomainId={session.domain_id} />
+        <ReviewContext
+          session={session}
+          goalId={session.goal_id}
+          fallbackDomainId={session.domain_id}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-3">

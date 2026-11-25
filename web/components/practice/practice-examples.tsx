@@ -1,7 +1,7 @@
 "use client";
 
-import { Boxes, Users } from "lucide-react";
-import { SectionCard } from "@/components/ui";
+import { Boxes, Package, Users } from "lucide-react";
+import { Button, SectionCard } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import {
   PRACTICE_SOURCE_META,
@@ -109,12 +109,20 @@ function ExampleCard({ example }: { example: PracticeExample }) {
   );
 }
 
-export function PracticeExamples() {
+export function PracticeExamples({ onImport }: { onImport?: () => void }) {
   return (
     <SectionCard
       title="实践包示例"
       count={EXAMPLES.length}
-      desc="以下均为展示样式，不是可导入的包；接入来源后，真实包会替换这里并标上来源徽章。"
+      desc="以下为展示样式，用来说明实践包的形状与来源读法，本身不是可导入的包；真实导入请走「导入实践包」。"
+      action={
+        onImport ? (
+          <Button variant="outline" onClick={onImport} className="h-7 px-2 text-xs">
+            <Package className="h-3.5 w-3.5" />
+            导入实践包
+          </Button>
+        ) : undefined
+      }
       descInBody
     >
       <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">

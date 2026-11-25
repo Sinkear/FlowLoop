@@ -50,7 +50,9 @@ func TestFireScheduleGoalInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if err := insertFiredGoal(ctx, tx, goalID, "t", "d", domain.ID, "agent", agent.ID, "hitl", scheduleID, ts); err != nil {
+	// Zero firedGoalWorkflow = the pre-Phase-C shape (auto-decompose + infer),
+	// which is exactly what the column/value mapping regression covers.
+	if err := insertFiredGoal(ctx, tx, goalID, "t", "d", domain.ID, "agent", agent.ID, "hitl", scheduleID, ts, firedGoalWorkflow{}); err != nil {
 		t.Fatalf("insertFiredGoal: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -76,6 +78,9 @@ func TestFireScheduleGoalInsert(t *testing.T) {
 	}
 	if g.Category != "hitl" {
 		t.Fatalf("fired goal category = %q, want hitl", g.Category)
+	}
+	if g.ExecutionMode != "infer" || g.BlueprintVersionID != "" {
+		t.Fatalf("zero workflow template must yield an infer goal with no pin, got mode=%q pin=%q", g.ExecutionMode, g.BlueprintVersionID)
 	}
 
 	// And EnqueueForGoal must produce a run (the full dispatch entry).

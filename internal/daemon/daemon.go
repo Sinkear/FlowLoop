@@ -1606,16 +1606,45 @@ func mustGitRun(ctx context.Context, dir string, args ...string) string {
 	return strings.TrimSpace(out)
 }
 
+// firedGoalWorkflow is the Phase C "goal template" part of a schedule-fired
+// goal: the workflow version pinned at SAVE time and the analysis axis. The
+// zero value is exactly the pre-Phase-C behavior (auto-decompose, infer), so
+// every existing schedule row keeps firing the same kind of goal.
+type firedGoalWorkflow struct {
+	BlueprintVersionID string
+	ExecutionMode      string // infer|train
+	ContentCapture     string // none|redacted|full
+	SampleRate         float64
+	BudgetUSD          float64
+}
+
 // insertFiredGoal inserts the schedule-fired goal row inside the caller's
 // transaction. Extracted as its own function because its column/value
 // mapping regressed twice (excess VALUES were silently accepted and wrote
 // 'active' into assignee_id with status left empty) — the regression test
 // calls THIS, not a copy.
-func insertFiredGoal(ctx context.Context, tx *sql.Tx, goalID, title, desc, domainID, assigneeType, assigneeID, category, scheduleID, ts string) error {
+func insertFiredGoal(ctx context.Context, tx *sql.Tx, goalID, title, desc, domainID, assigneeType, assigneeID, category, scheduleID, ts string, wf firedGoalWorkflow) error {
+	// Zero-value normalization lives HERE, not only in the caller: the column
+	// DEFAULTs never apply to an explicit '' parameter, and a blank
+	// execution_mode would make the goal un-dispatchable-by-mode forever.
+	if wf.ExecutionMode == "" {
+		wf.ExecutionMode = "infer"
+	}
+	if wf.ContentCapture == "" {
+		wf.ContentCapture = "redacted"
+	}
+	if wf.SampleRate <= 0 {
+		wf.SampleRate = 1
+	}
+	if wf.BudgetUSD <= 0 {
+		wf.BudgetUSD = 2
+	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at)
-		 VALUES (?,?,?,?,?,?,'active',?,'','system',?,?)`,
-		goalID, title, desc, domainID, assigneeType, assigneeID, category, scheduleID, ts)
+		`INSERT INTO goal (id,title,description,domain_id,assignee_type,assignee_id,status,category,handoff_note,created_by_type,created_by_id,created_at,
+		                   blueprint_version_id,execution_mode,content_capture,sample_rate,budget_usd)
+		 VALUES (?,?,?,?,?,?,'active',?,'','system',?,?,?,?,?,?,?)`,
+		goalID, title, desc, domainID, assigneeType, assigneeID, category, scheduleID, ts,
+		wf.BlueprintVersionID, wf.ExecutionMode, wf.ContentCapture, wf.SampleRate, wf.BudgetUSD)
 	return err
 }
 
@@ -2604,7 +2633,8 @@ func (d *Daemon) runBudgetSeconds(ctx context.Context, goalID, domainID string) 
 func (d *Daemon) dispatchSchedules(ctx context.Context) {
 	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := d.st.DB().QueryContext(ctx,
-		`SELECT id, title_template, description, assignee_type, assignee_id, domain_id, category, cron_expression, timezone, next_run_at
+		`SELECT id, title_template, description, assignee_type, assignee_id, domain_id, category, cron_expression, timezone, next_run_at,
+		        blueprint_version_id, execution_mode, content_capture, sample_rate, budget_usd
 		 FROM schedule WHERE enabled=1 AND next_run_at != '' AND next_run_at <= ?`, nowStr)
 	if err != nil {
 		logging.Errorf("daemon: schedule query: %v", err)
@@ -2613,7 +2643,8 @@ func (d *Daemon) dispatchSchedules(ctx context.Context) {
 	var due []scheduleDueRow
 	for rows.Next() {
 		var r scheduleDueRow
-		if err := rows.Scan(&r.ScheduleID, &r.TitleTemplate, &r.Description, &r.AssigneeType, &r.AssigneeID, &r.DomainID, &r.Category, &r.CronExpression, &r.Timezone, &r.NextRunAt); err != nil {
+		if err := rows.Scan(&r.ScheduleID, &r.TitleTemplate, &r.Description, &r.AssigneeType, &r.AssigneeID, &r.DomainID, &r.Category, &r.CronExpression, &r.Timezone, &r.NextRunAt,
+			&r.BlueprintVersionID, &r.ExecutionMode, &r.ContentCapture, &r.SampleRate, &r.BudgetUSD); err != nil {
 			rows.Close()
 			logging.Errorf("daemon: schedule scan: %v", err)
 			return
@@ -2675,6 +2706,10 @@ func (d *Daemon) skipMissedOccurrences(ctx context.Context, r scheduleDueRow) (i
 
 type scheduleDueRow struct {
 	ScheduleID, TitleTemplate, Description, AssigneeType, AssigneeID, DomainID, Category, CronExpression, Timezone, NextRunAt string
+	// Phase C: the goal template saved on the schedule (workflow pin + analysis
+	// axis). Copied verbatim onto every fired goal — never re-resolved here.
+	BlueprintVersionID, ExecutionMode, ContentCapture string
+	SampleRate, BudgetUSD                             float64
 }
 
 func (d *Daemon) fireSchedule(ctx context.Context, r scheduleDueRow) {
@@ -2701,11 +2736,56 @@ func (d *Daemon) fireSchedule(ctx context.Context, r scheduleDueRow) {
 		return
 	}
 	defer tx.Rollback()
-	// 12 columns → exactly 12 values: id,title,description,domain_id,
+	// Phase C (WEB-IA-REDESIGN D3): the workflow pin was chosen when the
+	// schedule was SAVED. The daemon copies it — it must NOT "re-resolve latest
+	// published" here, or a weekly run would silently switch topology between
+	// saves and its reviews would stop being comparable (and the pin would
+	// bypass the save-time squad/published validation the form relies on).
+	// Liveness is the one thing checked at fire time: if the pinned version was
+	// deleted (or retired) since the save, the goal fires WITHOUT a workflow and
+	// says so in the log — a fired goal must never carry a pin that cannot
+	// compile at claim time.
+	wf := firedGoalWorkflow{
+		BlueprintVersionID: r.BlueprintVersionID,
+		ExecutionMode:      r.ExecutionMode,
+		ContentCapture:     r.ContentCapture,
+		SampleRate:         r.SampleRate,
+		BudgetUSD:          r.BudgetUSD,
+	}
+	if wf.ExecutionMode == "" {
+		wf.ExecutionMode = "infer"
+	}
+	if wf.ContentCapture == "" {
+		wf.ContentCapture = "redacted"
+	}
+	if wf.SampleRate <= 0 {
+		wf.SampleRate = 1
+	}
+	if wf.BudgetUSD <= 0 {
+		wf.BudgetUSD = 2
+	}
+	if wf.BlueprintVersionID != "" {
+		var status string
+		switch err := tx.QueryRowContext(ctx,
+			`SELECT status FROM blueprint_version WHERE id=?`, wf.BlueprintVersionID).Scan(&status); {
+		case errors.Is(err, sql.ErrNoRows):
+			logging.Infof("daemon: schedule %s pinned workflow version %s no longer exists — firing without a workflow", r.ScheduleID, wf.BlueprintVersionID)
+			wf.BlueprintVersionID = ""
+		case err != nil:
+			logging.Infof("daemon: schedule %s check pinned workflow version: %v", r.ScheduleID, err)
+			return
+		case status != "published":
+			logging.Infof("daemon: schedule %s pinned workflow version %s is %s — firing without a workflow", r.ScheduleID, wf.BlueprintVersionID, status)
+			wf.BlueprintVersionID = ""
+		}
+	}
+	// 22 columns → exactly 22 values: id,title,description,domain_id,
 	// assignee_type,assignee_id,category as parameters; status='active',
 	// handoff_note='', created_by_type='system' literal; created_by_id=
-	// schedule id, created_at=ts as parameters.
-	if err := insertFiredGoal(ctx, tx, goalID, r.TitleTemplate, r.Description, r.DomainID, assigneeType, assigneeID, r.Category, r.ScheduleID, ts); err != nil {
+	// schedule id, created_at=ts as parameters; then the Phase C goal template
+	// (blueprint_version_id,execution_mode,content_capture,sample_rate,
+	// budget_usd) as the trailing parameters.
+	if err := insertFiredGoal(ctx, tx, goalID, r.TitleTemplate, r.Description, r.DomainID, assigneeType, assigneeID, r.Category, r.ScheduleID, ts, wf); err != nil {
 		logging.Infof("daemon: schedule %s insert goal: %v", r.ScheduleID, err)
 		return
 	}
@@ -2791,6 +2871,24 @@ func (d *Daemon) fireSchedule(ctx context.Context, r scheduleDueRow) {
 	}
 	if runEv != nil {
 		d.bus.Publish(ctx, *runEv)
+	}
+	// Phase C: a fired goal bypasses GoalService.Create, so the training
+	// session it would have created there must be ensured HERE (after the
+	// commit — the session row references the goal by id). Without this a
+	// schedule saved with 复盘 on would fire infer goals forever and the task
+	// card would claim "未开启复盘" while the schedule says otherwise.
+	if d.rsi != nil && wf.ExecutionMode == "train" {
+		if err := d.rsi.EnsureSession(ctx, &service.Goal{
+			ID: goalID, DomainID: r.DomainID,
+			AssigneeType: assigneeType, AssigneeID: assigneeID,
+			BlueprintVersionID: wf.BlueprintVersionID,
+			ExecutionMode:      wf.ExecutionMode,
+			ContentCapture:     wf.ContentCapture,
+			SampleRate:         wf.SampleRate,
+			BudgetUSD:          wf.BudgetUSD,
+		}); err != nil {
+			logging.Infof("daemon: schedule %s ensure training session: %v", r.ScheduleID, err)
+		}
 	}
 	d.advanceScheduleNextRun(ctx, r, plannedAt)
 	d.bus.Publish(ctx, events.Event{Topic: "schedule:fired", Payload: map[string]any{

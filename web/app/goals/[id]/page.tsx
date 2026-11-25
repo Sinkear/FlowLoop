@@ -381,10 +381,11 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
   );
 }
 
-// 终态复盘卡（Phase A）：复盘会话只在「训练」模式任务激活时由
+// 终态复盘卡（Phase A + C）：复盘会话只在「训练」模式任务激活时由
 // RSI EnsureSession 创建（internal/service/rsi.go:154）。因此终态却没有
-// 会话 = 本次未开启复盘，而不是“分析失败”。提案由分析在分析时自动生成，
-// 这里只陈述生成时机，不暗示与发现确认有关，也不编造提案条数。
+// 会话 = 本次未开启复盘，而不是“分析失败”。提案有两条生成路径（Phase C）：
+// 分析完成时自动转换一部分，复盘页里也能对单条发现点「生成提案」。这里只说
+// 时机与归属，不编造提案条数——条数在复盘页按真实数据渲染。
 const REVIEW_TERMINAL = new Set(["done", "failed", "cancelled"]);
 
 function ReviewCard({ goal }: { goal: Goal }) {
@@ -439,7 +440,12 @@ function ReviewCard({ goal }: { goal: Goal }) {
           </div>
           {session.status === "ready" && !noBlueprint && (
             <p className="text-xs leading-relaxed text-ink-3">
-              提案在分析完成时自动生成（本任务绑定了工作流）。
+              提案有两处来源：分析完成时会自动转换一部分结构类发现；复盘页里也能对单条发现点「
+              生成提案」，再由人工在
+              <Link href={`/workflows/${session.blueprint_id}#wf-proposals`} className="text-accent hover:underline">
+                工作流
+              </Link>
+              的提案区审阅。
             </p>
           )}
         </div>
@@ -455,7 +461,7 @@ function ReviewCard({ goal }: { goal: Goal }) {
       )}
       {noBlueprint && (
         <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-          本次没有使用工作流，发现不会自动转成提案；可把这次执行固化成工作流（后续）。
+          本次没有使用工作流（自动拆解），发现不能转成提案；可在工作流页把这次执行固化成模板。
         </p>
       )}
     </SectionCard>
@@ -555,7 +561,25 @@ function GoalDetailPageInner() {
         </p>
         {goal.blueprint_version_id ? (
           <p className="text-xs text-ink-3 mt-1">
-            工作流版本：<span className="font-mono" title={goal.blueprint_version_id}>{goal.blueprint_version_id.slice(0, 8)}</span>
+            工作流：
+            {goal.blueprint_id ? (
+              <Link
+                href={`/workflows/${goal.blueprint_id}`}
+                className="text-ink-2 hover:text-accent"
+                title={goal.blueprint_version_id}
+              >
+                {goal.blueprint_name || goal.blueprint_id.slice(0, 8)}
+              </Link>
+            ) : (
+              // 固定版本被删除：不假装任务“自动拆解”，直说工作流已不存在。
+              <span className="text-amber-300" title={goal.blueprint_version_id}>
+                已删除的工作流
+              </span>
+            )}
+            {" "}
+            <span className="font-mono" title={goal.blueprint_version_id}>
+              {goal.blueprint_version ? `v${goal.blueprint_version}` : goal.blueprint_version_id.slice(0, 8)}
+            </span>
             （激活时编译成固定子任务；子任务创建被结构拒绝）
           </p>
         ) : (

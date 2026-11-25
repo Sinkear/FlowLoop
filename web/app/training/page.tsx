@@ -23,6 +23,7 @@ import {
   useSquads,
 } from "@/lib/queries";
 import type { RsiSession, RsiSessionStatus } from "@/lib/types";
+import { useCreateDialog } from "@/components/create/create-dialog";
 import { relTime } from "@/lib/utils";
 import { TrainingTrend } from "@/components/training/trend-strip";
 import {
@@ -91,6 +92,11 @@ function TrainingRow({
   projectName: string;
   squadName: string;
 }) {
+  // 工作流归属由会话快照提供（旧会话为空，回退到 goal 上的版本）。
+  // 复盘按「小队 × 工作流」聚合的前提就是这一行能被看见。
+  const workflow = session.blueprint_id
+    ? `${session.blueprint_name || "已删除的工作流"} · v${session.blueprint_version || "?"}`
+    : "自动拆解";
   const time = session.started_at ? relTime(session.started_at) : DASH;
   // 只有 ready 才有“当前报告”。waiting/skipped 的列值是 0，analyzing/failed
   // 则可能残留上一次分析的列值——都不是当前结果，统一显示「—」。
@@ -123,6 +129,11 @@ function TrainingRow({
                 <ArrowUpRight className="h-3 w-3" />
               </Link>
             )}
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-3">
+            <span title="这次任务按哪个工作流执行；自动拆解 = 没有固定工作流，发现不会自动转成提案">
+              {workflow}
+            </span>
           </div>
           {/* 窄屏摘要行：状态/时间/数量压成一行，桌面端由各列分别显示。 */}
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-3 lg:hidden">
@@ -191,6 +202,7 @@ function TrainingRow({
 }
 
 export default function TrainingPage() {
+  const { open } = useCreateDialog();
   const { data: sessions, isLoading, isError, error } = useRsiSessions();
   // 会话只带 goal_title / domain_id；项目名、小队名要 join goal + domains/squads。
   const { data: goals } = useGoals();
@@ -267,13 +279,10 @@ export default function TrainingPage() {
         title="复盘"
         desc="复盘是一次执行的镜子，不是评分"
         action={
-          <Link
-            href="/goals/new"
-            className="inline-flex items-center justify-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-dim"
-          >
+          <Button onClick={() => open("task")}>
             <Plus className="mr-1 h-4 w-4" />
             新建任务
-          </Link>
+          </Button>
         }
       />
 
@@ -410,10 +419,7 @@ export default function TrainingPage() {
           </Empty>
         ) : !sessions?.length ? (
           <Empty icon={<BarChart3 className="h-5 w-5" />}>
-            还没有复盘会话。任务开启复盘后，进入终态会自动分析并出现在这里。
-            <Link href="/goals/new" className="mt-3 block text-xs text-accent-dim hover:text-accent">
-              去新建任务 →
-            </Link>
+            还没有复盘会话。任务开启复盘后，进入终态会自动分析并出现在这里；用右上角「新建任务」派一条。
           </Empty>
         ) : !visible.length ? (
           <Empty>当前筛选条件下没有会话；换个状态、项目或时间范围看看。</Empty>
@@ -436,15 +442,16 @@ export default function TrainingPage() {
                 const goal = goalById.get(s.goal_id);
                 const pid = goal?.domain_id || s.domain_id;
                 const squad =
-                  goal?.assignee_type === "squad"
-                    ? squadById.get(goal.assignee_id)?.name
-                    : undefined;
+                  s.squad_name ||
+                  (goal?.assignee_type === "squad"
+                    ? squadById.get(goal.assignee_id)?.name ?? ""
+                    : "");
                 return (
                   <TrainingRow
                     key={s.id}
                     session={s}
                     projectName={pid ? domainById.get(pid)?.name || pid.slice(0, 8) : ""}
-                    squadName={squad ?? ""}
+                    squadName={squad}
                   />
                 );
               })}

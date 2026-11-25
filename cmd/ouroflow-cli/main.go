@@ -1127,7 +1127,7 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team, blueprint)", kind)
 	}
 	fs := flag.NewFlagSet("create "+kind, flag.ExitOnError)
-	var s1, s2, s3, s4, s5, s6, s7, s8 string
+	var s1, s2, s3, s4, s5, s6, s7, s8, s9 string
 
 	switch kind {
 	case "goal":
@@ -1205,6 +1205,7 @@ func buildCreateAction(kind string, args []string) map[string]any {
 		fs.StringVar(&s3, "content", "", "SpecGraph JSON text")
 		fs.StringVar(&s4, "content-file", "", "path to a SpecGraph JSON file (alternative to --content)")
 		fs.StringVar(&s5, "agent", "", "agent id: fills __AGENT_ID__ placeholders in the spec")
+		fs.StringVar(&s9, "squad", "", "owning squad id or name (required — workflows belong to a squad)")
 		fs.Parse(args)
 		if strings.TrimSpace(s4) != "" {
 			if strings.TrimSpace(s3) != "" {
@@ -1216,7 +1217,7 @@ func buildCreateAction(kind string, args []string) map[string]any {
 			}
 			s3 = string(raw)
 		}
-		return map[string]any{"intent": intent, "blueprint": map[string]any{"name": s1, "description": s2, "content": s3, "agent_id": s5}}
+		return map[string]any{"intent": intent, "blueprint": map[string]any{"name": s1, "description": s2, "content": s3, "agent_id": s5, "squad_id": s9}}
 	default:
 		fail("unknown create kind: %s (valid: goal, agent, squad, domain, schedule, team, blueprint)", kind)
 	}

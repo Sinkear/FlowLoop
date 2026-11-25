@@ -5,11 +5,11 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, Field, SectionCard, inputCls } from "@/components/ui";
 import { useAgents, useBlueprints, useCreateGoal, useDomains, useHooks, useSquads } from "@/lib/queries";
 import { bindGoalHook, getBlueprint, listBlueprints, type CreateGoalBody } from "@/lib/api";
-import { HOOK_EVENTS, type ExecutionMode, type HookEvent } from "@/lib/types";
+import { HOOK_EVENTS, type ExecutionMode, type Goal, type HookEvent } from "@/lib/types";
 import { OUTPUT_MARKER, appendOutputTemplate } from "@/lib/task-template";
 
 // 新建任务的表单。
-// 两个入口共用：/goals/new 直接以 embedded 形态渲染（不再经过管家对话），
+// 两个入口共用：全局新建对话框以 embedded 形态渲染（不再经过管家对话），
 // 任务页的「手动新建」仍以 Dialog 形态打开。两条路径共用同一份字段与校验。
 export function NewGoalForm({
   agents: agentsProp,
@@ -18,13 +18,20 @@ export function NewGoalForm({
   onClose,
   onCreated,
   embedded = false,
+  initialProjectId,
+  initialSquadId,
+  initialBlueprintVersionId,
 }: {
   agents?: { id: string; name: string }[];
   squads?: { id: string; name: string; default_workflow_id?: string }[];
   domains?: { id: string; name: string; acceptance_level?: string }[];
   onClose?: () => void;
-  onCreated?: () => void;
+  onCreated?: (goal: Goal) => void;
   embedded?: boolean;
+  /** 从对话框/深链带入的预选值；优先于 URL 参数。 */
+  initialProjectId?: string;
+  initialSquadId?: string;
+  initialBlueprintVersionId?: string;
 }) {
   const createGoal = useCreateGoal();
   // 两个入口都能独立工作：页面可以传已取好的列表（省一次渲染抖动），
@@ -119,12 +126,12 @@ export function NewGoalForm({
   // 深链预选：/goals/new?project=<id>、?squad=<id>
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const squad = params.get("squad");
+    const squad = initialSquadId ?? params.get("squad");
     if (squad) {
       setAssigneeType("squad");
       setAssigneeId(squad);
     }
-  }, []);
+  }, [initialSquadId]);
 
   // 深链预选：/goals/new?blueprint=<versionId>（工作流详情页「用此版本新建任务」）。
   // 版本号 → 小队归属没有直连接口：先按 latest_version_id 反查工作流列表；
@@ -132,7 +139,7 @@ export function NewGoalForm({
   // 都查不到才退化成「链接指定」并提示重选。
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const v = params.get("blueprint");
+    const v = initialBlueprintVersionId ?? params.get("blueprint");
     if (!v) return;
     setDeepVersionParam(v);
     setBlueprintVersionId(v);
@@ -179,12 +186,12 @@ export function NewGoalForm({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialBlueprintVersionId]);
 
   useEffect(() => {
-    const project = new URLSearchParams(window.location.search).get("project");
+    const project = initialProjectId ?? new URLSearchParams(window.location.search).get("project");
     if (project && domains?.some((d) => d.id === project)) setDomainId(project);
-  }, [domains]);
+  }, [domains, initialProjectId]);
 
   // 复盘默认：有工作流（显式钉或小队默认在生效）就开，自动拆解就关；
   // 用户手动勾过之后尊重用户选择，不再随字段变化来回跳。
@@ -314,7 +321,7 @@ export function NewGoalForm({
         if (failedNames.length) {
           alert(`任务已创建，但以下 hook 绑定失败：${failedNames.join("、")}——可稍后在任务详情里重新绑定`);
         }
-        return onCreated ? onCreated() : onClose?.();
+        return onCreated ? onCreated(created) : onClose?.();
       },
     });
   };
