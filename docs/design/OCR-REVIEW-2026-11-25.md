@@ -51,3 +51,49 @@
 - `cd web && npx tsc --noEmit`：通过
 - `npm run build`：通过（30 routes）
 - `git diff --check`：通过
+
+## PR #23 复审补充（4 Major，已修复）
+
+对 `57bea95..293ed79`（PR #23）再次按 Go/SQL 规则审查后，新增 4 个 Major；均已修复并有测试覆盖。
+
+### M3. 删除项目会留下 project_squad / connection 孤儿行
+
+- 文件：`internal/service/domain.go` 的 `DomainService.Delete`
+- 原逻辑：只检查 goal/schedule，然后直接 `DELETE FROM domain`；`project_squad` 与 `connection` 都没有指向 domain 的外键。
+- 后果：项目删除后成员行仍指向不存在的项目；`SquadService.Delete` 的 project_squad 守卫会让小队永远无法删除，而项目页已无法操作这些行。
+- 修复：在同一事务内先清理 `project_squad`、`connection`，再删 domain；新增 `TestDomainDeleteCleansProjectLinks`，并验证随后小队可删除。
+
+### M4. 项目级路由可绕过 project_squad 成员关系
+
+- 文件：`internal/service/domain.go` 的 `validateAssigneeRouting`
+- 原逻辑：`issue_assignee_type=squad` / `pull_assignee_type=squad` 只校验 squad 存在，未校验该 squad 是否已加入项目。
+- 修复：squad 分支增加 `project_squad` 成员检查；`TestProjectSquadRoutingRequiresMembership` 覆盖“未加入拒绝 / 加入后成功”。
+- 同时让 `Domain.Create` 在项目创建时就带 squad 路由的情况下自动写入成员关系，避免新的不一致。
+
+### M5. 无令牌项目在配置页保存失败
+
+- 文件：`internal/service/domain.go` 的 `DomainService.Update`
+- 原逻辑：`Update` 调用需要 `git_credentials` 的 `validateIssueTracking`；项目级接入允许无令牌（webhook-only），编辑项目时表单回填空令牌，保存因此 400。
+- 修复：`Update` 保留数据库中的路由字段（路由改由 `SetAssignees` 独占），改用不要求令牌的 `validateAssigneeRouting`。模板应用改为先加入 `project_squad` 再调用 `SetAssignees`，不再依赖 `Update` 修改路由。
+- 覆盖：`TestProjectSquadRoutingRequiresMembership` 的后半段验证无令牌更新成功且路由不丢。
+
+### M6. chat/CLI 走默认工作流时不自动开复盘
+
+- 文件：`internal/service/goal.go` 的 `GoalService.Create`
+- 原逻辑：先把空 `execution_mode` 置为 `infer`，之后才解析小队默认工作流并写 pin；chat/CLI 不传 mode，于是固定了工作流却默认不生成复盘。
+- 修复：记录调用方是否显式传 mode；仅当解析到默认 pin 且未显式传 mode 时置 `train`。显式 `infer`、显式 pin、opt-out 行为不变。
+- 覆盖：`TestWorkflowOwnershipAndDefaultPin` 增加 `ExecutionMode=="train"` 与 opt-out `"infer"` 断言。
+
+### 验证
+
+- `go test ./...`：通过
+- `go vet ./...`：通过
+- `cd web && npx tsc --noEmit`：通过
+- `npm run build`：通过
+
+### 仍记录为已知边界
+
+- `ProjectSquadService.Remove` 的提示文案仍写“小队接入”，实际入口已移到项目接入页。
+- `project-access-tab.tsx` 的旧 connection 迁移循环没有 catch；删除失败时无 UI 提示。
+- `schedule.projectPin` 投影查询忽略错误。
+- CLI `ouroflow create blueprint --squad <name>` 只按 id 使用（chat 传 id）。

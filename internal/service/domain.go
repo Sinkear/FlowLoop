@@ -125,6 +125,18 @@ func (s *DomainService) Create(ctx context.Context, d Domain) (*Domain, error) {
 		}
 		return nil, fmt.Errorf("insert domain: %w", err)
 	}
+	// A project created with a squad already routed to its issues/PRs is by
+	// definition working with that squad; record the membership so the
+	// project↔squad relation and the routing invariant agree from day one.
+	for _, sq := range [][2]string{{d.IssueAssignee, d.IssueAssigneeType}, {d.PullAssignee, d.PullAssigneeType}} {
+		if sq[0] == "" || sq[1] != "squad" {
+			continue
+		}
+		if _, err := s.st.DB().ExecContext(ctx,
+			`INSERT OR IGNORE INTO project_squad (domain_id,squad_id,created_at) VALUES (?,?,?)`, d.ID, sq[0], d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("insert project squad membership: %w", err)
+		}
+	}
 	s.bus.Publish(ctx, events.Event{Topic: "domain:created", Payload: d})
 	return &d, nil
 }
@@ -215,8 +227,28 @@ func (s *DomainService) Delete(ctx context.Context, id string) error {
 	// domain's project root after the row is gone.
 	var name string
 	_ = s.st.DB().QueryRowContext(ctx, `SELECT name FROM domain WHERE id=?`, id).Scan(&name)
-	if _, err := s.st.DB().ExecContext(ctx, `DELETE FROM domain WHERE id=?`, id); err != nil {
+	// project_squad and connection have no FK to domain (they are both
+	// association tables, not children), so deleting the project row alone
+	// would leave rows pointing at an ID that no longer exists. That is not
+	// just stale data: SquadService.Delete refuses to delete a squad while
+	// any project_squad row exists, and the project page that could remove it
+	// is gone. Clean both here, in one transaction with the project row.
+	tx, err := s.st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete domain: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_squad WHERE domain_id=?`, id); err != nil {
+		return fmt.Errorf("delete domain: project memberships: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM connection WHERE domain_id=?`, id); err != nil {
+		return fmt.Errorf("delete domain: connections: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM domain WHERE id=?`, id); err != nil {
 		return fmt.Errorf("delete domain: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete domain: commit: %w", err)
 	}
 	s.bus.Publish(ctx, events.Event{Topic: "domain:deleted", Payload: map[string]string{"id": id, "name": name}})
 	return nil
@@ -325,6 +357,24 @@ func (s *DomainService) validateIssueTracking(ctx context.Context, d *Domain) er
 	return nil
 }
 
+// requireProjectSquad rejects routing a project's issues/PRs to a squad that
+// has not joined that project. The access-tab dropdown already filters to
+// joined squads, but the API must enforce the same invariant: otherwise a
+// project could hand work to a squad it has no relationship with, and the
+// squad page would show no project membership to explain why it is receiving
+// work.
+func (s *DomainService) requireProjectSquad(ctx context.Context, domainID, squadID, label string) error {
+	var n int
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM project_squad WHERE domain_id=? AND squad_id=?`, domainID, squadID).Scan(&n); err != nil {
+		return fmt.Errorf("check project squad membership: %w", err)
+	}
+	if n == 0 {
+		return NewValidationError(fmt.Sprintf("%s %q is not a member of this project — add the squad to the project first", label, squadID))
+	}
+	return nil
+}
+
 // Update edits a domain's mutable configuration — the issue handler can be
 // changed after creation (e.g. a single agent → a squad, the whole point of
 // the edit path).
@@ -344,6 +394,7 @@ func (s *DomainService) Update(ctx context.Context, id string, d Domain) (*Domai
 		return nil, NewValidationError("domain type cannot be changed after creation (repo ↔ scratch is not supported)")
 	}
 	d.Type = old.Type
+	d.ID = old.ID
 	// Name: the edit form may rename a domain. An EMPTY incoming name means
 	// "unchanged" (partial Domains built elsewhere never blank the row); a
 	// non-empty name must stay unique — the UNIQUE constraint is enforced on
@@ -370,7 +421,18 @@ func (s *DomainService) Update(ctx context.Context, id string, d Domain) (*Domai
 	if d.WebhookSecret == "" {
 		d.WebhookSecret = old.WebhookSecret
 	}
-	if err := s.validateIssueTracking(ctx, &d); err != nil {
+	// Issue/PR routing is owned by the explicit SetAssignees endpoint (the
+	// project "接入" tab). The generic edit form round-trips the values it was
+	// given, but a repo edit must never silently re-route work — and it must
+	// not be blocked just because a webhook-only project has no polling token.
+	// Preserve the stored routing, skip the token-requiring check, and run the
+	// routing-shape check instead.
+	d.IssueAssignee = old.IssueAssignee
+	d.IssueAssigneeType = old.IssueAssigneeType
+	d.IssueProvider = old.IssueProvider
+	d.PullAssignee = old.PullAssignee
+	d.PullAssigneeType = old.PullAssigneeType
+	if err := s.validateAssigneeRouting(ctx, &d); err != nil {
 		return nil, err
 	}
 	_, err = s.st.DB().ExecContext(ctx,
@@ -527,6 +589,9 @@ func (s *DomainService) validateAssigneeRouting(ctx context.Context, d *Domain) 
 			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.IssueAssignee, "issue assignee squad"); err != nil {
 				return err
 			}
+			if err := s.requireProjectSquad(ctx, d.ID, d.IssueAssignee, "issue assignee squad"); err != nil {
+				return err
+			}
 		default:
 			return NewValidationError("issue_assignee_type must be agent or squad")
 		}
@@ -551,6 +616,9 @@ func (s *DomainService) validateAssigneeRouting(ctx context.Context, d *Domain) 
 			}
 		case "squad":
 			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.PullAssignee, "PR assignee squad"); err != nil {
+				return err
+			}
+			if err := s.requireProjectSquad(ctx, d.ID, d.PullAssignee, "PR assignee squad"); err != nil {
 				return err
 			}
 		default:

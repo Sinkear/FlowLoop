@@ -352,6 +352,11 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 
 	// RSI defaults + validation. An omitted mode is inference, so every old
 	// client keeps working; the trace knobs only apply to training goals.
+	// Remember whether the caller chose a mode explicitly: when an omitted mode
+	// later resolves a squad's default workflow, that workflow is the subject
+	// of the task and must be reviewed (train) for the optimization loop to see
+	// it. An explicit infer stays infer.
+	modeProvided := g.ExecutionMode != ""
 	if g.ExecutionMode == "" {
 		g.ExecutionMode = "infer"
 	}
@@ -399,6 +404,9 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 				return nil, fmt.Errorf("load squad default workflow version: %w", err)
 			}
 			g.BlueprintVersionID = defaultPin
+			if defaultPin != "" && !modeProvided {
+				g.ExecutionMode = "train"
+			}
 		}
 	}
 	if g.BlueprintVersionID != "" {

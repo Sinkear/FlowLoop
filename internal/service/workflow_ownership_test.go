@@ -77,6 +77,9 @@ func TestWorkflowOwnershipAndDefaultPin(t *testing.T) {
 	if g1.BlueprintVersionID != vB.ID {
 		t.Fatalf("default pin = %q, want %q", g1.BlueprintVersionID, vB.ID)
 	}
+	if g1.ExecutionMode != "train" {
+		t.Fatalf("default pin without explicit mode must enable review, got %q", g1.ExecutionMode)
+	}
 
 	// 2) explicit pin by another squad is refused before any run starts.
 	if _, err := gs.Create(ctx, Goal{
@@ -96,6 +99,9 @@ func TestWorkflowOwnershipAndDefaultPin(t *testing.T) {
 	}
 	if g3.BlueprintVersionID != "" {
 		t.Fatalf("opt-out pinned %q", g3.BlueprintVersionID)
+	}
+	if g3.ExecutionMode != "infer" {
+		t.Fatalf("opt-out must stay auto-decompose, got %q", g3.ExecutionMode)
 	}
 
 	// 4) a single agent cannot pin a squad-owned workflow.
