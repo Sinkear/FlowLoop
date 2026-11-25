@@ -78,7 +78,7 @@ export default function WorkbenchPage() {
         desc="先看需要你拍板的事，再看正在跑的活；项目和定时任务都在下面。"
         action={
           <Link
-            href="/goals/new?form=1"
+            href="/goals/new"
             className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -107,8 +107,8 @@ export default function WorkbenchPage() {
             <Step
               n="3"
               title="派第一条任务"
-              desc="选负责人，决定用不用蓝本，以及这次要不要复盘。"
-              href="/goals/new?form=1"
+              desc="选负责人，决定用不用工作流，以及这次要不要复盘。"
+              href="/goals/new"
               action="新建任务"
             />
           </div>

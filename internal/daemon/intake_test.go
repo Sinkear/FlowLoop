@@ -1411,6 +1411,14 @@ const blueprintGraphJSON = `{"name":"串行","description":"调研后收尾","no
 func TestIntakeCreateBlueprint(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	seedSquad := func(t *testing.T, st *store.Store) {
+		t.Helper()
+		if _, err := st.DB().ExecContext(ctx,
+			`INSERT INTO squad (id,name,leader_id,instructions,default_workflow_id,created_at)
+			 VALUES ('sq1','sq1','a1','','',?)`, time.Now().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Missing everything → ask for name + content, hint carries the skeleton
 	// and the agent roster inside a system-reminder block.
@@ -1431,6 +1439,7 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 
 	// Draft clarification: name first, content on the next turn.
 	d2, st2 := newIntakeDaemon(t)
+	seedSquad(t, st2)
 	_ = d2.intakeSvc.ClearDraft(ctx)
 	first := d2.intakeCreateBlueprint(ctx, intakeAction{
 		Intent: "create_blueprint", Blueprint: blueprintAction{Name: "分轮蓝图"},
@@ -1439,7 +1448,7 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 		t.Fatalf("name-only must ask for content, got %+v", first)
 	}
 	second := d2.intakeCreateBlueprint(ctx, intakeAction{
-		Intent: "create_blueprint", Blueprint: blueprintAction{Content: blueprintGraphJSON},
+		Intent: "create_blueprint", Blueprint: blueprintAction{Content: blueprintGraphJSON, SquadID: "sq1"},
 	})
 	if second.Status != "created" || !strings.Contains(second.Message, "已创建蓝图") {
 		t.Fatalf("draft continuation must create, got %+v", second)
@@ -1457,10 +1466,11 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 
 	// Explicit fields create immediately.
 	d3, st3 := newIntakeDaemon(t)
+	seedSquad(t, st3)
 	_ = d3.intakeSvc.ClearDraft(ctx)
 	res := d3.intakeCreateBlueprint(ctx, intakeAction{
 		Intent:    "create_blueprint",
-		Blueprint: blueprintAction{Name: "直建", Description: "d", Content: blueprintGraphJSON},
+		Blueprint: blueprintAction{Name: "直建", Description: "d", Content: blueprintGraphJSON, SquadID: "sq1"},
 	})
 	if res.Status != "created" {
 		t.Fatalf("complete blueprint must create, got %+v", res)
@@ -1475,10 +1485,11 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 
 	// Invalid graph → validator reason, no row.
 	d4, st4 := newIntakeDaemon(t)
+	seedSquad(t, st4)
 	_ = d4.intakeSvc.ClearDraft(ctx)
 	bad := d4.intakeCreateBlueprint(ctx, intakeAction{
 		Intent:    "create_blueprint",
-		Blueprint: blueprintAction{Name: "坏图", Content: `{"name":"x","nodes":[],"edges":[]}`},
+		Blueprint: blueprintAction{Name: "坏图", Content: `{"name":"x","nodes":[],"edges":[]}`, SquadID: "sq1"},
 	})
 	if bad.Status != "replied" || !strings.Contains(bad.Message, "创建蓝图失败") {
 		t.Fatalf("invalid graph must be rejected with a reason, got %+v", bad)
@@ -1492,11 +1503,12 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 
 	// __AGENT_ID__ is filled from agent_id before validation.
 	d5, st5 := newIntakeDaemon(t)
+	seedSquad(t, st5)
 	_ = d5.intakeSvc.ClearDraft(ctx)
 	tpl := strings.Replace(blueprintGraphJSON, "agent:a1", "agent:__AGENT_ID__", 1)
 	ok := d5.intakeCreateBlueprint(ctx, intakeAction{
 		Intent:    "create_blueprint",
-		Blueprint: blueprintAction{Name: "模板图", Content: tpl, AgentID: "a1"},
+		Blueprint: blueprintAction{Name: "模板图", Content: tpl, AgentID: "a1", SquadID: "sq1"},
 	})
 	if ok.Status != "created" {
 		t.Fatalf("placeholder blueprint must create, got %+v", ok)

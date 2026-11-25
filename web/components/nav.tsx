@@ -17,7 +17,6 @@ import {
   Settings,
   Sparkles,
   Users,
-  Waypoints,
   Webhook,
   X,
 } from "lucide-react";
@@ -25,7 +24,7 @@ import { useDomains } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 // 一级入口只回答“我平时在哪干活”：工作台 / 项目 / 小队 / 资源 / 运行环境 / 设置。
-// 蓝本、技能、Hooks、实践库退到“资源”下；日志压到左下角。任务板不再是首屏，
+// 工作流不在全局导航里（它归小队）；技能、Hooks、实践库退到“资源”下；日志压到左下角。任务板不再是首屏，
 // 而是项目、工作台和“新建任务”共同的落点。
 type NavItem = {
   href: string;
@@ -43,7 +42,6 @@ const MAIN_ITEMS: NavItem[] = [
 const RESOURCE_ITEMS: NavItem[] = [
   { href: "/agents", label: "智能体", icon: Bot },
   { href: "/templates", label: "实践库", icon: LayoutTemplate },
-  { href: "/blueprints", label: "蓝本（全局）", icon: Waypoints, note: "迁移中" },
   { href: "/skills", label: "技能", icon: Sparkles },
   { href: "/hooks", label: "Hooks", icon: Webhook },
 ];
@@ -55,11 +53,11 @@ const SYSTEM_ITEMS: NavItem[] = [
 ];
 
 const NEW_ITEMS = [
-  { href: "/goals/new?form=1", label: "新建任务", hint: "给一个项目派活" },
+  { href: "/goals/new", label: "新建任务", hint: "给一个项目派活" },
   { href: "/projects?new=1", label: "新建项目", hint: "先挂一个仓库或工作区" },
   { href: "/squads?new=1", label: "新建小队", hint: "把 Agent 编成一支队伍" },
   { href: "/agents?new=1", label: "新建智能体", hint: "公共资源，所有项目可用" },
-  { href: "/schedules", label: "新建定时任务", hint: "按 cron 重复派活" },
+  { href: "/schedules?new=1", label: "新建定时任务", hint: "按 cron 重复派活" },
 ];
 
 export function Nav() {
@@ -105,7 +103,7 @@ export function Nav() {
         </Link>
         <div className="ml-auto flex items-center gap-1">
           <Link
-            href="/goals/new?form=1"
+            href="/goals/new"
             className="inline-flex items-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-medium text-accent"
           >
             <Plus className="h-3.5 w-3.5" /> 新建

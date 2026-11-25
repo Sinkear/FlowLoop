@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAgents, useRuntimes, useDeleteAgent, useAgentDeleteImpact, usePinnedAgents, useSetAgentPin, useGoalEvents } from "@/lib/queries";
 import { AgentForm } from "@/components/agent-form";
 import { ChatPanel } from "@/components/chat-panel";
@@ -37,6 +37,10 @@ export default function AgentsPage() {
   // 纯渲染层筛选：搜索名称/描述/短 id/运行时，或只看已固定。
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<AgentScope>("all");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
+  }, []);
 
   const pinnedSet = new Set(pinnedIds ?? []);
   const runtimeName = (id: string) => runtimes?.find((r) => r.id === id)?.name ?? id;

@@ -77,6 +77,10 @@ type Goal struct {
 	// transaction, and the finalization guard counts blueprint_node rows so
 	// a skipped node can never silently pass (漏跑 → structural block).
 	BlueprintVersionID string `json:"blueprint_version_id"`
+	// SkipDefaultWorkflow opts a squad task out of the squad's default workflow
+	// (D2: default use, explicit opt-out). It is a creation-time input only —
+	// not persisted; the resolved/pinned version lives in BlueprintVersionID.
+	SkipDefaultWorkflow bool `json:"skip_default_workflow,omitempty"`
 }
 
 // goalRunContext is what ReconcileOnRunEnd reasons about. Carried separately
@@ -366,13 +370,31 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 	if g.SampleRate > 1 {
 		return nil, NewValidationError("sample_rate must be in (0,1]")
 	}
-	// Blueprint pin (Phase A): '' = infer mode, unchanged semantics. A
-	// non-empty pin must reference a PUBLISHED version — a draft can be
-	// edited, so compiling it would let the goal run an unfrozen spec.
+	// Workflow pin (Phase B, D1/D2). An empty pin on a squad task resolves the
+	// squad's default workflow (latest published version) unless the caller
+	// explicitly opted out with skip_default_workflow. A non-empty pin must be
+	// a PUBLISHED version, and an owned workflow must match the task's squad.
+	// Legacy (squad_id='') pins stay readable for already-pinned goals/tests;
+	// new UI never offers them.
+	if g.BlueprintVersionID == "" && g.AssigneeType == "squad" && g.AssigneeID != "" && !g.SkipDefaultWorkflow {
+		var defWorkflow string
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(default_workflow_id,'') FROM squad WHERE id=?`, g.AssigneeID).Scan(&defWorkflow); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("load squad default workflow: %w", err)
+		}
+		if defWorkflow != "" {
+			_ = s.st.DB().QueryRowContext(ctx,
+				`SELECT bv.id FROM blueprint_version bv JOIN blueprint b ON b.id=bv.blueprint_id
+				 WHERE b.id=? AND bv.status='published' ORDER BY bv.version DESC LIMIT 1`, defWorkflow).
+				Scan(&g.BlueprintVersionID)
+		}
+	}
 	if g.BlueprintVersionID != "" {
-		var status string
+		var status, blueprintID, ownerSquad string
 		err := s.st.DB().QueryRowContext(ctx,
-			`SELECT status FROM blueprint_version WHERE id=?`, g.BlueprintVersionID).Scan(&status)
+			`SELECT bv.status, bv.blueprint_id, b.squad_id FROM blueprint_version bv
+			 JOIN blueprint b ON b.id=bv.blueprint_id WHERE bv.id=?`, g.BlueprintVersionID).
+			Scan(&status, &blueprintID, &ownerSquad)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q not found", g.BlueprintVersionID))
 		}
@@ -381,6 +403,11 @@ func (s *GoalService) Create(ctx context.Context, g Goal) (*Goal, error) {
 		}
 		if status != "published" {
 			return nil, NewValidationError(fmt.Sprintf("blueprint_version_id %q is %s — only a published version can be pinned", g.BlueprintVersionID, status))
+		}
+		if ownerSquad != "" {
+			if g.AssigneeType != "squad" || g.AssigneeID != ownerSquad {
+				return nil, NewValidationError("workflow belongs to a different squad — pick one of this task's squad workflows or use auto-decomposition")
+			}
 		}
 	}
 	g.ID = newID()

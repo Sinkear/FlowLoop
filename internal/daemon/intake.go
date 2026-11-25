@@ -171,6 +171,8 @@ type blueprintAction struct {
 	// AgentID optionally fills the __AGENT_ID__ placeholder in content with
 	// this agent's bare id (the blueprint templates' authoring convention).
 	AgentID string `json:"agent_id"`
+	// SquadID is the owning squad (Phase B): a workflow is always squad-owned.
+	SquadID string `json:"squad_id"`
 }
 
 // skillAction carries the skill_list / skill_delete fields. Only name is
@@ -902,7 +904,10 @@ func (d *Daemon) doCreateBlueprint(ctx context.Context, bp blueprintAction) inta
 	if d.blueprintSvc == nil {
 		return reply("创建蓝图失败：daemon 未接线 blueprint 服务")
 	}
-	row, err := d.blueprintSvc.Create(ctx, bp.Name, bp.Description, bp.Content, "human", "")
+	if strings.TrimSpace(bp.SquadID) == "" {
+		return reply("创建工作流失败：请指定所属小队（squad_id）——工作流必须由一个小队拥有")
+	}
+	row, err := d.blueprintSvc.CreateForSquad(ctx, bp.SquadID, bp.Name, bp.Description, bp.Content, "human", "")
 	if err != nil {
 		return reply("创建蓝图失败：" + err.Error())
 	}
@@ -917,6 +922,9 @@ func mergeBlueprint(draftPayload string, reply blueprintAction) blueprintAction 
 	_ = json.Unmarshal([]byte(draftPayload), &draft)
 	if strings.TrimSpace(reply.Name) != "" {
 		draft.Name = reply.Name
+	}
+	if strings.TrimSpace(reply.SquadID) != "" {
+		draft.SquadID = reply.SquadID
 	}
 	if strings.TrimSpace(reply.Description) != "" {
 		draft.Description = reply.Description
@@ -1177,6 +1185,7 @@ func (d *Daemon) intakeSquadUpdate(ctx context.Context, parsed intakeAction) int
 	}
 	updated, err := d.squadSvc.Update(ctx, sq.ID, service.Squad{
 		Name: sq.Name, LeaderID: leaderID, Description: description, Instructions: instructions,
+		DefaultWorkflowID: sq.DefaultWorkflowID,
 	})
 	if err != nil {
 		return reply("修改 squad 失败：" + err.Error())

@@ -174,6 +174,10 @@ CREATE TABLE IF NOT EXISTS squad (
     description  TEXT NOT NULL DEFAULT '',
     leader_id    TEXT NOT NULL REFERENCES agent(id),  -- must be an agent
     instructions TEXT NOT NULL DEFAULT '',            -- extra briefing for leader runs
+    -- Default workflow (blueprint id, not version) for tasks assigned to this
+    -- squad. The goal form resolves its latest published version at creation;
+    -- '' = no default → the task falls back to auto-decomposition.
+    default_workflow_id TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
 );
 
@@ -246,11 +250,18 @@ CREATE TABLE IF NOT EXISTS goal (
 -- one version so the same version always compiles to the same topology.
 CREATE TABLE IF NOT EXISTS blueprint (
     id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,
+    name            TEXT NOT NULL,
     description     TEXT NOT NULL DEFAULT '',
+    -- Workflow ownership (Phase B, WEB-IA-REDESIGN.md D1): a workflow belongs
+    -- to exactly one squad. '' is the frozen legacy bucket — old global
+    -- workflows keep running for already-pinned goals and cannot be selected
+    -- by new tasks. No FK on purpose: deleting a squad is refused while it
+    -- owns workflows, and history must survive any future ownership change.
+    squad_id        TEXT NOT NULL DEFAULT '',
     created_by_type TEXT NOT NULL DEFAULT 'human',   -- human | agent (RSI optimizer drafts count as agent)
     created_by_id   TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    UNIQUE(squad_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS blueprint_version (

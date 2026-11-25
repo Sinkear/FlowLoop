@@ -105,7 +105,7 @@ export default function ProjectDetailPage() {
                 配置
               </Button>
               <Link
-                href={`/goals/new?project=${project.id}&form=1`}
+                href={`/goals/new?project=${project.id}`}
                 className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-dim"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -150,7 +150,7 @@ export default function ProjectDetailPage() {
                 <Empty icon={<Check className="h-5 w-5" />}>
                   <span>这个项目还没有任务。派第一条活，让它跑起来。</span>
                   <span className="mt-4 block">
-                    <Link href={`/goals/new?project=${project.id}&form=1`}>
+                    <Link href={`/goals/new?project=${project.id}`}>
                       <Button className="gap-1.5"><Plus className="h-3.5 w-3.5" />新建任务</Button>
                     </Link>
                   </span>
@@ -163,7 +163,7 @@ export default function ProjectDetailPage() {
                         <div className="truncate text-sm text-ink">{goal.title}</div>
                         <div className="mt-0.5 text-[11px] text-ink-3">
                           {goal.execution_mode === "train" ? "开启复盘" : "未开复盘"}
-                          {goal.blueprint_version_id ? " · 使用蓝本" : " · 自动拆解"} · {relTime(goal.created_at)}
+                          {goal.blueprint_version_id ? " · 使用工作流" : " · 自动拆解"} · {relTime(goal.created_at)}
                         </div>
                       </div>
                       <Badge status={goal.status} />
@@ -272,7 +272,7 @@ function GoalsTab({ projectId, goals }: { projectId: string; goals: Goal[] }) {
         <Empty icon={<Check className="h-5 w-5" />}>
           <span>这个项目还没有任务。</span>
           <span className="mt-4 block">
-            <Link href={`/goals/new?project=${projectId}&form=1`}>
+            <Link href={`/goals/new?project=${projectId}`}>
               <Button className="gap-1.5"><Plus className="h-3.5 w-3.5" />新建任务</Button>
             </Link>
           </span>
@@ -284,7 +284,7 @@ function GoalsTab({ projectId, goals }: { projectId: string; goals: Goal[] }) {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm text-ink">{goal.title}</div>
                 <div className="mt-0.5 text-[11px] text-ink-3">
-                  {goal.execution_mode === "train" ? "开启复盘" : "未开复盘"} · {goal.blueprint_version_id ? "使用蓝本" : "自动拆解"} · {relTime(goal.created_at)}
+                  {goal.execution_mode === "train" ? "开启复盘" : "未开复盘"} · {goal.blueprint_version_id ? "使用工作流" : "自动拆解"} · {relTime(goal.created_at)}
                 </div>
               </div>
               <Badge status={goal.status} />

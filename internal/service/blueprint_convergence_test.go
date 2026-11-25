@@ -24,8 +24,9 @@ var noiseRound int
 func noisyShapeGoal(t *testing.T, gs *GoalService, rs *RunService, st *store.Store, domainID string) string {
 	t.Helper()
 	worker := seedAgent(t, st, "w3-"+newID()[:8])
+	squadID := workflowSquadForDomain(t, st, domainID, worker)
 	g, err := gs.Create(context.Background(), Goal{
-		Title: "tn", AssigneeType: "agent", AssigneeID: worker,
+		Title: "tn", AssigneeType: "squad", AssigneeID: squadID,
 		Status: "active", DomainID: domainID, Category: "hootl",
 	})
 	if err != nil {

@@ -205,12 +205,12 @@ export const NODE_KIND_META: Record<
     ring: "border-rose-500/40",
     bar: "bg-rose-400",
   },
-  // ── 蓝本规范图节点（Phase A/B/B-3，docs/BLUEPRINT-PROPOSAL.md §4.2+§11）──
+  // ── 工作流规范图节点（Phase A/B/B-3，docs/BLUEPRINT-PROPOSAL.md §4.2+§11）──
   // 规范图与执行图共用 WorkflowGraph 形状，这些 kind 只出现在规范图里。
   // B-3 起六类节点全部可发布。
   task: {
     label: "任务",
-    desc: "蓝本任务节点；编译为 gated sub_goal",
+    desc: "工作流任务节点；编译为 gated sub_goal",
     badge: "border-blue-500/30 bg-blue-500/10 text-blue-300",
     ring: "border-blue-500/40",
     bar: "bg-blue-400",
@@ -271,7 +271,7 @@ export const EDGE_KIND_LABEL: Record<string, string> = {
   verified_by: "验证",
   consult: "咨询",
   integrated: "集成",
-  spec: "规范", // 蓝本规范边（Phase A）：节点间的规范性顺序/分支
+  spec: "规范", // 工作流规范边（Phase A）：节点间的规范性顺序/分支
 };
 // ── 优化轮次 delta（W-RSI v3 insight panel） ──
 // delta 的 pct 是相对变化率（(to-from)/from），不是百分点；from=0 时后端省略。

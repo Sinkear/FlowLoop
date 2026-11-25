@@ -72,7 +72,7 @@ function EnvChangesCard({ goalId }: { goalId: string }) {
 }
 
 // ── 计划 vs 实际对账（BUG-4）──
-// 以前「蓝本（计划）」与「编排（实际）」并排，靠人眼比较；这张卡把
+// 以前「工作流（计划）」与「编排（实际）」并排，靠人眼比较；这张卡把
 // blueprint_node ↔ sub_goal ↔ run ↔ consult_request 逐节点 join 出来，
 // 偏离（未物化/计划外子任务/节点无执行/咨询化执行）直接列成文字。
 //
@@ -117,7 +117,7 @@ function PlanAlignmentCard({ goalId }: { goalId: string }) {
         {/* 统计单元：label + 数值 + 一行解释，不再挤成一行小字。 */}
         <StatStrip
           items={[
-            { label: "计划节点", value: fmtInt(data.planned), hint: "蓝本编译产出" },
+            { label: "计划节点", value: fmtInt(data.planned), hint: "工作流编译产出" },
             { label: "已结算", value: fmtInt(data.settled), hint: "settled 或 skipped" },
             {
               label: "已落地",
@@ -291,8 +291,8 @@ export default function GoalDetailPage() {
   );
 }
 
-// ── 蓝本人工门决策卡（B-3，§4.2）──
-// 蓝本里的 gate 节点持门等待时（state=running，held_since 已盖戳），
+// ── 工作流人工门决策卡（B-3，§4.2）──
+// 工作流里的 gate 节点持门等待时（state=running，held_since 已盖戳），
 // 这张卡就是人拍板的入口。每个 action 是一个按钮；拍板后：
 // 服务端落 chosen action + 剪掉未选分支 + 释放选中分支（执行图立刻变化）。
 // 超时无人拍板时 sweeper 自动执行 timeout_action（decided_by=system）。
@@ -322,7 +322,7 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
     <SectionCard
       title="等待你的决策"
       count={gates.length}
-      desc="蓝本人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；声明了自动判定的门会先按上游产出自动决策，超时未决策则按超时策略处理"
+      desc="工作流人工门：执行到这里停下来等人拍板。选一个动作放行对应分支；声明了自动判定的门会先按上游产出自动决策，超时未决策则按超时策略处理"
     >
       <div className="flex flex-col gap-4">
         {gates.map((g) => (
@@ -455,7 +455,7 @@ function ReviewCard({ goal }: { goal: Goal }) {
       )}
       {noBlueprint && (
         <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-          本次没有使用蓝本，发现不会自动转成提案；可把这次执行固化成蓝本（后续）。
+          本次没有使用工作流，发现不会自动转成提案；可把这次执行固化成工作流（后续）。
         </p>
       )}
     </SectionCard>
@@ -477,7 +477,7 @@ function GoalDetailPageInner() {
     isError: workflowError,
     error: workflowErr,
   } = useGoalWorkflow(id);
-  // 蓝本规范图（Phase A）：goal 钉了 published 版本时展示「计划态」——
+  // 工作流规范图（Phase A）：goal 钉了 published 版本时展示「计划态」——
   // 与下面的执行图（实际怎么跑）对照。未钉时 enabled=false 不发请求。
   const {
     data: blueprintGraph,
@@ -537,7 +537,7 @@ function GoalDetailPageInner() {
           </span>
           <span>
             分配给：<span className="text-ink-2">{assigneeLabel}</span>
-            {goal.assignee_type === "squad" ? "（小队）" : goal.assignee_type === "agent" ? "（agent）" : ""}
+            {goal.assignee_type === "squad" ? "（小队）" : goal.assignee_type === "agent" ? "（智能体）" : ""}
           </span>
         </div>
         <p className="text-xs text-ink-3 mt-1">
@@ -555,12 +555,12 @@ function GoalDetailPageInner() {
         </p>
         {goal.blueprint_version_id ? (
           <p className="text-xs text-ink-3 mt-1">
-            蓝本版本：<span className="font-mono" title={goal.blueprint_version_id}>{goal.blueprint_version_id}</span>
-            （激活时按规范图编译；子任务创建被结构拒绝）
+            工作流版本：<span className="font-mono" title={goal.blueprint_version_id}>{goal.blueprint_version_id.slice(0, 8)}</span>
+            （激活时编译成固定子任务；子任务创建被结构拒绝）
           </p>
         ) : (
           <p className="text-xs text-ink-3 mt-1">
-            执行方式：自动拆解（未使用蓝本）
+            执行方式：自动拆解（未使用工作流）
           </p>
         )}
         {goal.source_ref && (
@@ -588,7 +588,7 @@ function GoalDetailPageInner() {
         <GoalTimeline goalId={id} goalStatus={goal.status} />
       </div>
 
-      {/* 蓝本人工门决策卡（B-3）：有持门的 gate 时出现，没有就不占地方 */}
+      {/* 工作流人工门决策卡（B-3）：有持门的 gate 时出现，没有就不占地方 */}
       <GateDecisionCard goalId={id} />
 
       {/* Comments */}
@@ -600,10 +600,10 @@ function GoalDetailPageInner() {
       {/* Changes（v2：子任务的逻辑交付物 + 修订史——owner 的集成视图） */}
       <GoalChanges goalId={id} />
 
-      {/* 蓝本：规范图（计划态）——只在 goal 钉了蓝图时出现（Phase A） */}
+      {/* 工作流：规范图（计划态）——只在 goal 钉了工作流时出现（Phase A） */}
       {goal.blueprint_version_id && (
         <SectionCard
-          title="蓝本（计划）"
+          title="工作流（计划）"
           count={blueprintGraph?.nodes?.length}
           desc="激活时钉住的规范图：执行顺序由结构保证。与下方执行图对照可看出「计划 vs 实际」"
           bodyClassName="p-0"
@@ -624,7 +624,7 @@ function GoalDetailPageInner() {
         </SectionCard>
       )}
 
-      {/* 计划 vs 实际（BUG-4）：蓝本目标的逐节点对账，偏离直接可见 */}
+      {/* 计划 vs 实际（BUG-4）：工作流目标的逐节点对账，偏离直接可见 */}
       {goal.blueprint_version_id && <PlanAlignmentCard goalId={id} />}
 
       {/* scratch 环境变更账本（BUG-4 P2）：有记录才渲染 */}

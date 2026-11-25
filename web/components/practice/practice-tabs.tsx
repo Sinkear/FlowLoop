@@ -2,15 +2,15 @@
 
 import { cn } from "@/lib/utils";
 
-// 实践库的类型页签：全部 / 项目包 / 小队包，外加一个「工作流包（即将支持）」
-// 的禁用页签。禁用不是隐藏——用户会先问“为什么没有工作流包”，把原因就写在
+// 实践库的类型页签：全部 / 项目 / 小队，外加一个「工作流（即将支持）」
+// 的禁用页签。禁用不是隐藏——用户会先问“为什么没有工作流”，把原因就写在
 // 页签旁边比藏在 tooltip 里更诚实（WEB-IA-REDESIGN §2.6/§4.12）。
 export type PracticeTab = "all" | "project" | "squad";
 
 const TABS: { value: PracticeTab; label: string }[] = [
   { value: "all", label: "全部" },
-  { value: "project", label: "项目包" },
-  { value: "squad", label: "小队包" },
+  { value: "project", label: "项目" },
+  { value: "squad", label: "小队" },
 ];
 
 // 工作流包还不能导入的原因只有一句：工作流的归属还没迁完，现在导进来会
@@ -65,7 +65,7 @@ export function PracticeTabs({
           title={`暂不支持导入：${WORKFLOW_DISABLED_REASON}`}
           className="inline-flex cursor-not-allowed items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-ink-3 opacity-45"
         >
-          工作流包
+          工作流
           <span className="rounded border border-line px-1 py-px font-mono text-[9px] leading-none text-ink-3">
             即将支持
           </span>

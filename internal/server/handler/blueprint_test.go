@@ -45,6 +45,12 @@ func TestBlueprintHTTPRoutes(t *testing.T) {
 		return a.ID
 	}
 	agentID := seedAgent(t, "worker")
+	squadID := "sq-http"
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO squad (id,name,leader_id,instructions,default_workflow_id,created_at)
+		 VALUES (?,?,?,?,?,?)`, squadID, "sq-http", agentID, "", "", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("seed squad: %v", err)
+	}
 
 	h := &Handlers{Blueprint: bs}
 	mux := http.NewServeMux()
@@ -79,7 +85,7 @@ func TestBlueprintHTTPRoutes(t *testing.T) {
 	}`
 
 	// Create over HTTP.
-	rec := post(t, "/blueprints", `{"name": "bp", "description": "d", "content": `+jsonRaw(t, content)+`}`)
+	rec := post(t, "/blueprints", `{"name": "bp", "description": "d", "squad_id": "`+squadID+`", "content": `+jsonRaw(t, content)+`}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create blueprint: %d %s", rec.Code, rec.Body.String())
 	}

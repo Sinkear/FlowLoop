@@ -25,7 +25,7 @@ const COLUMNS: {
   dot: string;
 }[] = [
   { id: "backlog", label: "待办", hint: "排队等开工", dot: "bg-zinc-400" },
-  { id: "active", label: "进行中", hint: "agent 正在跑", dot: "bg-blue-400" },
+  { id: "active", label: "进行中", hint: "智能体正在跑", dot: "bg-blue-400" },
   { id: "review", label: "待审批", hint: "等你拍板", dot: "bg-purple-400" },
   { id: "done", label: "已完成", hint: "验收通过", dot: "bg-emerald-400" },
   { id: "closed", label: "已结束", hint: "失败 · 取消", dot: "bg-zinc-500" },
@@ -76,9 +76,9 @@ function planMove(g: Goal, to: BoardCol): Move | null {
     return {
       kind: "reject",
       drop: "松手打回重做",
-      done: "已打回，agent 继续修",
-      confirmTitle: "打回给 agent 重做？",
-      confirmBody: "任务回到进行中，agent 按你的意见继续修，然后再跑一轮验收。",
+      done: "已打回，智能体继续修",
+      confirmTitle: "打回给智能体重做？",
+      confirmBody: "任务回到进行中，智能体按你的意见继续修，然后再跑一轮验收。",
       confirmCta: "打回",
     };
 
@@ -121,8 +121,8 @@ function describeError(e: unknown): string {
 function refusal(g: Goal, to: BoardCol): string {
   const from = COL_OF[g.status];
   if (to === "backlog") return "不能拖回「待办」：任务只会往前走，要中止请拖到「已结束」。";
-  if (to === "review") return "「待审批」由 agent 跑完把关点自动进入，不能手动放进去。";
-  if (to === "done" && from === "active") return "完成由验收决定：agent 跑完会自己进入「待审批」。";
+  if (to === "review") return "「待审批」由智能体跑完把关点自动进入，不能手动放进去。";
+  if (to === "done" && from === "active") return "完成由验收决定：智能体跑完会自己进入「待审批」。";
   if (to === "done" && from === "backlog") return "先开始执行，验收通过后才会到「已完成」。";
   if (to === "closed" && from === "review") return "待审批只能「通过」或「打回」：先打回，再取消。";
   if (to === "closed" && (from === "done" || from === "closed"))

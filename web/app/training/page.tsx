@@ -268,7 +268,7 @@ export default function TrainingPage() {
         desc="复盘是一次执行的镜子，不是评分"
         action={
           <Link
-            href="/goals/new?form=1"
+            href="/goals/new"
             className="inline-flex items-center justify-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-dim"
           >
             <Plus className="mr-1 h-4 w-4" />
@@ -411,7 +411,7 @@ export default function TrainingPage() {
         ) : !sessions?.length ? (
           <Empty icon={<BarChart3 className="h-5 w-5" />}>
             还没有复盘会话。任务开启复盘后，进入终态会自动分析并出现在这里。
-            <Link href="/goals/new?form=1" className="mt-3 block text-xs text-accent-dim hover:text-accent">
+            <Link href="/goals/new" className="mt-3 block text-xs text-accent-dim hover:text-accent">
               去新建任务 →
             </Link>
           </Empty>

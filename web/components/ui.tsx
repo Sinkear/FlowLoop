@@ -55,11 +55,11 @@ const STATUS_COLORS: Record<string, string> = {
   analyzing: "bg-blue-500/10 text-blue-300 dot-blue",
   ready: "bg-emerald-500/10 text-emerald-300 dot-emerald",
   skipped: "bg-zinc-500/10 text-ink-3 dot-zinc",
-  // 蓝本版本状态（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.6）：draft 可改，
+  // 工作流版本状态（Phase A，docs/BLUEPRINT-PROPOSAL.md §4.6）：draft 可改，
   // published 不可变（goal 只能钉 published）。
   draft: "bg-amber-500/10 text-amber-300 dot-amber",
   published: "bg-emerald-500/10 text-emerald-300 dot-emerald",
-  // 蓝本节点生命周期（plan-alignment「计划 vs 实际」）：pending 尚未执行，
+  // 工作流节点生命周期（plan-alignment「计划 vs 实际」）：pending 尚未执行，
   // settled 已结算；这两个词只出现在 blueprint_node.state 里。
   pending: "bg-zinc-500/10 text-ink-3 dot-zinc",
   settled: "bg-emerald-500/10 text-emerald-300 dot-emerald",
@@ -83,10 +83,10 @@ export const STATUS_LABEL: Record<string, string> = {
   online: "在线",
   offline: "离线",
   paused: "已暂停",
-  // 蓝本版本（Phase A）
+  // 工作流版本（Phase A）
   draft: "草稿",
   published: "已发布",
-  // 蓝本节点生命周期（见 STATUS_COLORS）
+  // 工作流节点生命周期（见 STATUS_COLORS）
   pending: "待执行",
   settled: "已结算",
 };
@@ -208,13 +208,17 @@ export function Dialog({
   children,
   footer,
   wide,
+  size,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   footer: React.ReactNode;
-  wide?: boolean; // 内容宽的表单（结构化编辑器）用 max-w-lg
+  wide?: boolean; // 兼容旧调用：等价于 size="wide"
+  size?: "narrow" | "default" | "wide"; // 普通表单 max-w-3xl，结构化编辑器 max-w-5xl，确认框 max-w-md
 }) {
+  const width =
+    size === "narrow" ? "max-w-md" : wide || size === "wide" ? "max-w-5xl" : "max-w-3xl";
   // Esc to close.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -240,10 +244,10 @@ export function Dialog({
       }}
     >
       <div
-        className={`w-full ${wide ? "max-w-lg" : "max-w-md"} bg-surface-1 rounded-xl shadow-2xl shadow-black/40 border border-line flex flex-col max-h-[90vh] page-enter`}
+        className={`w-full ${width} bg-surface-1 rounded-xl shadow-2xl shadow-black/40 border border-line flex flex-col max-h-[90vh] page-enter`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-line">
+        <div className="flex shrink-0 items-center justify-between px-5 py-3.5 border-b border-line">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
             onClick={onClose}
@@ -253,8 +257,8 @@ export function Dialog({
             ×
           </button>
         </div>
-        <div className="p-5 space-y-4 overflow-y-auto">{children}</div>
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line">
+        <div className="min-h-0 p-5 space-y-4 overflow-y-auto overscroll-contain">{children}</div>
+        <div className="flex shrink-0 justify-end gap-2 px-5 py-3.5 border-t border-line">
           {footer}
         </div>
       </div>
@@ -280,6 +284,7 @@ export function ConfirmDialog({
     <Dialog
       title={title}
       onClose={onClose}
+      size="narrow"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>取消</Button>

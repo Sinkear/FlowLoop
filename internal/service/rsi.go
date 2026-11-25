@@ -796,8 +796,14 @@ func (s *RSIService) RecordInferShape(ctx context.Context, goalID string) error 
 	// L1 exact ×3 → 固化 draft; L0 skeleton ×3 with L1 differing → 近似固化
 	// draft built from the LATEST execution, named by the skeleton signature
 	// (so later near-miss triples dedup into the same reviewable draft).
+	// Convergence is scoped to the squad when the goal has one (Phase B):
+	// a workflow is squad-owned, so two squads with the same domain must not
+	// converge into each other's draft. Single-agent goals keep the legacy
+	// domain lens (but never auto-draft — no owner).
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT signature, skeleton FROM infer_shape WHERE domain_id=? ORDER BY created_at DESC LIMIT 3`, domainID)
+		`SELECT signature, skeleton FROM infer_shape
+		 WHERE domain_id=? AND (?='' OR squad_id=?) ORDER BY created_at DESC LIMIT 3`,
+		domainID, squadID, squadID)
 	if err != nil {
 		return fmt.Errorf("load recent shapes: %w", err)
 	}

@@ -40,14 +40,14 @@ import { SquadRecentExecutions } from "@/components/squads/squad-recent-executio
 import { SquadBlueprints } from "@/components/squads/squad-blueprints";
 import { SquadReviews } from "@/components/squads/squad-reviews";
 
-// 小队详情最多 6 个 tab（IA 4.5）。「工作流」在 Phase A 仍是全局蓝本，
-// tab 标签直接写明迁移中，避免把全局概念伪装成本队归属。
+// 小队详情最多 6 个 tab（IA 4.5）。Phase B 起「工作流」只显示本队工作流；
+// 跨队浏览走 /workflows 搜索视图，不再有「全局工作流」的说法。
 type SquadTab = "overview" | "members" | "workflows" | "reviews" | "access" | "settings";
 
 const SQUAD_TABS: { value: SquadTab; label: string }[] = [
   { value: "overview", label: "概览" },
   { value: "members", label: "成员" },
-  { value: "workflows", label: "工作流（蓝本迁移中）" },
+  { value: "workflows", label: "工作流" },
   { value: "reviews", label: "复盘" },
   { value: "access", label: "接入" },
   { value: "settings", label: "设置" },
@@ -63,7 +63,7 @@ export default function SquadDetailPage() {
   const { data: goals } = useGoals();
   const { data: domains } = useDomains();
   const { data: connections } = useConnections(id);
-  const { data: blueprints } = useBlueprints();
+  const { data: blueprints } = useBlueprints(id);
   const updateSquad = useUpdateSquad();
   const removeMember = useRemoveSquadMember();
   const [tab, setTab] = useState<SquadTab>("overview");
@@ -73,6 +73,7 @@ export default function SquadDetailPage() {
   const [editLeader, setEditLeader] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editInstr, setEditInstr] = useState("");
+  const [editDefaultWorkflow, setEditDefaultWorkflow] = useState("");
 
   const squad = squads?.find((s) => s.id === id);
   const agentName = (aid: string) => agents?.find((a) => a.id === aid)?.name ?? aid;
@@ -96,7 +97,7 @@ export default function SquadDetailPage() {
   );
   const activeGoals = squadGoals.filter((g) => g.status === "active").length;
   const reviewGoals = squadGoals.filter((g) => g.status === "review").length;
-  // 迁移期「工作流数」= 全局蓝本数；已发布数单独说明，免得被读成「本队 5 条工作流」。
+  // 「工作流数」= 本队工作流数（Phase B：squad_id 归属）；已发布数单独说明。
   const publishedBlueprintCount = (blueprints ?? []).filter((b) => !!b.latest_version_id).length;
 
   const syncEditForm = () => {
@@ -105,6 +106,7 @@ export default function SquadDetailPage() {
     setEditLeader(squad.leader_id);
     setEditDesc(squad.description || "");
     setEditInstr(squad.instructions || "");
+    setEditDefaultWorkflow(squad.default_workflow_id || "");
   };
 
   // 切 tab 时同步设置表单：进去总是当前数据，且不在输入过程中被后台刷新覆盖。
@@ -121,7 +123,15 @@ export default function SquadDetailPage() {
   // 设置 tab 与编辑对话框共用同一份表单与 mutation。
   const saveSquad = (onSuccess?: () => void) => {
     updateSquad.mutate(
-      { id, name: editName, description: editDesc, leader_id: editLeader, instructions: editInstr },
+      {
+        id,
+        name: editName,
+        description: editDesc,
+        leader_id: editLeader,
+        instructions: editInstr,
+        // '' = 自动拆解（不用工作流）；只能选本队工作流，服务端会校验归属。
+        default_workflow_id: editDefaultWorkflow || "",
+      },
       { onSuccess }
     );
   };
@@ -183,7 +193,7 @@ export default function SquadDetailPage() {
           {
             label: "成员",
             value: members?.length ?? 0,
-            hint: `${agentMembers} agent · ${humanMembers} human${reviewerCount > 0 ? ` · ${reviewerCount} reviewer` : ""}`,
+            hint: `${agentMembers} 智能体 · ${humanMembers} 人类${reviewerCount > 0 ? ` · ${reviewerCount} 位 reviewer` : ""}`,
           },
           {
             label: "服务项目",
@@ -195,7 +205,7 @@ export default function SquadDetailPage() {
             label: "工作流",
             value: blueprints?.length ?? 0,
             tone: (blueprints?.length ?? 0) > 0 ? "info" : "muted",
-            hint: `${publishedBlueprintCount} 个已发布 · 全局蓝本`,
+            hint: `${publishedBlueprintCount} 个已发布 · 本队工作流`,
           },
           {
             label: "进行中任务",
@@ -206,7 +216,7 @@ export default function SquadDetailPage() {
         ]}
       />
 
-      {/* 窄屏允许横向滚动：6 个 tab 里「工作流（蓝本迁移中）」较长，不能让整页溢出 */}
+      {/* 窄屏允许横向滚动：6 个 tab 不能把整页撑出横向溢出 */}
       <div className="-mx-1 overflow-x-auto px-1">
         <div className="w-max">
           <Segmented value={tab} onChange={changeTab} options={SQUAD_TABS} />
@@ -228,7 +238,7 @@ export default function SquadDetailPage() {
               <div className="flex items-center justify-between gap-3 px-4 py-2.5">
                 <dt className="text-xs text-ink-3">成员构成</dt>
                 <dd className="font-mono text-xs text-ink-2">
-                  {members?.length ?? 0} 人（agent {agentMembers} · human {humanMembers}）
+                  {members?.length ?? 0} 人（智能体 {agentMembers} · 人类 {humanMembers}）
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 px-4 py-2.5">
@@ -349,7 +359,7 @@ export default function SquadDetailPage() {
           )}
 
           {/* 角色词汇表（BLUEPRINT-PROPOSAL §11.8）：能力词注册表。
-              蓝图 capability:<name> 按这里注册的词解析成员；技能差异要编码成
+              工作流 capability:<name> 按这里注册的词解析成员；技能差异要编码成
               不同的词（如 design-implementer / proprietary-implementer）。
               注册过任何一个词后，成员角色就只能从词表（或保留词 reviewer/member）里选。 */}
           <SquadRoleRegistry squadId={id} />
@@ -359,8 +369,8 @@ export default function SquadDetailPage() {
       {/* 接入：仓库连接与 webhook */}
       {tab === "access" && <SquadConnections squadId={id} />}
 
-      {/* 工作流：Phase A 仍展示全局蓝本，迁移说明由组件内 banner 承担 */}
-      {tab === "workflows" && <SquadBlueprints />}
+      {/* 工作流：本队列表（useBlueprints(id)），新建深链带上 ?squad= */}
+      {tab === "workflows" && <SquadBlueprints squadId={id} />}
 
       {/* 复盘：本队任务的 RSI session（只有开启复盘的任务才会生成） */}
       {tab === "reviews" && <SquadReviews squadId={id} />}
@@ -380,6 +390,40 @@ export default function SquadDetailPage() {
           }
         >
           <div className="space-y-4 p-4">
+            <Field
+              label="默认工作流"
+              hint="小队任务默认使用它；任务里可勾选不使用"
+            >
+              <select
+                className={inputCls}
+                value={editDefaultWorkflow}
+                onChange={(e) => setEditDefaultWorkflow(e.target.value)}
+                aria-label="默认工作流"
+              >
+                <option value="">自动拆解（不使用工作流）</option>
+                {blueprints !== undefined &&
+                  editDefaultWorkflow &&
+                  !blueprints.some((b) => b.id === editDefaultWorkflow) && (
+                    <option value={editDefaultWorkflow}>
+                      当前默认：{editDefaultWorkflow.slice(0, 8)}（不在本队列表中）
+                    </option>
+                  )}
+                {(blueprints ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name || b.id.slice(0, 8)}
+                    {b.latest_version_id ? "" : "（未发布）"}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {blueprints && blueprints.length === 0 ? (
+              <p className="text-xs leading-relaxed text-ink-3">
+                这支小队还没有工作流，暂时只能选「自动拆解」。
+                <Link href={`/workflows/new?squad=${id}`} className="ml-1 text-accent hover:text-accent-dim">
+                  新建工作流 →
+                </Link>
+              </p>
+            ) : null}
             <SquadBasicFields
               agents={agents}
               name={editName}
@@ -548,7 +592,7 @@ function SquadRoleRegistry({ squadId }: { squadId: string }) {
     <SectionCard
       title="角色词汇表"
       count={roles?.length ?? 0}
-      desc="蓝图 capability:<角色词> 按这里的词解析成员。技能差异请编码成不同的词（如 design-implementer / proprietary-implementer）；注册过词后成员角色只能从词表里选"
+      desc="工作流 capability:<角色词> 按这里的词解析成员。技能差异请编码成不同的词（如 design-implementer / proprietary-implementer）；注册过词后成员角色只能从词表里选"
       action={
         <Button onClick={() => setShowForm((v) => !v)} className="h-7 px-2.5 text-xs">
           + 注册角色
@@ -565,7 +609,7 @@ function SquadRoleRegistry({ squadId }: { squadId: string }) {
         <Empty icon={<BookA className="h-4 w-4" />}>
           还没注册角色词——成员角色仍是自由文本。
           注册第一个词后，本小队进入「词表制」：成员角色只能从词表（或保留词 reviewer/member）里选，
-          蓝图按角色词派工才有确定性保证。
+          工作流按角色词派工才有确定性保证。
         </Empty>
       ) : (
         <ul className="divide-y divide-line">
@@ -601,7 +645,7 @@ function SquadRoleRegistry({ squadId }: { squadId: string }) {
       )}
       {showForm && (
         <form onSubmit={handleSubmit} className="mt-3 space-y-3 border-t border-line pt-3">
-          <Field label="角色词" hint="小写词，可用数字、-、_（就是蓝图里 capability: 后面那一段）">
+          <Field label="角色词" hint="小写词，可用数字、-、_（就是工作流里 capability: 后面那一段）">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -611,7 +655,7 @@ function SquadRoleRegistry({ squadId }: { squadId: string }) {
               pattern="[a-z][a-z0-9_-]*"
             />
           </Field>
-          <Field label="岗位说明" hint="这个角色干什么、隐含什么专有技能——蓝图作者和拆解规划者都会读它">
+          <Field label="岗位说明" hint="这个角色干什么、隐含什么专有技能——工作流作者和拆解规划者都会读它">
             <textarea
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
@@ -689,7 +733,7 @@ function AddMemberDialog({
         <Field label="成员类型">
           <select value={memberType} onChange={(e) => { setMemberType(e.target.value); setMemberId(""); }} className={inputCls}>
             <option value="agent">Agent</option>
-            <option value="human">Human</option>
+            <option value="human">人类</option>
           </select>
         </Field>
         {memberType === "agent" && (
@@ -704,10 +748,10 @@ function AddMemberDialog({
         )}
         {memberType === "human" && (
           <Field label="Human ID">
-            <input value={memberId} onChange={(e) => setMemberId(e.target.value)} className={inputCls} required placeholder="human id…" />
+            <input value={memberId} onChange={(e) => setMemberId(e.target.value)} className={inputCls} required placeholder="人类成员 id…" />
           </Field>
         )}
-        <Field label="角色" hint={registryActive ? "角色词已注册：只能从词表选择（BLUEPRINT-PROPOSAL §11.8）" : "本小队未注册角色词汇表，暂用自由文本；想让蓝图按角色派工，请先在上方「角色词汇表」注册"}>
+        <Field label="角色" hint={registryActive ? "角色词已注册：只能从词表选择（BLUEPRINT-PROPOSAL §11.8）" : "本小队未注册角色词汇表，暂用自由文本；想让工作流按角色派工，请先在上方「角色词汇表」注册"}>
           <select value={role} onChange={(e) => setRole(e.target.value)} className={inputCls}>
             {roleOptions.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, Plus } from "lucide-react";
 import {
@@ -46,6 +46,10 @@ export default function SchedulesPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [detail, setDetail] = useState<Schedule | null>(null);
   const [editTarget, setEditTarget] = useState<Schedule | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
+  }, []);
 
   const agentName = (aid: string) => agents?.find((a) => a.id === aid)?.name ?? aid;
   const squadName = (sid: string) => squads?.find((s) => s.id === sid)?.name ?? sid;

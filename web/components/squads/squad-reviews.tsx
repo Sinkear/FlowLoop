@@ -158,20 +158,20 @@ export function SquadReviews({ squadId }: { squadId: string }) {
         </div>
       ) : rows.length === 0 ? (
         <Empty icon={<Activity className="h-4 w-4" />}>
-          这支小队还没有复盘。复盘只对开启「完成后生成复盘」的任务生成（小队 + 蓝本默认开启，
+          这支小队还没有复盘。复盘只对开启「完成后生成复盘」的任务生成（小队 + 工作流默认开启，
           自动拆解默认关闭）；任务进入终态后才会出现在这里，所以为空不代表任务没跑过。
           <span className="mt-4 flex flex-wrap items-center justify-center gap-2">
             <Link
               href="/training"
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
-              去训练分析看看
+              去复盘看看
             </Link>
             <Link
-              href="/goals/new?form=1"
+              href="/goals/new"
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
-              新建训练任务
+              新建复盘任务
             </Link>
           </span>
         </Empty>

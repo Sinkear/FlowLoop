@@ -69,6 +69,15 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
+	// blueprints gained an owning squad in Phase B. The old table has an
+	// inline UNIQUE(name), which SQLite cannot drop with ALTER TABLE; rebuild
+	// it before the generic ADD COLUMN loop (the loop also cannot express a
+	// table rebuild). Fresh DBs already have the column and skip this.
+	if err := migrateBlueprintOwnership(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate blueprint ownership: %w", err)
+	}
+
 	// Migrations: ALTER TABLE ADD COLUMN has no IF NOT EXISTS in SQLite, so a
 	// repeated Open on an existing DB errors on "duplicate column." Each
 	// migration is best-effort — ignore the duplicate error, execute the rest.
@@ -114,6 +123,10 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE goal ADD COLUMN content_capture TEXT NOT NULL DEFAULT 'redacted'`,
 		`ALTER TABLE goal ADD COLUMN budget_usd REAL NOT NULL DEFAULT 2`,
 		`ALTER TABLE goal ADD COLUMN sample_rate REAL NOT NULL DEFAULT 1`,
+		// Workflow ownership (Phase B, WEB-IA-REDESIGN.md D1/D5): a squad's
+		// default workflow id. '' = none → tasks auto-decompose. New column
+		// only; the blueprint table rebuild above lives outside this loop.
+		`ALTER TABLE squad ADD COLUMN default_workflow_id TEXT NOT NULL DEFAULT ''`,
 		// W-RSI (2026-11-08): workflow-level observation replaces span-level
 		// trace. Sub-goal gains declared dependencies; rsi_report freezes the
 		// orchestration graph; trace_span is retired outright.
@@ -311,6 +324,65 @@ func Open(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// migrateBlueprintOwnership rebuilds the blueprint table once, adding
+// squad_id and replacing UNIQUE(name) with UNIQUE(squad_id,name). SQLite has
+// no DROP CONSTRAINT, so the table is recreated and copied. Foreign keys are
+// disabled on the dedicated connection (PRAGMA is per-connection), and the
+// child tables (blueprint_version/proposal) keep referencing blueprint(id)
+// after the rename. ” is the frozen legacy bucket — no backfill is attempted.
+func migrateBlueprintOwnership(db *sql.DB) error {
+	ctx := context.Background()
+	var hasCol int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('blueprint') WHERE name='squad_id'`).Scan(&hasCol); err != nil {
+		return fmt.Errorf("inspect blueprint columns: %w", err)
+	}
+	if hasCol > 0 {
+		return nil
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys: %w", err)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmts := []string{
+		`CREATE TABLE blueprint_new (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL,
+			description     TEXT NOT NULL DEFAULT '',
+			squad_id        TEXT NOT NULL DEFAULT '',
+			created_by_type TEXT NOT NULL DEFAULT 'human',
+			created_by_id   TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL,
+			UNIQUE(squad_id, name)
+		)`,
+		`INSERT INTO blueprint_new (id,name,description,squad_id,created_by_type,created_by_id,created_at)
+		 SELECT id,name,description,'',created_by_type,created_by_id,created_at FROM blueprint`,
+		`DROP TABLE blueprint`,
+		`ALTER TABLE blueprint_new RENAME TO blueprint`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("rebuild blueprint: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+		return fmt.Errorf("restore foreign keys: %w", err)
+	}
+	return nil
 }
 
 // DB exposes the underlying handle for handlers/services that run queries.

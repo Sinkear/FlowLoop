@@ -128,6 +128,11 @@ function ProjectsInner() {
     if (search.get("new") === "1") setEditor("new");
   }, [search]);
 
+  const params = useSearchParams();
+  useEffect(() => {
+    if (params.get("new") === "1") setEditor("new");
+  }, [params]);
+
   const list = domains ?? [];
   const repoCount = list.filter((d) => d.type !== "scratch").length;
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;

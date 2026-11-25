@@ -113,7 +113,7 @@ function ReviewContext({
           </span>
         ) : (
           <span className="text-ink-2">
-            {goal ? "未使用蓝本（自动拆解）" : "—"}
+            {goal ? "未使用工作流（自动拆解）" : "—"}
           </span>
         )}
       </span>

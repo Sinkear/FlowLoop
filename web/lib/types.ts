@@ -266,7 +266,7 @@ export interface Goal {
   content_capture?: string; // none|redacted|full（train 模式）
   budget_usd?: number; // 分析预算（train 模式默认 2）
   sample_rate?: number; // 采样率 0..1（train 模式默认 1）
-  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 蓝本驱动（Activate 编译 + guard 计数）
+  blueprint_version_id?: string; // Phase A：''/缺省 = infer 模式；非空 = 工作流驱动（Activate 编译 + guard 计数）
 }
 
 export interface GateStat {
@@ -419,6 +419,8 @@ export interface Squad {
   description: string;
   leader_id: string;
   instructions: string;
+  /** 默认工作流（blueprint id，不是版本）。'' = 自动拆解。 */
+  default_workflow_id: string;
   created_at: string;
 }
 
@@ -993,7 +995,7 @@ export interface RsiOverview {
   trend?: RsiTrendPoint[];
 }
 
-// ── 蓝本（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
+// ── 工作流（Phase A，docs/BLUEPRINT-PROPOSAL.md）：结构化编排权威 ──
 // goal.blueprint_version_id 钉住一个 published 版本；Activate 时编译成
 // gated sub_goal（拍 1 建结构，拍 2 释放时填 brief）。规范图经
 // /workflows/blueprints/{versionId} 以 WorkflowGraph 形状渲染。
@@ -1002,6 +1004,8 @@ export interface Blueprint {
   id: string;
   name: string;
   description: string;
+  /** 归属小队；'' = Phase B 之前的历史全局桶（只读、新任务不可选）。 */
+  squad_id: string;
   created_at: string;
   latest_version_id: string; // 最新「已发布」版本 id；'' = 尚未发布任何版本
   version_count: number; // 版本总数（含草稿）
@@ -1028,7 +1032,7 @@ export interface BlueprintDetail {
   versions: BlueprintVersion[];
 }
 
-// ── 蓝本人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
+// ── 工作流人工门（B-3，§4.2）：goal 详情页的决策卡数据 ──
 // 只列 OPEN 的门（已持门、等人拍板）；held_since 起超时
 // timeout_after 后 sweeper 自动执行 timeout_action（decided_by=system）。
 export interface HeldGateAction {
@@ -1118,7 +1122,7 @@ export interface PlanAlignment {
   deviations: string[];
 }
 
-// ── 蓝本提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
+// ── 工作流提案（Phase C，§12.1）：结构化补丁 + 人工批准 ──
 // 批准 = 开新草稿（changelog=hypothesis），永不自动发布。
 export type BlueprintPatchOp =
   | "add_node"

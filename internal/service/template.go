@@ -26,9 +26,10 @@ import (
 const (
 	templateRepoKey  = "platform.template_repo"
 	templateCacheKey = "platform.template_cache"
-	// defaultTemplateRepo is the built-in official template repository —
-	// used when platform.template_repo is unset.
-	defaultTemplateRepo = "https://gitcode.com/Wing-Jason/ouroflow-templates.git"
+	// There is deliberately NO built-in remote repository (m01058 #4): the
+	// practice library must not fail or hit the network when the deployer has
+	// not configured a source. An empty config means "no source configured" —
+	// List returns empty, not a fetch error.
 )
 
 // TemplateRepoConfig is the platform.template_repo value.
@@ -126,13 +127,14 @@ func NewTemplateService(st *store.Store, settings *SettingsService) *TemplateSer
 	return &TemplateService{st: st, settings: settings}
 }
 
-// RepoConfig returns the configured template repo, falling back to the
-// built-in default when unset.
+// RepoConfig returns the configured template repo. Empty means no source is
+// configured; the practice library then renders its empty state instead of
+// attempting a network fetch.
 func (s *TemplateService) RepoConfig(ctx context.Context) (TemplateRepoConfig, error) {
 	var cfg TemplateRepoConfig
 	raw, err := s.settings.Get(ctx, templateRepoKey)
-	if err != nil || raw == "" {
-		return TemplateRepoConfig{GitURL: defaultTemplateRepo, Branch: "main"}, nil
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return TemplateRepoConfig{}, nil
 	}
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return TemplateRepoConfig{}, NewValidationError("platform.template_repo is not valid JSON: " + err.Error())
@@ -166,6 +168,9 @@ func (s *TemplateService) Refresh(ctx context.Context, token string) (*TemplateF
 	cfg, err := s.RepoConfig(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(cfg.GitURL) == "" {
+		return nil, NewCodedError(CodeTemplateFetchFailed, "实践库源尚未接入——配置 platform.template_repo 后再刷新")
 	}
 	// Bound the clone independently of the request ctx — a dead GitCode host
 	// must not wedge the caller. refreshTimeout was previously declared but
@@ -366,6 +371,15 @@ func (s *TemplateService) cached(ctx context.Context) (*templateCache, error) {
 // "squad" | "project" | full kind | ” = all). An empty cache triggers a
 // best-effort fetch so the first page load works with zero clicks.
 func (s *TemplateService) List(ctx context.Context, kind string) ([]TemplateSummary, error) {
+	cfg, cerr := s.RepoConfig(ctx)
+	if cerr != nil {
+		return nil, cerr
+	}
+	if strings.TrimSpace(cfg.GitURL) == "" {
+		// No source configured: the practice library is a valid empty state,
+		// never a 400 from an unreachable GitCode repo.
+		return []TemplateSummary{}, nil
+	}
 	c, err := s.cached(ctx)
 	if err != nil {
 		if _, rerr := s.Refresh(ctx, ""); rerr != nil {

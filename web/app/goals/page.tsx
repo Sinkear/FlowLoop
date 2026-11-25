@@ -94,11 +94,11 @@ function GoalsPageInner() {
     window.localStorage.setItem("ouroflow-goals-view", v);
   };
 
-  // 已删除 agent 的 goal 仍保留记录：id 非空但查不到时显示「已删除 agent」，
+  // 已删除智能体 的 goal 仍保留记录：id 非空但查不到时显示「已删除智能体」，
   // 不再把 uuid 露给人看。agents 尚未加载时退回 id（这不是"已删除"），空 id
   // 返回 "" 让调用方的 `|| "?"` 继续兜底。
   const agentName = (aid: string) =>
-    agents?.find((a) => a.id === aid)?.name ?? (aid ? (agents ? "已删除 agent" : aid) : "");
+    agents?.find((a) => a.id === aid)?.name ?? (aid ? (agents ? "已删除智能体" : aid) : "");
   const squadName = (sid: string) => squads?.find((s) => s.id === sid)?.name ?? sid;
 
   const projectGoals = goals?.filter((g) => !projectId || g.domain_id === projectId) ?? [];
@@ -148,7 +148,7 @@ function GoalsPageInner() {
               ]}
             />
             <Link
-              href={projectId ? `/goals/new?project=${projectId}&form=1` : "/goals/new?form=1"}
+              href={projectId ? `/goals/new?project=${projectId}` : "/goals/new"}
               className="inline-flex items-center justify-center rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-dim"
             >
               + 新建

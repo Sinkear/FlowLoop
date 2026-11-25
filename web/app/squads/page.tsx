@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQueries } from "@tanstack/react-query";
 import { listSquadMembers } from "@/lib/api";
@@ -51,6 +51,10 @@ export default function SquadsPage() {
   const [query, setQuery] = useState("");
   const [repoFilter, setRepoFilter] = useState<RepoFilter>("all");
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
+  }, []);
+
   // 成员合计需要每个小队各自的 roster；squad 列表接口不带 members，
   // 这里按 squad id 复用 detail 页同一个 query key，数据仍是同一条真数据。
   const memberQueries = useQueries({
@@ -99,9 +103,15 @@ export default function SquadsPage() {
     <PageBody>
       <PageHeader
         title="小队"
-        desc="Squad 把一组 agent 编成小队：leader 接任务并分派，reviewer 在审批时把关；仓库连接决定 issue / PR 投递给谁。"
+        desc="小队把一组智能体编成队伍：leader 接任务并分派，reviewer 在审批时把关；仓库连接决定 issue / PR 投递给谁。"
         action={
           <div className="flex gap-2">
+            <Link
+              href="/workflows"
+              className="inline-flex h-8 items-center rounded-md px-3 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              全部工作流
+            </Link>
             <Button variant="outline" onClick={() => setShowImport(true)}>导入团队</Button>
             <Button onClick={() => setShowForm(true)}>+ 新建</Button>
           </div>
@@ -167,7 +177,7 @@ export default function SquadsPage() {
           </div>
         ) : !squads || squads.length === 0 ? (
           <Empty icon={<Users className="h-4 w-4" />}>
-            暂无 Squad。点「+ 新建」创建一个，或「导入团队」从代码仓导入。
+            暂无小队。点「+ 新建」创建一个，或「导入团队」从代码仓导入。
           </Empty>
         ) : visibleSquads.length === 0 ? (
           <Empty icon={<Search className="h-4 w-4" />}>没有匹配当前搜索/筛选条件的小队。</Empty>
@@ -378,7 +388,7 @@ function NewSquadForm({
 
   return (
     <Dialog
-      title="新建 Squad"
+      title="新建小队"
       onClose={onClose}
       footer={
         <>
@@ -389,10 +399,13 @@ function NewSquadForm({
         </>
       }
     >
-      <form id="squad-form" onSubmit={handleSubmit} className="space-y-4">
+      <form id="squad-form" onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="md:col-span-2">
         <Field label="名称" hint="必填">
-          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} required placeholder="Squad 名称…" />
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} required placeholder="小队名称…" />
         </Field>
+        </div>
+        <div className="md:col-span-2">
         <Field label="成员" hint="leader = 协调者；reviewer = 审查者（进审批时平台自动拉去审查）。先选成员，再指定 leader 和 reviewer">
           <div className="border border-line rounded-lg divide-y divide-line max-h-48 overflow-y-auto">
             {(agents ?? []).map((a) => (
@@ -403,6 +416,7 @@ function NewSquadForm({
             ))}
           </div>
         </Field>
+        </div>
         <Field label="Leader" hint="必填，从成员中选">
           <select value={leaderId} onChange={(e) => setLeaderId(e.target.value)} className={inputCls} required>
             <option value="">选择…</option>
@@ -411,7 +425,7 @@ function NewSquadForm({
             ))}
           </select>
         </Field>
-        <Field label="审核者（reviewer）" hint="可选——squad 任务进审批时，平台会自动拉审核者审查">
+        <Field label="审核者（reviewer）" hint="可选——小队任务进审批时，平台会自动拉审核者审查">
           <select value={reviewerId} onChange={(e) => setReviewerId(e.target.value)} className={inputCls}>
             <option value="">无</option>
             {memberAgents.filter((a) => a.id !== leaderId).map((a) => (
@@ -423,14 +437,14 @@ function NewSquadForm({
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} rows={2} />
         </Field>
         <Field label="Instructions" hint="leader 运行时会注入这些 instructions">
-          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} className={inputCls} rows={3} placeholder="Squad 工作说明…" />
+          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} className={inputCls} rows={3} placeholder="小队工作说明…" />
         </Field>
         {createSquad.isError && (
-          <p className="text-sm text-red-400">{String(createSquad.error)}</p>
+          <p className="text-sm text-red-400 md:col-span-2">{String(createSquad.error)}</p>
         )}
         {memberFailures.length > 0 && (
-          <p className="text-sm text-amber-400">
-            Squad 已创建，但以下成员加入失败：{memberFailures.join("、")}。可稍后在 Squad 详情页手动添加。
+          <p className="text-sm text-amber-400 md:col-span-2">
+            小队已创建，但以下成员加入失败：{memberFailures.join("、")}。可稍后在 Squad 详情页手动添加。
           </p>
         )}
       </form>

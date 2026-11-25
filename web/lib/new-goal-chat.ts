@@ -62,11 +62,11 @@ const CREATE_INTENTS: Record<
     backView: "智能体列表",
   },
   blueprint: {
-    label: "蓝本",
+    label: "工作流",
     cliKind: "blueprint",
     cli: 'ouroflow create blueprint --name "..."',
     fields: "步骤/人工卡点/适用场景",
-    backView: "蓝本列表",
+    backView: "工作流列表",
   },
 };
 
@@ -98,7 +98,7 @@ let lines: NewGoalLine[] = [];
 let error = "";
 let lastAsk: { say: string; first: boolean } | null = null;
 let createdGoal: { id: string; title: string } | null = null;
-// 这一轮在创建什么：任务 / 项目 / 团队 / 智能体 / 蓝本。决定管家指令的
+// 这一轮在创建什么：任务 / 项目 / 团队 / 智能体 / 工作流。决定管家指令的
 // 措辞，也决定「建好了没」去轮询哪张表。
 let flowKind: CreateKind = "goal";
 let perm: NewGoalState["perm"] = null;
