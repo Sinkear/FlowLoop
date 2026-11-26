@@ -370,7 +370,7 @@ var intakeReg = &intakeRegistry{cmds: []intakeCommand{
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult { return d.intakeSquadDelete(ctx, p) }},
 	{"import_team", func() string { return "根据 <git URL> 创建一个 team" },
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult { return d.intakeImportTeam(ctx, p) }},
-	{"create_blueprint", func() string { return "创建蓝图 <名字>，流程是 <先说第一步、第二步怎么走>" },
+	{"create_blueprint", func() string { return "创建工作流 <名字>，流程是 <先说第一步、第二步怎么走>" },
 		func(d *Daemon, ctx context.Context, p intakeAction) intakeResult {
 			return d.intakeCreateBlueprint(ctx, p)
 		}},
@@ -857,7 +857,7 @@ func (d *Daemon) doCreateSquad(ctx context.Context, sq squadAction) intakeResult
 // The spec JSON is the thing users cannot type from memory, so the ask carries
 // a minimal valid skeleton in its platform hint (blueprintSpecHint) instead of
 // the usual roster. A non-empty but INVALID spec is a terminal error rather
-// than another ask — re-asking for "蓝图内容" would loop forever on malformed
+// than another ask — re-asking for "工作流内容" would loop forever on malformed
 // JSON, and the validator's message already says what to fix.
 func (d *Daemon) intakeCreateBlueprint(ctx context.Context, parsed intakeAction) intakeResult {
 	bp := parsed.Blueprint
@@ -896,22 +896,22 @@ func fillBlueprintAgentPlaceholder(bp blueprintAction) blueprintAction {
 // reply says so instead of implying the blueprint is usable right away.
 func (d *Daemon) doCreateBlueprint(ctx context.Context, bp blueprintAction) intakeResult {
 	if strings.TrimSpace(bp.Name) == "" {
-		return reply("创建蓝图失败：缺少名称")
+		return reply("创建工作流失败：缺少名称")
 	}
 	if strings.TrimSpace(bp.Content) == "" {
-		return reply("创建蓝图失败：缺少蓝图内容（SpecGraph JSON）")
+		return reply("创建工作流失败：缺少工作流内容（SpecGraph JSON）")
 	}
 	if d.blueprintSvc == nil {
-		return reply("创建蓝图失败：daemon 未接线 blueprint 服务")
+		return reply("创建工作流失败：daemon 未接线 blueprint 服务")
 	}
 	if strings.TrimSpace(bp.SquadID) == "" {
 		return reply("创建工作流失败：请指定所属小队（squad_id）——工作流必须由一个小队拥有")
 	}
 	row, err := d.blueprintSvc.CreateForSquad(ctx, bp.SquadID, bp.Name, bp.Description, bp.Content, "human", "")
 	if err != nil {
-		return reply("创建蓝图失败：" + err.Error())
+		return reply("创建工作流失败：" + err.Error())
 	}
-	return created(row, fmt.Sprintf("✅ 已创建蓝图：%s（%s，v1 草稿）。发布之后才能在新建任务时选它；发布前还可以继续改稿。", row.Name, shortID(row.ID)))
+	return created(row, fmt.Sprintf("✅ 已创建工作流：%s（%s，v1 草稿）。发布之后才能在新建任务时选它；发布前还可以继续改稿。", row.Name, shortID(row.ID)))
 }
 
 // mergeBlueprint merges a clarification reply onto a draft. Content/agent are
@@ -947,7 +947,7 @@ func blueprintMissingFields(bp blueprintAction) []string {
 		out = append(out, "名称")
 	}
 	if strings.TrimSpace(bp.Content) == "" {
-		out = append(out, "蓝图内容")
+		out = append(out, "工作流内容")
 	}
 	return out
 }
@@ -958,7 +958,7 @@ func blueprintMissingFields(bp blueprintAction) []string {
 // guess the schema will hallucinate fields that V1–V5 reject.
 func (d *Daemon) blueprintSpecHint(ctx context.Context) string {
 	var b strings.Builder
-	b.WriteString("蓝图内容是一个 SpecGraph JSON，字段形状必须是：\n")
+	b.WriteString("工作流内容是一个 SpecGraph JSON，字段形状必须是：\n")
 	b.WriteString(`{"name":"图名","description":"可选说明","nodes":[`)
 	b.WriteString(`{"id":"t1","type":"task","title":"第一步","task":{"assignee":"agent:<agent-id>","brief":"要做的事"}},`)
 	b.WriteString(`{"id":"end_ok","type":"end","title":"完成","end":{"outcome":"success"}}`)
@@ -1805,7 +1805,7 @@ func (d *Daemon) collectAndAsk(ctx context.Context, kind, payloadJSON string, mi
 	case "domain":
 		msg.WriteString("创建项目还需要以下信息：\n")
 	case "blueprint":
-		msg.WriteString("创建蓝图还需要以下信息：\n")
+		msg.WriteString("创建工作流还需要以下信息：\n")
 	}
 	for _, f := range missing {
 		msg.WriteString("- " + f + "\n")
