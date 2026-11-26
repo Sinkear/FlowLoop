@@ -8,15 +8,16 @@ import {
   FolderGit2,
   ListChecks,
   Server,
+  ShieldAlert,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { useAgents, useDomains, useGoals, useMachines, useRsiSessions, useSchedules, useSquads } from "@/lib/queries";
+import { useAgents, useDomains, useGoals, useMachines, usePendingGates, useRsiSessions, useSchedules, useSquads } from "@/lib/queries";
 import { useCreateDialog } from "@/components/create/create-dialog";
 import { Badge, Empty, PageBody, PageHeader, SectionCard, StatStrip } from "@/components/ui";
 import { STATUS_LABEL } from "@/components/ui";
 import { relTime } from "@/lib/utils";
-import type { Goal, RsiSession } from "@/lib/types";
+import type { Goal, PendingGate, RsiSession } from "@/lib/types";
 
 function until(iso: string): string {
   if (!iso) return "未排期";
@@ -34,6 +35,7 @@ function until(iso: string): string {
 export default function WorkbenchPage() {
   const { open } = useCreateDialog();
   const { data: goals } = useGoals();
+  const { data: pendingGates } = usePendingGates();
   const { data: domains } = useDomains();
   const { data: squads } = useSquads();
   const { data: agents } = useAgents();
@@ -55,6 +57,10 @@ export default function WorkbenchPage() {
   const sessionByGoal = useMemo(() => new Map(allSessions.map((s) => [s.goal_id, s])), [allSessions]);
 
   const attention = allGoals.filter((g) => g.status === "review" || g.status === "failed" || g.attention);
+  // 工作流人工门不改变 goal.status：只数 review/failed/attention 会让
+  // 「流程停在 gate 上等人」完全隐形。人工门与待审批合并成「待我处理」。
+  const heldGates = pendingGates?.gates ?? [];
+  const attentionCount = attention.length + heldGates.length;
   const active = allGoals.filter((g) => g.status === "active");
   const done = allGoals
     .filter((g) => g.status === "done")
@@ -117,9 +123,9 @@ export default function WorkbenchPage() {
         items={[
           {
             label: "待我处理",
-            value: attention.length,
-            tone: attention.length ? "info" : "muted",
-            hint: attention.length ? "待审批、失败或需要你介入" : "没有卡点",
+            value: attentionCount,
+            tone: attentionCount ? "info" : "muted",
+            hint: attentionCount ? "人工门、待审批、失败或需要你介入" : "没有卡点",
           },
           {
             label: "进行中",
@@ -146,21 +152,27 @@ export default function WorkbenchPage() {
         <div className="space-y-4">
           <SectionCard
             title="待我处理"
-            count={attention.length}
-            desc="审批、失败和 attention 卡点集中在这里。"
+            count={attentionCount}
+            desc="工作流人工门、审批、失败和 attention 卡点集中在这里。"
             action={
-              <Link href="/goals?status=review" className="text-xs text-ink-3 hover:text-accent">
-                查看待审批
+              <Link href="/goals" className="text-xs text-ink-3 hover:text-accent">
+                全部任务 →
               </Link>
             }
             bodyClassName="p-0"
           >
-            {attention.length === 0 ? (
+            {attentionCount === 0 ? (
               <Empty icon={<Sparkles className="h-5 w-5" />}>
                 没有需要你处理的卡点。去项目里看看，或者给小队派一条新任务。
               </Empty>
             ) : (
               <div className="divide-y divide-line">
+                {heldGates.slice(0, 4).map((gate) => (
+                  <ApprovalGateRow key={`${gate.goal_id}:${gate.node_key}`} gate={gate} project={projectName.get(gate.domain_id)} />
+                ))}
+                {attention.length > 0 && heldGates.length > 0 && (
+                  <div className="px-4 py-1.5 text-[10px] uppercase tracking-[0.12em] text-ink-3">任务审批</div>
+                )}
                 {attention.slice(0, 6).map((goal) => (
                   <GoalRow
                     key={goal.id}
@@ -417,6 +429,36 @@ function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: stri
       )}
       <Badge status={goal.status} className="shrink-0" />
       <span className="hidden shrink-0 font-mono text-[10px] text-ink-3 sm:block">{relTime(goal.created_at)}</span>
+    </Link>
+  );
+}
+
+function ApprovalGateRow({ gate, project }: { gate: PendingGate; project?: string }) {
+  const waited = gate.held_since ? relTime(gate.held_since) : "";
+  return (
+    <Link
+      href={`/goals/${gate.goal_id}#held-gates`}
+      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50"
+    >
+      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-ink">
+          {gate.title || gate.node_key}
+          <span className="ml-1.5 text-xs font-normal text-ink-3">· 等你拍板</span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-3">
+          <span className="truncate">{project || "未归属项目"}</span>
+          <span>·</span>
+          <span className="truncate">{gate.goal_title || "任务"}</span>
+          {waited ? (
+            <>
+              <span>·</span>
+              <span className="text-amber-300/90">已等 {waited}</span>
+            </>
+          ) : null}
+        </div>
+      </div>
+      <span className="shrink-0 text-[11px] text-ink-3">去拍板 →</span>
     </Link>
   );
 }

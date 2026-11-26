@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, Check, Copy, FolderGit2, Plus } from "lucide-react";
-import { useConnections, useDeleteDomain, useDomains, useGoals, useSchedules, useSquads } from "@/lib/queries";
+import { useDeleteDomain, useDomains, useGoals, useSchedules } from "@/lib/queries";
 import {
   Button, ConfirmDialog, Empty, PageBody, PageHeader, SectionCard, Skeleton, StatStrip,
 } from "@/components/ui";
@@ -34,14 +34,12 @@ function ProjectRow({
   project: d,
   goalCount,
   scheduleCount,
-  squadCount,
   onEdit,
   onDelete,
 }: {
   project: Domain;
   goalCount: number;
   scheduleCount: number;
-  squadCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -71,7 +69,6 @@ function ProjectRow({
           <Tag className={acceptance.cls}>{acceptance.label}</Tag>
           <Tag className="border-line bg-surface-2 text-ink-3">{goalCount} 任务</Tag>
           <Tag className="border-line bg-surface-2 text-ink-3">{scheduleCount} 定时</Tag>
-          <Tag className="border-line bg-surface-2 text-ink-3">{squadCount} 小队</Tag>
         </div>
 
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-3">
@@ -117,8 +114,6 @@ function ProjectsInner() {
   const { data: domains, isLoading } = useDomains();
   const { data: goals } = useGoals();
   const { data: schedules } = useSchedules();
-  const { data: connections } = useConnections();
-  const { data: squads } = useSquads();
   const del = useDeleteDomain();
   const [editor, setEditor] = useState<Domain | "new" | null>(null);
   const [deleting, setDeleting] = useState<Domain | null>(null);
@@ -142,13 +137,6 @@ function ProjectsInner() {
   }).length;
   const activeGoals = (goals ?? []).filter((g) => g.status === "active").length;
 
-  const squadIdsFor = (d: Domain): Set<string> => {
-    const ids = new Set((connections ?? []).filter((c) => c.domain_id === d.id).map((c) => c.squad_id));
-    if (d.issue_assignee_type === "squad" && d.issue_assignee) ids.add(d.issue_assignee);
-    if (d.pull_assignee_type === "squad" && d.pull_assignee) ids.add(d.pull_assignee);
-    return new Set([...ids].filter((id) => (squads ?? []).some((s) => s.id === id)));
-  };
-
   const askDelete = (d: Domain) => {
     setDeleteError("");
     setDeleting(d);
@@ -166,7 +154,7 @@ function ProjectsInner() {
     <PageBody className="space-y-5">
       <PageHeader
         title="项目"
-        desc="任务、定时任务和小队服务都挂在项目下。先选项目，再看它下面发生了什么。"
+        desc="任务和定时任务都挂在项目下。先选项目，再看它下面发生了什么。"
         action={
           <Button onClick={() => setEditor("new")} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
@@ -197,7 +185,7 @@ function ProjectsInner() {
         ]}
       />
 
-      <SectionCard title="项目列表" count={list.length} desc="打开项目可以看到它下面的任务、定时任务和服务小队" bodyClassName="p-0">
+      <SectionCard title="项目列表" count={list.length} desc="打开项目可以看到它下面的任务和定时任务" bodyClassName="p-0">
         {isLoading ? (
           <div className="divide-y divide-line">
             {[0, 1, 2].map((i) => (
@@ -214,7 +202,6 @@ function ProjectsInner() {
         ) : (
           <div className="divide-y divide-line">
             {list.map((d) => {
-              const squadCount = squadIdsFor(d).size;
               const goalCount = (goals ?? []).filter((g) => g.domain_id === d.id).length;
               const scheduleCount = (schedules ?? []).filter((s) => s.domain_id === d.id).length;
               return (
@@ -223,7 +210,6 @@ function ProjectsInner() {
                   project={d}
                   goalCount={goalCount}
                   scheduleCount={scheduleCount}
-                  squadCount={squadCount}
                   onEdit={() => setEditor(d)}
                   onDelete={() => askDelete(d)}
                 />

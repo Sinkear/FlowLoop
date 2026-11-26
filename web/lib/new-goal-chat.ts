@@ -96,6 +96,9 @@ export interface NewGoalState {
   lastAsk: { say: string; first: boolean } | null;
   createdGoal: { id: string; title: string } | null;
   perm: { req: PermissionRequest; respond: (o: { optionId?: string; cancelled?: boolean }) => void } | null;
+  // 最近一次收到进展（流式文本、工具事件、阶段变化）的时间戳。页面用它判断
+  // 「是真的没有进展」还是「连接一直有动静」——不能只看 phase。
+  lastActivityAt: number;
 }
 
 // ── 模块状态（整个 store 的本体，页面卸载不动它） ───────────────────────
@@ -111,6 +114,9 @@ let flowKind: CreateKind = "goal";
 // 工作流必须挂在某个小队下：聊天创建时把页面选中的 owner 钉进 CLI 参数。
 let flowSquadId = "";
 let perm: NewGoalState["perm"] = null;
+// 最近一次进展时间（毫秒）。每次 emit 都算一次进展：agent 文本、工具事件、
+// 权限请求、阶段切换都会走到 emit。
+let lastActivityAt = 0;
 
 let stewardId: string | null = null;
 
@@ -158,6 +164,7 @@ const listeners = new Set<() => void>();
 
 function emit() {
   version += 1;
+  lastActivityAt = Date.now();
   for (const l of listeners) l();
 }
 
@@ -185,6 +192,7 @@ export function getNewGoalState(): NewGoalState {
     createdGoal,
     createdKind: flowKind,
     perm,
+    lastActivityAt,
   };
 }
 

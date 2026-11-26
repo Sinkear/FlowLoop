@@ -558,6 +558,11 @@ export const createBlueprint = (body: {
 export const listHeldGates = (goalId: string) =>
   api<{ gates: import("./types").HeldGate[] }>(`/goals/${goalId}/blueprint-gates`);
 
+// 全局待审核门：所有任务里处于 held（等人拍板）的人工门，工作台 feed 与
+// 导航 badge 共用。只读；拍板仍走 resolveHeldGate。
+export const listPendingGates = () =>
+  api<{ gates: import("./types").PendingGate[] }>("/goal-gates");
+
 export const resolveHeldGate = (
   goalId: string,
   nodeKey: string,

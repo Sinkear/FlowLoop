@@ -41,10 +41,11 @@ import { SquadBlueprints } from "@/components/squads/squad-blueprints";
 
 // 小队详情最多 6 个 tab（IA 4.5）。Phase B 起「工作流」只显示本队工作流；
 // 跨队浏览走 /workflows 搜索视图，不再有「全局工作流」的说法。
-type SquadTab = "overview" | "members" | "workflows";
+type SquadTab = "overview" | "executions" | "members" | "workflows";
 
 const SQUAD_TABS: { value: SquadTab; label: string }[] = [
   { value: "overview", label: "概览" },
+  { value: "executions", label: "最近执行" },
   { value: "members", label: "成员" },
   { value: "workflows", label: "工作流" },
 ];
@@ -327,10 +328,12 @@ export default function SquadDetailPage() {
             )}
           </SectionCard>
 
-          {/* 编排摘要并进概览：原「编排」tab 去掉后不允许功能凭空消失。 */}
-          <SquadRecentExecutions squadId={id} />
         </div>
       )}
+
+      {/* 最近执行与概览平级：它是「这支小队最近跑得怎么样」的主入口，
+          藏在概览底部会被当成工作流列表的附属。 */}
+      {tab === "executions" && <SquadRecentExecutions squadId={id} />}
 
       {tab === "members" && (
         <div className="space-y-6">

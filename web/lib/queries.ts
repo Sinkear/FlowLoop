@@ -135,6 +135,7 @@ import {
   updateBlueprintDraft,
   publishBlueprintVersion,
   listHeldGates,
+  listPendingGates,
   getPlanAlignment,
   getEnvChanges,
   resolveHeldGate,
@@ -173,6 +174,7 @@ export const qk = {
   subGoalVerifications: (goalId: string, subGoalId: string) =>
     ["goals", goalId, "sub-goals", subGoalId, "verifications"] as const,
   heldGates: (goalId: string) => ["goals", goalId, "blueprint-gates"] as const,
+  pendingGates: () => ["goal-gates"] as const,
   planAlignment: (goalId: string) => ["goals", goalId, "plan-alignment"] as const,
   envChanges: (goalId: string) => ["goals", goalId, "env-changes"] as const,
   blueprintProposals: (blueprintId: string) =>
@@ -730,6 +732,8 @@ export function useSquadMembers(squadId: string) {
   return useQuery({
     queryKey: qk.squadMembers(squadId),
     queryFn: () => listSquadMembers(squadId),
+    // 新建工作流时还没选小队；没有 id 就不要去打 /squads//members。
+    enabled: Boolean(squadId),
   });
 }
 export function useAddSquadMember() {
@@ -1421,6 +1425,17 @@ export function useHeldGates(goalId: string | null) {
   });
 }
 
+// 全局待审核门：工作台与导航共用。15s 轮询足够——人工门本来就是异步的，
+// 但审核延迟直接卡住执行，所以别等到用户手动刷新。
+export function usePendingGates() {
+  return useQuery({
+    queryKey: qk.pendingGates(),
+    queryFn: listPendingGates,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
 // 计划 vs 实际对账（BUG-4）：偏离是常态信号，不轮询；goal 事件刷新够用。
 export function usePlanAlignment(goalId: string | null) {
   return useQuery({
@@ -1448,6 +1463,7 @@ export function useResolveHeldGate(goalId: string) {
       // ——被拍板释放的分支会让执行图立刻变化。
       qc.invalidateQueries({ queryKey: qk.goal(goalId) });
       qc.invalidateQueries({ queryKey: qk.workflowGoal(goalId) });
+      qc.invalidateQueries({ queryKey: qk.pendingGates() });
     },
   });
 }

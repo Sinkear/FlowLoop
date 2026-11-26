@@ -110,6 +110,7 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /goals/{id}/submit-review", h.submitGoalReview)
 	mux.HandleFunc("POST /goals/{id}/reopen", h.reopenGoal)
 	mux.HandleFunc("POST /goals/{id}/activate", h.activateGoal)
+	mux.HandleFunc("GET /goal-gates", h.listPendingGates)
 	mux.HandleFunc("GET /goals/{id}/blueprint-gates", h.listBlueprintGates)
 	mux.HandleFunc("GET /goals/{id}/plan-alignment", h.getPlanAlignment)
 	mux.HandleFunc("GET /goals/{id}/env-changes", h.listEnvChanges)
@@ -588,6 +589,22 @@ func (h *Handlers) listEnvChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, out, nil)
+}
+
+// listPendingGates returns every OPEN blueprint gate across all goals — the
+// workbench feed and nav badge. It is read-only; deciding a gate still goes
+// through POST /goals/{id}/blueprint-gates/{nodeKey} (the transactional path).
+func (h *Handlers) listPendingGates(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.ListPendingGates(r.Context())
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]any{"gates": out}, nil)
 }
 
 // listBlueprintGates returns the goal's open human decision cards (held

@@ -3102,6 +3102,84 @@ func (s *GoalService) ListHeldGates(ctx context.Context, goalID string) ([]HeldG
 	return out, rows.Err()
 }
 
+// PendingGate is one open human gate with enough goal context to render a
+// single workbench row. The decision itself still happens on the goal page:
+// resolving a gate prunes the spec graph inside a transaction there.
+type PendingGate struct {
+	GoalID        string           `json:"goal_id"`
+	GoalTitle     string           `json:"goal_title"`
+	GoalStatus    string           `json:"goal_status"`
+	DomainID      string           `json:"domain_id"`
+	NodeKey       string           `json:"node_key"`
+	Title         string           `json:"title"`
+	Prompt        string           `json:"prompt"`
+	Actions       []SpecGateAction `json:"actions"`
+	HeldSince     string           `json:"held_since,omitempty"`
+	TimeoutAfter  string           `json:"timeout_after,omitempty"`
+	TimeoutAction string           `json:"timeout_action,omitempty"`
+	SubGoalID     string           `json:"sub_goal_id"`
+}
+
+// ListPendingGates returns every OPEN gate across ALL goals, oldest first —
+// the workbench "待我审核" feed and the nav badge. One goal may hold several
+// gates; each is its own row because each needs its own decision.
+func (s *GoalService) ListPendingGates(ctx context.Context) ([]PendingGate, error) {
+	rows, err := s.st.DB().QueryContext(ctx, `
+		SELECT DISTINCT g.id, g.title, g.status, COALESCE(g.domain_id,'')
+		FROM blueprint_node bn JOIN goal g ON g.id = bn.goal_id
+		WHERE bn.node_type='gate' AND bn.state='running'
+		ORDER BY bn.created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("scan pending gates: %w", err)
+	}
+	type goalRef struct{ id, title, status, domainID string }
+	var goals []goalRef
+	for rows.Next() {
+		var g goalRef
+		if err := rows.Scan(&g.id, &g.title, &g.status, &g.domainID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		goals = append(goals, g)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	out := []PendingGate{}
+	for _, g := range goals {
+		held, err := s.ListHeldGates(ctx, g.id)
+		if err != nil {
+			// A goal whose pinned spec vanished must not blank the whole feed;
+			// its gate still shows on the goal page (which surfaces the error).
+			logging.Warnf("pending gates: goal %s: %v", g.id, err)
+			continue
+		}
+		for _, h := range held {
+			out = append(out, PendingGate{
+				GoalID: g.id, GoalTitle: g.title, GoalStatus: g.status, DomainID: g.domainID,
+				NodeKey: h.NodeKey, Title: h.Title, Prompt: h.Prompt, Actions: h.Actions,
+				HeldSince: h.HeldSince, TimeoutAfter: h.TimeoutAfter,
+				TimeoutAction: h.TimeoutAction, SubGoalID: h.SubGoalID,
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].HeldSince != out[j].HeldSince {
+			if out[i].HeldSince == "" {
+				return false
+			}
+			if out[j].HeldSince == "" {
+				return true
+			}
+			return out[i].HeldSince < out[j].HeldSince
+		}
+		return out[i].GoalID < out[j].GoalID
+	})
+	return out, nil
+}
+
 func containsString(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {

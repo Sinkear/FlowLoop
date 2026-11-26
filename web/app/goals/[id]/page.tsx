@@ -319,6 +319,7 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
   };
 
   return (
+    <div id="held-gates">
     <SectionCard
       title="等待你的决策"
       count={gates.length}
@@ -378,6 +379,7 @@ function GateDecisionCard({ goalId }: { goalId: string }) {
         {resolve.isPending && <p className="text-xs text-ink-3">正在落库决策…</p>}
       </div>
     </SectionCard>
+    </div>
   );
 }
 

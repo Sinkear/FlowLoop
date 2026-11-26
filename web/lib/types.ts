@@ -1084,6 +1084,15 @@ export interface HeldGateAction {
   label: string;
 }
 
+// 全局待审核门（工作台 / 导航 badge）：HeldGate + 所属任务上下文。
+// 决策仍在任务详情页完成——拍板会剪枝执行图，所以这里只做导航。
+export interface PendingGate extends HeldGate {
+  goal_id: string;
+  goal_title: string;
+  goal_status: string;
+  domain_id: string;
+}
+
 export interface HeldGate {
   node_key: string;
   title: string;

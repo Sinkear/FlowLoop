@@ -23,7 +23,6 @@ const GROUPS: TreeNode[] = [
     children: [
       { label: "任务", hint: "当前页", accent: true },
       { label: "定时任务", href: "/schedules" },
-      { label: "接入小队", href: "/squads" },
     ],
   },
   {

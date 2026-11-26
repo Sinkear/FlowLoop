@@ -8,6 +8,7 @@ import {
   FolderGit2,
   LayoutDashboard,
   LayoutTemplate,
+  ListChecks,
   Menu,
   MessageSquare,
   MessagesSquare,
@@ -20,7 +21,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { useDomains } from "@/lib/queries";
+import { useDomains, useGoals, usePendingGates } from "@/lib/queries";
 import { useCreateDialog } from "@/components/create/create-dialog";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,7 @@ type NavItem = {
 
 const MAIN_ITEMS: NavItem[] = [
   { href: "/", label: "工作台", icon: LayoutDashboard },
+  { href: "/goals", label: "任务", icon: ListChecks },
   { href: "/projects", label: "项目", icon: FolderGit2 },
   { href: "/squads", label: "小队", icon: Users },
   { href: "/agents", label: "智能体", icon: Bot },
@@ -58,7 +60,14 @@ const SYSTEM_ITEMS: NavItem[] = [
 export function Nav() {
   const pathname = usePathname();
   const { data: domains } = useDomains();
+  const { data: goals } = useGoals();
+  const { data: pendingGates } = usePendingGates();
   const { openMenu } = useCreateDialog();
+  // 「待审核」= 工作流人工门 + 待审批任务。人工门不改变 goal.status，所以
+  // 只数 review 会把「流程停着等人拍板」漏掉——这正是审核延迟的来源。
+  const pendingApprovalCount =
+    (pendingGates?.gates.length ?? 0) +
+    (goals ?? []).filter((g) => g.status === "review").length;
   const onCreatePage = pathname === "/goals/new";
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -118,7 +127,7 @@ export function Nav() {
           <MobileGroup
             title="常用"
             items={[
-              { href: "/", label: "工作台" },
+              { href: "/", label: "工作台", badge: pendingApprovalCount },
               { href: "/goals", label: "任务" },
               { href: "/projects", label: "项目" },
               { href: "/squads", label: "小队" },
@@ -182,7 +191,11 @@ export function Nav() {
         <div className="flex flex-col gap-0.5">
           {MAIN_ITEMS.map((item) => (
             <div key={item.href}>
-              <NavLink item={item} active={isActive(item)} />
+              <NavLink
+                item={item}
+                active={isActive(item)}
+                badge={item.href === "/" ? pendingApprovalCount : undefined}
+              />
               {item.href === "/projects" && recentProjects.length > 0 && (
                 <div className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2">
                   {recentProjects.map((project) => (
@@ -254,7 +267,7 @@ function MobileGroup({
   onNavigate,
 }: {
   title: string;
-  items: { href: string; label: string }[];
+  items: { href: string; label: string; badge?: number }[];
   onNavigate: () => void;
 }) {
   return (
@@ -266,9 +279,10 @@ function MobileGroup({
             key={item.href}
             href={item.href}
             onClick={onNavigate}
-            className="rounded-md px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           >
-            {item.label}
+            <span>{item.label}</span>
+            {item.badge ? <span className="rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-medium leading-4 text-white">{item.badge > 99 ? "99+" : item.badge}</span> : null}
           </Link>
         ))}
       </div>
@@ -276,7 +290,7 @@ function MobileGroup({
   );
 }
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
   const Icon = item.icon;
   return (
     <Link
@@ -289,6 +303,14 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       {active && <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-accent" />}
       <Icon className={cn("h-4 w-4 shrink-0", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")} />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {badge ? (
+        <span
+          title={`${badge} 项待你审核`}
+          className="shrink-0 rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-medium leading-4 text-white"
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
       {item.note && <span className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-3">{item.note}</span>}
     </Link>
   );
