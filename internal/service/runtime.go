@@ -38,6 +38,13 @@ type Runtime struct {
 	// the RFC3339 time of the last successful detection ('' = never).
 	Models   []link.ModelInfo `json:"models"`
 	ModelsAt string           `json:"models_at"`
+	// ProbeStatus/ProbeError/ProbeAt record the connectivity outcome of the
+	// last models refresh: '' = never probed, 'ok' = the default model
+	// answered a minimal prompt, 'failed' = the provider endpoint was
+	// unreachable (ProbeError carries the cause).
+	ProbeStatus string `json:"probe_status,omitempty"`
+	ProbeError  string `json:"probe_error,omitempty"`
+	ProbeAt     string `json:"probe_at,omitempty"`
 }
 
 type RuntimeService struct{ st *store.Store }
@@ -81,7 +88,8 @@ func (s *RuntimeService) List(ctx context.Context) ([]Runtime, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
 		`SELECT r.id, r.name, r.machine_id, r.args, r.env,
 		        CASE WHEN m.status='offline' THEN 'inactive' ELSE r.status END,
-		        r.created_at, r.models, r.models_at
+		        r.created_at, r.models, r.models_at,
+		        r.probe_status, r.probe_error, r.probe_at
 		 FROM runtime r
 		 LEFT JOIN machine m ON m.id = r.machine_id
 		 ORDER BY r.created_at`)
@@ -93,7 +101,7 @@ func (s *RuntimeService) List(ctx context.Context) ([]Runtime, error) {
 	for rows.Next() {
 		var r Runtime
 		var argsJSON, envJSON, modelsJSON string
-		if err := rows.Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.Status, &r.CreatedAt, &modelsJSON, &r.ModelsAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.Status, &r.CreatedAt, &modelsJSON, &r.ModelsAt, &r.ProbeStatus, &r.ProbeError, &r.ProbeAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &r.Args)
@@ -110,8 +118,9 @@ func (s *RuntimeService) Get(ctx context.Context, id string) (*Runtime, error) {
 	var r Runtime
 	var argsJSON, envJSON, modelsJSON string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,name,machine_id,args,env,created_at,models,models_at FROM runtime WHERE id=?`, id).
-		Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.CreatedAt, &modelsJSON, &r.ModelsAt)
+		`SELECT id,name,machine_id,args,env,created_at,models,models_at,probe_status,probe_error,probe_at FROM runtime WHERE id=?`, id).
+		Scan(&r.ID, &r.Name, &r.MachineID, &argsJSON, &envJSON, &r.CreatedAt, &modelsJSON, &r.ModelsAt,
+			&r.ProbeStatus, &r.ProbeError, &r.ProbeAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -137,6 +146,10 @@ type RuntimeModels struct {
 	MachineID  string           `json:"machine_id"`
 	Models     []link.ModelInfo `json:"models"`
 	DetectedAt string           `json:"detected_at"`
+	// Connectivity of the last refresh, see Runtime.ProbeStatus.
+	ProbeStatus string `json:"probe_status,omitempty"`
+	ProbeError  string `json:"probe_error,omitempty"`
+	ProbeAt     string `json:"probe_at,omitempty"`
 }
 
 // Models returns the runtime's detected model list (persisted at probe
@@ -146,8 +159,9 @@ func (s *RuntimeService) Models(ctx context.Context, id string) (*RuntimeModels,
 	var out RuntimeModels
 	var modelsJSON string
 	err := s.st.DB().QueryRowContext(ctx,
-		`SELECT id,name,machine_id,models,models_at FROM runtime WHERE id=?`, id).
-		Scan(&out.RuntimeID, &out.Name, &out.MachineID, &modelsJSON, &out.DetectedAt)
+		`SELECT id,name,machine_id,models,models_at,probe_status,probe_error,probe_at FROM runtime WHERE id=?`, id).
+		Scan(&out.RuntimeID, &out.Name, &out.MachineID, &modelsJSON, &out.DetectedAt,
+			&out.ProbeStatus, &out.ProbeError, &out.ProbeAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -183,6 +197,27 @@ func (s *RuntimeService) SetModels(ctx context.Context, id string, models []link
 		`UPDATE runtime SET models=?, models_at=? WHERE id=?`, string(modelsJSON), detectedAt, id)
 	if err != nil {
 		return nil, fmt.Errorf("update runtime models: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Models(ctx, id)
+}
+
+// SetProbe records the connectivity outcome of the last model refresh:
+// 'ok' when a minimal prompt got an answer, 'failed' with the provider error
+// otherwise. Legacy machines that cannot run the probe never call this, so
+// their previous health (if any) stays untouched.
+func (s *RuntimeService) SetProbe(ctx context.Context, id string, ok bool, probeError, at string) (*RuntimeModels, error) {
+	status := "failed"
+	if ok {
+		status = "ok"
+		probeError = ""
+	}
+	res, err := s.st.DB().ExecContext(ctx,
+		`UPDATE runtime SET probe_status=?, probe_error=?, probe_at=? WHERE id=?`, status, probeError, at, id)
+	if err != nil {
+		return nil, fmt.Errorf("update runtime probe: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrNotFound

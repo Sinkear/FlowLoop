@@ -702,3 +702,29 @@ export const listDomainHooks = (domainId: string) =>
   api<import("./types").HookBinding[]>(`/domains/${domainId}/hooks`);
 export const unbindDomainHook = (domainId: string, bindingId: string) =>
   api<{ deleted: string }>(`/domains/${domainId}/hooks/${bindingId}`, { method: "DELETE" });
+
+// ── 对话工作台历史（服务端持久化，bug 2）──
+// 列表只回元数据，打开某一段时才拉整段消息；换浏览器/换 origin 都能看到。
+export const listChatConversations = () =>
+  api<{ conversations: import("./types").ChatConversationMeta[] }>("/chat/conversations");
+
+export const getChatConversation = (id: string) =>
+  api<import("./types").ChatConversation>(`/chat/conversations/${encodeURIComponent(id)}`);
+
+export const saveChatConversation = (
+  id: string,
+  body: {
+    title: string;
+    participants: string[];
+    messages: unknown[];
+    created_at: number;
+    updated_at: number;
+  }
+) =>
+  api<import("./types").ChatConversationMeta>(`/chat/conversations/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
+export const deleteChatConversation = (id: string) =>
+  api<void>(`/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });

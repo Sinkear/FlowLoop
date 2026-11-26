@@ -131,3 +131,44 @@ func TestRuntimeModelsBadJSON(t *testing.T) {
 		t.Fatalf("corrupt models must degrade to [], got %+v", models.Models)
 	}
 }
+
+// TestRuntimeSetProbe: the connectivity outcome of the last models refresh
+// is persisted and exposed by Models/List — a failed probe keeps the model
+// catalog but flags the endpoint, an ok probe clears the previous error.
+func TestRuntimeSetProbe(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewRuntimeService(st)
+	ctx := context.Background()
+	rt, err := svc.Create(ctx, Runtime{Name: "opencode@m1", MachineID: "m1"})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if _, err := svc.SetModels(ctx, rt.ID, []link.ModelInfo{{ID: "glm-5.3-flash"}}, "2026-11-26T09:00:00Z"); err != nil {
+		t.Fatalf("set models: %v", err)
+	}
+	failed, err := svc.SetProbe(ctx, rt.ID, false, "Internal error: ECONNREFUSED: Unable to connect.", "2026-11-26T09:00:01Z")
+	if err != nil {
+		t.Fatalf("set probe: %v", err)
+	}
+	if failed.ProbeStatus != "failed" || failed.ProbeError == "" || failed.ProbeAt != "2026-11-26T09:00:01Z" {
+		t.Fatalf("failed probe not recorded: %+v", failed)
+	}
+	// The catalog survives a failed probe: the CLI still advertises models.
+	if len(failed.Models) != 1 {
+		t.Fatalf("failed probe must keep the catalog, got %+v", failed.Models)
+	}
+	listed, err := svc.List(ctx)
+	if err != nil || len(listed) != 1 || listed[0].ProbeStatus != "failed" {
+		t.Fatalf("List must scan probe columns, got %+v (err %v)", listed, err)
+	}
+	ok, err := svc.SetProbe(ctx, rt.ID, true, "ignored", "2026-11-26T09:05:00Z")
+	if err != nil {
+		t.Fatalf("set ok probe: %v", err)
+	}
+	if ok.ProbeStatus != "ok" || ok.ProbeError != "" {
+		t.Fatalf("ok probe must clear the error, got %+v", ok)
+	}
+	if _, err := svc.SetProbe(ctx, "nope", true, "", ""); err != ErrNotFound {
+		t.Fatalf("unknown runtime must be ErrNotFound, got %v", err)
+	}
+}

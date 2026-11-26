@@ -146,6 +146,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		RSI:          s.rsiSvc,
 		Blueprint:    s.blueprintSvc,
 		Hooks:        s.hookSvc,
+		ChatHistory:  service.NewChatHistoryService(s.st),
 		// M4-B: the real-time issue triggers (github + gitcode) share the
 		// poller's create path (source_ref idempotency makes webhook + poll
 		// racing safe). A repo's own webhook_secret wins over the

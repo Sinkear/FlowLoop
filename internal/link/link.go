@@ -551,10 +551,16 @@ type ModelsRefreshParams struct {
 
 // ModelsRefreshResult is the machine's answer: the freshly detected list
 // ([] = the CLI currently advertises no models — cached empty results are
-// valid) and when the machine ran the detection.
+// valid), when the machine ran the detection, and the outcome of the model
+// connectivity probe (a minimal session/prompt against the CLI's configured
+// default model). ProbeOK is nil when the machine could not run the probe
+// (legacy machine, or no ACP spawn) — the daemon then keeps the previous
+// health instead of recording a false failure.
 type ModelsRefreshResult struct {
 	Models     []ModelInfo `json:"models"`
 	DetectedAt string      `json:"detected_at,omitempty"`
+	ProbeOK    *bool       `json:"probe_ok,omitempty"`
+	ProbeError string      `json:"probe_error,omitempty"`
 }
 
 // RunFinishedParams is the run.finished request (machine → daemon): the

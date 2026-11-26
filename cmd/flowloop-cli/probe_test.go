@@ -998,3 +998,55 @@ func TestProbeCLIsReportsModels(t *testing.T) {
 	}
 	t.Fatalf("fake claude not detected, got %+v", clis)
 }
+
+// ── model connectivity probe ─────────────────────────────────
+
+// fakeACPScript plants an executable that answers the probe's three calls
+// with whatever the test supplies for the prompt step.
+func fakeACPScript(t *testing.T, promptBody string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-acp")
+	script := "#!/bin/sh\n" +
+		"while IFS= read -r line; do\n" +
+		"  id=$(printf '%s' \"$line\" | sed -n 's/.*\"id\":\\([0-9]*\\).*/\\1/p')\n" +
+		"  case \"$id\" in\n" +
+		"    1) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1}}' ;;\n" +
+		"    2) printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"sessionId\":\"s1\"}}' ;;\n" +
+		"    3) " + promptBody + " ;;\n" +
+		"  esac\n" +
+		"done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake ACP: %v", err)
+	}
+	return []string{path}
+}
+
+// TestProbeModelPromptSurfacesRetryError: the provider being down must turn
+// into a failed probe carrying the CLI's real error text, not a silent OK.
+func TestProbeModelPromptSurfacesRetryError(t *testing.T) {
+	spawn := fakeACPScript(t, "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32000,\"message\":\"Internal error: ECONNREFUSED: Unable to connect.\"}}'")
+	err := probeModelPrompt(context.Background(), spawn)
+	if err == nil {
+		t.Fatal("expected the prompt error to fail the probe")
+	}
+}
+
+// TestProbeModelPromptAcceptsFirstChunk: a streamed agent chunk proves the
+// model answered even if the prompt response would arrive later.
+func TestProbeModelPromptAcceptsFirstChunk(t *testing.T) {
+	spawn := fakeACPScript(t, "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"OK\"}}}}'")
+	if err := probeModelPrompt(context.Background(), spawn); err != nil {
+		t.Fatalf("agent chunk must count as a live model, got %v", err)
+	}
+}
+
+// TestProbeModelPromptPermissionIsSuccess: a permission request means the
+// model produced a tool decision — connectivity is proven even though the
+// probe cancels it.
+func TestProbeModelPromptPermissionIsSuccess(t *testing.T) {
+	spawn := fakeACPScript(t, "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"session/request_permission\",\"params\":{}}'")
+	if err := probeModelPrompt(context.Background(), spawn); err != nil {
+		t.Fatalf("permission request must count as a live model, got %v", err)
+	}
+}

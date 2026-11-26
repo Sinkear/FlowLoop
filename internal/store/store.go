@@ -264,6 +264,13 @@ func Open(path string) (*Store, error) {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_squad_role_squad ON squad_role(squad_id, name)`,
 
+		// Models-refresh connectivity health (probe_status). The catalog probe
+		// alone cannot tell that the provider endpoint is down; the daemon now
+		// persists the outcome of a minimal prompt so the UI can flag it.
+		`ALTER TABLE runtime ADD COLUMN probe_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE runtime ADD COLUMN probe_error TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE runtime ADD COLUMN probe_at TEXT NOT NULL DEFAULT ''`,
+
 		// Phase C (proposal §12): blueprint patch proposals + infer shape
 		// signatures. Mirrors schema.sql for old DBs.
 		`CREATE TABLE IF NOT EXISTS blueprint_proposal (

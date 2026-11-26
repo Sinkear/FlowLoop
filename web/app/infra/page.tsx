@@ -87,6 +87,10 @@ export default function InfraPage() {
 
   const offlineCount = machines.filter((m) => !isMachineOnline(m.status)).length;
   const noModelRuntimes = runtimes.filter((rt) => (rt.models?.length ?? 0) === 0);
+  // Catalog detection only reads the CLI config; a runtime can advertise a
+  // model list while its provider endpoint is down. The refresh-time prompt
+  // probe records that separately, so surface it as its own failure stat.
+  const failedProbeRuntimes = runtimes.filter((rt) => rt.probe_status === "failed");
   const unboundRuntimes = runtimes.filter((rt) => (agentsByRuntime.get(rt.id)?.length ?? 0) === 0);
 
   const isLoading = machinesQ.isLoading || runtimesQ.isLoading || agentsQ.isLoading;
@@ -120,11 +124,15 @@ export default function InfraPage() {
             tone: offlineCount > 0 ? "err" : "ok",
           },
           {
-            label: "无模型运行时",
-            value: noModelRuntimes.length,
+            label: "模型不可用",
+            value: failedProbeRuntimes.length,
             hint:
-              noModelRuntimes.length > 0 ? "点运行时的模型标签「刷新检测」" : "模型目录正常",
-            tone: noModelRuntimes.length > 0 ? "warn" : "ok",
+              failedProbeRuntimes.length > 0
+                ? `${(failedProbeRuntimes[0].probe_error || "模型端点不可达").slice(0, 42)}…`
+                : noModelRuntimes.length > 0
+                  ? "有运行时还没有模型目录，点「刷新检测」"
+                  : "模型目录与连通性正常",
+            tone: failedProbeRuntimes.length > 0 ? "err" : noModelRuntimes.length > 0 ? "warn" : "ok",
           },
           {
             label: "未绑定 Agent",

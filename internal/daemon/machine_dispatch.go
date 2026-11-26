@@ -106,9 +106,10 @@ func (d *Daemon) MachinePeer(machineID string) *link.Peer {
 var ErrMachineOffline = errors.New("machine offline — the machine must run `flowloop connect`")
 
 // refreshModelsTimeout bounds one machine-side model re-detection. The
-// machine's own ACP probe has a 15s budget (modelsTimeout); the extra time
-// covers link latency and one queued probe tick.
-const refreshModelsTimeout = 30 * time.Second
+// machine's own catalog probe has a 15s budget (modelsTimeout) and the
+// connectivity prompt that follows has a 60s budget (modelPromptTimeout),
+// so the daemon has to wait for both plus link latency.
+const refreshModelsTimeout = 90 * time.Second
 
 // RefreshRuntimeModels forces the machine to re-detect one CLI's models
 // (bypassing its 30-minute cache) and returns the authoritative list. The
