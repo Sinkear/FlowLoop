@@ -130,15 +130,17 @@ func main() {
 	domainSvc := service.NewDomainService(st, bus)
 
 	skillSvc := service.NewSkillService(st)
-	// Platform built-in skills (//go:embed under internal/service/assets): the
-	// conversation-first creation skill is installed/refreshed BEFORE the
-	// steward seed, because the steward's agent.skills carries its fixed id.
-	// A failure here is not fatal — the platform works without the skill, and
-	// a later boot retries.
-	if sk, err := service.SeedBuiltinSkills(context.Background(), skillSvc); err != nil {
-		logging.Warnf("seed builtin skills: %v", err)
-	} else {
+	// Platform built-in skills (//go:embed under internal/service/assets):
+	// installed/refreshed BEFORE the steward seed, because the steward's
+	// agent.skills carries the chat-create skill's fixed id. A failure here is
+	// not fatal — the platform works without the skill, and a later boot
+	// retries.
+	skills, err := service.SeedBuiltinSkills(context.Background(), skillSvc)
+	for _, sk := range skills {
 		logging.Infof("builtin skill ready: %s (%s)", sk.Name, sk.ID)
+	}
+	if err != nil {
+		logging.Warnf("seed builtin skills: %v", err)
 	}
 
 	// Seed the system-internal steward agent (type=steward) — used by team-import

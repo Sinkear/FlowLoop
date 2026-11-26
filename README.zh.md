@@ -223,6 +223,7 @@ CLI 默认连 `http://localhost:47813`，可用 `FLOWLOOP_SERVER_URL` 覆盖。
 - [Run 身份与指令归属](docs/IDENTITY.md) — run 的身份只由本次 run 定义：共用 workdir 身份劫持复盘与三层修复
 - [把最佳实践做成模板](docs/TEMPLATES.md) — 用 `flowloop-daemon export-template` 导出并复用
 - [制品替换 skill](skills/flowloop-artifact-swap/SKILL.md) — 同一套"不丢数据"流程，可拷到目标机器直接用
+- [开发者声音（VOD）skill](skills/flowloop-vod/SKILL.md) — 把开发中发现的问题整理成「问题 / 背景 / 诉求」，直接评论到当前任务来源的 Issue（PR 来源则评论到 PR）
 - [设计基线](docs/design/DESIGN.md) — 产品与架构的决策、不变量与边界（当前行为事实以项目详细说明为准）
 - [协作模型](docs/design/Collaboration.v2.md) — 完整的 owner / 角色 / 权限模型
 

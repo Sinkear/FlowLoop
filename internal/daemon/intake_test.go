@@ -1428,7 +1428,7 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 	if ask.Status != "need_fields" {
 		t.Fatalf("empty blueprint must ask, got %q", ask.Status)
 	}
-	if !strings.Contains(ask.Message, "名称") || !strings.Contains(ask.Message, "蓝图内容") {
+	if !strings.Contains(ask.Message, "名称") || !strings.Contains(ask.Message, "工作流内容") {
 		t.Fatalf("ask must name the missing fields, got %q", ask.Message)
 	}
 	if !strings.Contains(ask.PlatformHint, "<system-reminder>") ||
@@ -1444,13 +1444,13 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 	first := d2.intakeCreateBlueprint(ctx, intakeAction{
 		Intent: "create_blueprint", Blueprint: blueprintAction{Name: "分轮蓝图"},
 	})
-	if first.Status != "need_fields" || !strings.Contains(first.Message, "蓝图内容") {
+	if first.Status != "need_fields" || !strings.Contains(first.Message, "工作流内容") {
 		t.Fatalf("name-only must ask for content, got %+v", first)
 	}
 	second := d2.intakeCreateBlueprint(ctx, intakeAction{
 		Intent: "create_blueprint", Blueprint: blueprintAction{Content: blueprintGraphJSON, SquadID: "sq1"},
 	})
-	if second.Status != "created" || !strings.Contains(second.Message, "已创建蓝图") {
+	if second.Status != "created" || !strings.Contains(second.Message, "已创建工作流") {
 		t.Fatalf("draft continuation must create, got %+v", second)
 	}
 	var name, status string
@@ -1491,7 +1491,7 @@ func TestIntakeCreateBlueprint(t *testing.T) {
 		Intent:    "create_blueprint",
 		Blueprint: blueprintAction{Name: "坏图", Content: `{"name":"x","nodes":[],"edges":[]}`, SquadID: "sq1"},
 	})
-	if bad.Status != "replied" || !strings.Contains(bad.Message, "创建蓝图失败") {
+	if bad.Status != "replied" || !strings.Contains(bad.Message, "创建工作流失败") {
 		t.Fatalf("invalid graph must be rejected with a reason, got %+v", bad)
 	}
 	if err := st4.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM blueprint`).Scan(&count); err != nil {

@@ -1,11 +1,11 @@
-# 蓝图（blueprint）创建
+# 工作流创建（CLI 子命令：`blueprint`）
 
-用户要把一套流程存成可复用的 SOP、多步流水线或带分支/审批的流程时，才建蓝图。单个任务直接用 `create goal`。
+用户要把一套流程存成可复用的 SOP、多步流水线或带分支/审批的流程时，才建工作流。单个任务直接用 `create goal`。
 
 ## 先分清三个名字
 
-- `--name`：蓝图名，Web 蓝图列表里显示。
-- `--description`：蓝图说明。不传时服务端取 content 里的 `graph.description`。
+- `--name`：工作流名，Web 工作流列表里显示。
+- `--description`：工作流说明。不传时服务端取 content 里的 `graph.description`。
 - content 里的 `name` / `description`：spec 图自身的名字与说明。
 
 三处是不同的字段，不要互相替代。
@@ -72,7 +72,7 @@ goal.<field> exists | empty
 **V4 指派可解析**
 
 - `agent:<id>` / `squad:<id>` 必须真实存在（创建时就查库）。
-- `capability:<slug>` 只校验形状：`^[a-z][a-z0-9_-]*$`，且不能是平台保留的 `reviewer`；真正解析发生在蓝图绑定到具体任务之后，按该任务的 squad 角色匹配。
+- `capability:<slug>` 只校验形状：`^[a-z][a-z0-9_-]*$`，且不能是平台保留的 `reviewer`；真正解析发生在工作流绑定到具体任务之后，按该任务的 squad 角色匹配。
 - 模板里的 `agent:__AGENT_ID__` 如果不传 `--agent`，就解析不到真实 agent，创建会失败。
 
 **V5 模板变量**
@@ -83,7 +83,7 @@ goal.<field> exists | empty
 
 ## 最小可过校验的串行示例
 
-取自平台「串行两步」模板（Web 蓝本页新建时的默认示例），占位符写作 `agent:__AGENT_ID__`：
+取自平台「串行两步」模板（Web 工作流页新建时的默认示例），占位符写作 `agent:__AGENT_ID__`：
 
 ```json
 {
@@ -111,24 +111,24 @@ flowloop create blueprint --name "串行两步" --description "先调研再写�
 
 - `--agent` 会把 content 里所有 `__AGENT_ID__` 替换成裸 agent id，于是 `agent:__AGENT_ID__` 变成 `agent:<id>`，通过 V4。
 - `--content` 与 `--content-file` 二选一；内容短可以直接 `--content '<JSON>'`，长内容建议写文件，避免 shell 引号出错。
-- 不传 `--content` / `--content-file` 不会在本地报错，平台回 `need_fields`，`missing` 是 `名称` 或 `蓝图内容`。
+- 不传 `--content` / `--content-file` 不会在本地报错，平台回 `need_fields`，`missing` 是 `名称` 或 `工作流内容`。
 
 创建成功后在输出里读 `entity.id`：
 
 ```json
-{"status": "created", "entity": {"id": "<blueprint-id>", "name": "串行两步"}}
+{"status": "created", "entity": {"id": "<workflow-id>", "name": "串行两步"}}
 ```
 
-`message` 会说明这是 v1 草稿：「✅ 已创建蓝图：串行两步（…，v1 草稿）。发布之后才能在新建任务时选它；发布前还可以继续改稿。」把这句话和 `/blueprints/<id>` 一起给用户。
+`message` 会说明这是 v1 草稿：「✅ 已创建工作流：串行两步（…，v1 草稿）。发布之后才能在新建任务时选它；发布前还可以继续改稿。」把这句话和 `/workflows/<id>` 一起给用户。
 
 ## 创建之后：草稿 → 发布 → 绑定
 
 - `create blueprint` 只生成 **version=1 的草稿**，不会自动发布，也不会创建任务。
-- 默认发布路径：打开 Web `/blueprints/<id>`，由人点「发布此版本」。发布后内容不可改；要改就开新草稿。
-- 用户明确说「发布」时，可以代跑 `flowloop blueprint publish "<名字|id>"`。它把该蓝图的 draft 版本发布（不用记 version id）；没确认不要跑。
-- 查已有蓝图：`flowloop blueprint list`。
+- 默认发布路径：打开 Web `/workflows/<id>`，由人点「发布此版本」。发布后内容不可改；要改就开新草稿。
+- 用户明确说「发布」时，可以代跑 `flowloop blueprint publish "<名字|id>"`。它把该工作流的 draft 版本发布（不用记 version id）；没确认不要跑。
+- 查已有工作流：`flowloop blueprint list`。
 - 绑定：只有已发布版本才有「用此版本新建任务」，跳到 `/goals/new?blueprint=<versionId>`。草稿不能绑定任务。
-- 你的职责到草稿（或用户确认后的发布）为止：回报 `entity.id` 与 `/blueprints/<id>`，不代点 Web、不代绑任务。
+- 你的职责到草稿（或用户确认后的发布）为止：回报 `entity.id` 与 `/workflows/<id>`，不代点 Web、不代绑任务。
 
 ## 常见失败
 

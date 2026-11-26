@@ -308,7 +308,7 @@ func zipxEntries(data []byte) ([]string, error) {
 	return out, nil
 }
 
-// TestSeedBuiltinSkills: the embedded skill is installed with the fixed id,
+// TestSeedBuiltinSkills: every embedded skill is installed with its fixed id,
 // gets its title from the SKILL.md frontmatter, is flagged builtin, writes its
 // files to the runs skill dir, and re-seeding updates in place (idempotent).
 func TestSeedBuiltinSkills(t *testing.T) {
@@ -319,83 +319,159 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	ctx := context.Background()
 	svc := NewSkillService(st)
 
-	sk, err := SeedBuiltinSkills(ctx, svc)
+	skills, err := SeedBuiltinSkills(ctx, svc)
 	if err != nil {
 		t.Fatalf("seed builtin: %v", err)
 	}
-	if sk.ID != BuiltinChatCreateID {
-		t.Fatalf("builtin id must stay stable, got %q", sk.ID)
+	if len(skills) != len(builtinSkills) {
+		t.Fatalf("seeded %d skills, want %d", len(skills), len(builtinSkills))
 	}
-	if sk.Name != BuiltinChatCreateName {
-		t.Fatalf("builtin name must stay stable, got %q", sk.Name)
-	}
-	if sk.Title != BuiltinChatCreateTitle {
-		t.Fatalf("title must come from frontmatter, got %q", sk.Title)
-	}
-	if !sk.Builtin {
-		t.Fatal("seeded skill must be flagged builtin")
-	}
-	if strings.TrimSpace(sk.Description) == "" {
-		t.Fatal("description must come from frontmatter")
+	byID := make(map[string]*Skill, len(skills))
+	for _, sk := range skills {
+		byID[sk.ID] = sk
 	}
 
-	files, err := svc.Files(ctx, sk.ID)
-	if err != nil {
-		t.Fatalf("builtin files: %v", err)
-	}
-	embedded, err := builtinSkillsFS.ReadFile("assets/flowloop-chat-create/SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if md, ok := files["SKILL.md"]; !ok || md != string(embedded) {
-		t.Fatal("SKILL.md must be written verbatim to the skill dir")
-	}
-	for _, want := range []string{"references/entities.md", "references/blueprint.md"} {
-		if _, ok := files[want]; !ok {
-			t.Fatalf("builtin skill must ship %s, got %v", want, len(files))
-		}
+	for _, b := range builtinSkills {
+		t.Run(b.Name, func(t *testing.T) {
+			sk, ok := byID[b.ID]
+			if !ok {
+				t.Fatalf("builtin %q (%s) was not seeded", b.Name, b.ID)
+			}
+			if sk.Name != b.Name {
+				t.Fatalf("builtin name must stay stable, got %q", sk.Name)
+			}
+			if sk.Title != b.Title {
+				t.Fatalf("title must come from frontmatter, got %q", sk.Title)
+			}
+			if !sk.Builtin {
+				t.Fatal("seeded skill must be flagged builtin")
+			}
+			if strings.TrimSpace(sk.Description) == "" {
+				t.Fatal("description must come from frontmatter")
+			}
+			md, err := builtinSkillsFS.ReadFile(b.Asset + "/SKILL.md")
+			if err != nil {
+				t.Fatalf("read embedded SKILL.md: %v", err)
+			}
+			fmName, fmTitle, _ := parseSkillMarkdown(string(md))
+			if fmName != b.Name || fmTitle != b.Title {
+				t.Fatalf("frontmatter name/title = %q/%q, want %q/%q",
+					fmName, fmTitle, b.Name, b.Title)
+			}
+
+			files, err := svc.Files(ctx, sk.ID)
+			if err != nil {
+				t.Fatalf("builtin files: %v", err)
+			}
+			embedded, err := readBuiltinSkillFiles(b.Asset)
+			if err != nil {
+				t.Fatalf("read embedded %s: %v", b.Asset, err)
+			}
+			// Files() adds the generated archive next to the source files.
+			delete(files, "package.zip")
+			if len(files) != len(embedded) {
+				t.Fatalf("skill dir has %d files, embedded tree has %d: %v vs %v",
+					len(files), len(embedded), keysOf(files), keysOf(embedded))
+			}
+			for name, want := range embedded {
+				if got, ok := files[name]; !ok || got != want {
+					t.Fatalf("%s must be written verbatim to the skill dir", name)
+				}
+			}
+		})
 	}
 
-	// Re-seed: same id, no duplicate row, still builtin.
+	// Re-seed: same ids, no duplicate rows, still builtin.
 	// (Files are rewritten from the embedded tree on every boot.)
 	again, err := SeedBuiltinSkills(ctx, svc)
 	if err != nil {
 		t.Fatalf("re-seed: %v", err)
 	}
-	if again.ID != sk.ID || !again.Builtin || again.Title != BuiltinChatCreateTitle {
-		t.Fatalf("re-seed must be idempotent, got %+v", again)
+	if len(again) != len(skills) {
+		t.Fatalf("re-seed returned %d skills, want %d", len(again), len(skills))
 	}
-	var n int
-	if err := st.DB().QueryRow("SELECT COUNT(*) FROM skill WHERE id = ?", BuiltinChatCreateID).Scan(&n); err != nil {
-		t.Fatal(err)
+	for i, sk := range again {
+		if sk.ID != skills[i].ID || !sk.Builtin || sk.Title != builtinSkills[i].Title {
+			t.Fatalf("re-seed must be idempotent, got %+v", sk)
+		}
 	}
-	if n != 1 {
-		t.Fatalf("re-seed must not duplicate the row, got %d", n)
+	for _, b := range builtinSkills {
+		var n int
+		if err := st.DB().QueryRow("SELECT COUNT(*) FROM skill WHERE id = ?", b.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("re-seed must not duplicate %s, got %d rows", b.Name, n)
+		}
 	}
 }
 
-// TestEnsureBuiltinRejectsForeignName: the builtin's machine name is reserved;
-// a different skill already holding it makes the seed fail loudly instead of
-// silently stealing the name.
-func TestEnsureBuiltinRejectsForeignName(t *testing.T) {
-	st, err := store.Open(":memory:")
+// TestBuiltinVODContent: the shipped VOD skill must keep the three-section
+// contract the issue asks for (问题 / 背景 / 诉求) and the write-back command,
+// or the skill stops doing the one thing it exists for.
+func TestBuiltinVODContent(t *testing.T) {
+	skillMD, err := builtinSkillsFS.ReadFile("assets/flowloop-vod/SKILL.md")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read VOD SKILL.md: %v", err)
 	}
-	ctx := context.Background()
-	svc := NewSkillService(st)
+	for _, want := range []string{
+		"name: flowloop-vod",
+		"title: 开发者声音",
+		"## 问题",
+		"## 背景",
+		"## 诉求",
+		"flowloop issue comment",
+		"待确认",
+	} {
+		if !strings.Contains(string(skillMD), want) {
+			t.Fatalf("VOD SKILL.md must contain %q", want)
+		}
+	}
 
-	if _, err := svc.Create(ctx, map[string]string{
-		"SKILL.md": "---\nname: " + BuiltinChatCreateName + "\ndescription: impostor\n---\n",
-	}); err != nil {
-		t.Fatal(err)
+	tpl, err := builtinSkillsFS.ReadFile("assets/flowloop-vod/references/template.md")
+	if err != nil {
+		t.Fatalf("read VOD template: %v", err)
 	}
-	_, err = SeedBuiltinSkills(ctx, svc)
-	if err == nil {
-		t.Fatal("seeding over a foreign skill with the same name must fail")
+	for _, want := range []string{"## 问题", "## 背景", "## 诉求", "## 反例", "发布前自检"} {
+		if !strings.Contains(string(tpl), want) {
+			t.Fatalf("VOD template must contain %q", want)
+		}
 	}
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("want conflict error, got %v", err)
+}
+
+// TestEnsureBuiltinRejectsForeignName: every builtin's machine name is
+// reserved; a different skill already holding one makes the seed fail loudly
+// instead of silently stealing the name.
+func TestEnsureBuiltinRejectsForeignName(t *testing.T) {
+	for _, b := range builtinSkills {
+		t.Run(b.Name, func(t *testing.T) {
+			st, err := store.Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			svc := NewSkillService(st)
+			if _, err := svc.Create(ctx, map[string]string{
+				"SKILL.md": "---\nname: " + b.Name + "\ndescription: impostor\n---\n",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := SeedBuiltinSkills(ctx, svc); err == nil {
+				t.Fatalf("seeding over a foreign skill named %s must fail", b.Name)
+			} else if !errors.Is(err, ErrConflict) {
+				t.Fatalf("want conflict error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestStewardBuiltinSkillIDs: only chat-create is auto-attached to the
+// steward. VOD needs a goal source, which chat runs do not have, so adding it
+// here would ship a skill that can never post.
+func TestStewardBuiltinSkillIDs(t *testing.T) {
+	got := stewardBuiltinSkillIDs()
+	if len(got) != 1 || got[0] != BuiltinChatCreateID {
+		t.Fatalf("steward builtins = %v, want only %s", got, BuiltinChatCreateID)
 	}
 }
 
@@ -419,8 +495,13 @@ func TestDeleteBuiltinRejected(t *testing.T) {
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("want validation error, got %v", err)
 	}
-	if _, err := svc.Get(ctx, BuiltinChatCreateID); err != nil {
-		t.Fatalf("rejected delete must leave the row intact: %v", err)
+	for _, b := range builtinSkills {
+		if _, err := svc.Get(ctx, b.ID); err != nil {
+			t.Fatalf("rejected delete must leave %s intact: %v", b.Name, err)
+		}
+		if err := svc.Delete(ctx, b.ID); err == nil || !errors.Is(err, ErrValidation) {
+			t.Fatalf("deleting builtin %s must be rejected with a validation error, got %v", b.Name, err)
+		}
 	}
 }
 
@@ -428,38 +509,42 @@ func TestDeleteBuiltinRejected(t *testing.T) {
 // the embedded tree. They must stay byte-identical — editing one without the
 // other means the shipped skill and the reviewed skill differ.
 func TestBuiltinSkillMirror(t *testing.T) {
-	embedded, err := readBuiltinSkillFiles("assets/flowloop-chat-create")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mirrorRoot := filepath.Join("..", "..", "skills", "flowloop-chat-create")
-	mirror := make(map[string]string)
-	err = filepath.WalkDir(mirrorRoot, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		rel, err := filepath.Rel(mirrorRoot, p)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		mirror[filepath.ToSlash(rel)] = string(data)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("read mirror %s: %v", mirrorRoot, err)
-	}
-	if len(mirror) != len(embedded) {
-		t.Fatalf("mirror has %d files, embedded tree has %d: %v vs %v",
-			len(mirror), len(embedded), keysOf(mirror), keysOf(embedded))
-	}
-	for name, want := range embedded {
-		if got, ok := mirror[name]; !ok || got != want {
-			t.Fatalf("%s differs between skills/ and the embedded asset (edit the asset, then copy it to skills/)", name)
-		}
+	for _, b := range builtinSkills {
+		t.Run(b.Name, func(t *testing.T) {
+			embedded, err := readBuiltinSkillFiles(b.Asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mirrorRoot := filepath.Join("..", "..", "skills", b.Name)
+			mirror := make(map[string]string)
+			err = filepath.WalkDir(mirrorRoot, func(p string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+				rel, err := filepath.Rel(mirrorRoot, p)
+				if err != nil {
+					return err
+				}
+				data, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				mirror[filepath.ToSlash(rel)] = string(data)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("read mirror %s: %v", mirrorRoot, err)
+			}
+			if len(mirror) != len(embedded) {
+				t.Fatalf("mirror has %d files, embedded tree has %d: %v vs %v",
+					len(mirror), len(embedded), keysOf(mirror), keysOf(embedded))
+			}
+			for name, want := range embedded {
+				if got, ok := mirror[name]; !ok || got != want {
+					t.Fatalf("%s differs between skills/ and the embedded asset (edit the asset, then copy it to skills/)", name)
+				}
+			}
+		})
 	}
 }
 

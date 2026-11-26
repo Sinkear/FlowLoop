@@ -111,13 +111,16 @@ func main() {
 // routed by the platform: the comment lands on the PR's own API surface
 // (GitCode: /pulls/:n/comments), no separate command needed.
 func issueCmd(goalID string, args []string) {
-	if len(args) < 1 {
+	// args[0] is the subcommand ("comment"); the flags follow it. Passing the
+	// whole slice to fs.Parse leaves it stuck on the non-flag subcommand, so
+	// --text was never read.
+	if len(args) < 1 || args[0] != "comment" {
 		fmt.Fprintln(os.Stderr, "usage: flowloop-cli issue comment --text \"...\"")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("issue comment", flag.ExitOnError)
 	text := fs.String("text", "", "comment body")
-	_ = fs.Parse(args)
+	_ = fs.Parse(args[1:])
 	if *text == "" {
 		fail("--text is required")
 	}
