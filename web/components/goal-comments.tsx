@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDown,
   AtSign,
@@ -75,7 +82,7 @@ export function GoalComments({
     setLimit(INITIAL_WINDOW);
   }, [goalId]);
 
-  // 实时通道：payload 就是后端 Comment 结构（见用的 /goal comment 事件）。
+  // 实时通道：payload 就是后端 Comment 结构（对应 comment:created 事件）。
   useWSEvent("comment:created", (p) => {
     const incoming = p as unknown as Comment;
     if (!incoming || incoming.goal_id !== goalId) return;
@@ -126,6 +133,9 @@ export function GoalComments({
   const atBottomRef = useRef(true);
   const [unread, setUnread] = useState(0);
   const prevCountRef = useRef(0);
+  // 「显示更早的消息」是在列表顶部插入，插入后要把 scrollTop 补回去，
+  // 否则视口会跳到新插入的旧消息上，人正在读的位置就丢了。
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 
   const updateAtBottom = useCallback((next: boolean) => {
     atBottomRef.current = next;
@@ -169,6 +179,16 @@ export function GoalComments({
     updateAtBottom(true);
     setUnread(0);
   }, [goalId, isLoading, updateAtBottom]);
+
+  // 展开更早消息：用插入前后的高度差把 scrollTop 补回来，保持阅读位置不动。
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    const anchor = prependAnchorRef.current;
+    if (!el || !anchor) return;
+    prependAnchorRef.current = null;
+    const delta = el.scrollHeight - anchor.scrollHeight;
+    if (delta > 0) el.scrollTop = anchor.scrollTop + delta;
+  }, [limit]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -354,7 +374,16 @@ export function GoalComments({
                 <div className="mb-1 flex justify-center">
                   <button
                     type="button"
-                    onClick={() => setLimit((n) => n + WINDOW_STEP)}
+                    onClick={() => {
+                      const el = listRef.current;
+                      if (el) {
+                        prependAnchorRef.current = {
+                          scrollHeight: el.scrollHeight,
+                          scrollTop: el.scrollTop,
+                        };
+                      }
+                      setLimit((n) => n + WINDOW_STEP);
+                    }}
                     className="rounded-full border border-line bg-surface-1/80 px-2.5 py-1 text-[10px] font-medium text-ink-3 transition-colors hover:border-accent/40 hover:text-accent"
                   >
                     显示更早的消息（还有 {hiddenCount} 条）

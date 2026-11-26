@@ -54,10 +54,15 @@ export function authorInitials(name: string): string {
 }
 
 // plainText：把 markdown/mention URI 压成一行可读文本（引用块、回复 chip 用）。
+// 只去掉行首的块级标记（标题/引用/列表）和强调符号 `*`、代码包裹符 `` ` ``；
+// 保留词内的 `_`——`@dev_team`、`build_skill` 这类标识符被啃掉会改变语义。
 export function plainText(content: string): string {
   return content
     .replace(/\[@([^\]]*)\]\(mention:[^)]*\)/g, "@$1")
-    .replace(/[#>*_`]/g, "")
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "")
+    .replace(/[*`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

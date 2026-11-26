@@ -616,3 +616,20 @@ func TestNodeFeedSpawnExpansionComment(t *testing.T) {
 		t.Fatalf("spawn comment must thread to the dispatch comment %s, got parent %q", spawnSG.DispatchCommentID, c.ParentID)
 	}
 }
+
+// 门决策的决策方文案不允许把未知值说成「人工决策」：图谱审计行与 feed 评论
+// 共用 gateDecisionLabel，未知/空 decidedBy 必须显式暴露，而不是默认成人做的。
+func TestGateDecisionLabelRejectsUnknownAsHuman(t *testing.T) {
+	cases := map[string]string{
+		"human":  "人工决策",
+		"auto":   "自动判定（上游条件满足）",
+		"system": "超时自动决策",
+		"":       "未记录决策方",
+		"robot":  "未记录决策方（robot）",
+	}
+	for in, want := range cases {
+		if got := gateDecisionLabel(in); got != want {
+			t.Errorf("gateDecisionLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

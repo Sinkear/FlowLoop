@@ -243,10 +243,17 @@ func gateDecisionLabel(decidedBy string) string {
 	switch decidedBy {
 	case "auto":
 		return "自动判定（上游条件满足）"
+	case "human":
+		return "人工决策"
 	case "system":
 		return "超时自动决策"
 	default:
-		return "人工决策"
+		// 未知/空值绝不能落到「人工决策」：那会把一次没记录来源的自动
+		// 决策说成人做的，恰好是本函数存在的意义所在。
+		if decidedBy == "" {
+			return "未记录决策方"
+		}
+		return fmt.Sprintf("未记录决策方（%s）", decidedBy)
 	}
 }
 
