@@ -369,8 +369,10 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 	var evs []events.Event
 	switch rc.Status {
 	case "completed":
-		// The run's report is NOT posted by the platform — the agent
-		// communicates results via `goal comment`.
+		// The platform now posts the node's own report (决策 6-19): the
+		// assignee's execution comment, threaded to the dispatch comment, is
+		// written in THIS transaction with the transition below. It carries
+		// the run summary so the feed is readable without opening the run.
 		// An agent verifier was named (决策 6-5): machine checks passed, now
 		// the QUALITY gate — park in verifying and enqueue the verifier run.
 		// The verdict tool (verify_sub_goal) makes the verified/rejected
@@ -383,6 +385,18 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
 				break // already terminal — no change
+			}
+			if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+				GoalID:     sg.GoalID,
+				AuthorType: "agent",
+				AuthorID:   rc.AgentID,
+				ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+				RunID:      rc.RunID,
+				Content:    completedNodeFeedContent(sg.Title, rc.Summary, true),
+			}); err != nil {
+				return fmt.Errorf("insert node completion comment: %w", err)
+			} else {
+				evs = append(evs, commentEv)
 			}
 			evs = append(evs, events.Event{Topic: "sub_goal.verifying", Payload: map[string]any{
 				"goal_id": sg.GoalID, "sub_goal_id": sg.ID,
@@ -407,7 +421,13 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 		// skip; a valid plan materializes the children and re-gates this
 		// node's direct successors on ALL of them (they replace the spawn
 		// as the blocking dependency).
-		if spawnNode, _ := isBlueprintNodeTypeTx(ctx, tx, sg.ID, "spawn"); spawnNode {
+		// A failed type lookup must abort: swallowing it would treat a spawn
+		// node as a plain node and skip the planner-contract enforcement.
+		spawnNode, err := isBlueprintNodeTypeTx(ctx, tx, sg.ID, "spawn")
+		if err != nil {
+			return fmt.Errorf("classify node %s for spawn resolution: %w", sg.ID, err)
+		}
+		if spawnNode {
 			spawnEvs, promoted, err := s.resolveSpawnTx(ctx, tx, &sg, rc)
 			if err != nil {
 				return err
@@ -470,6 +490,29 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 			newID(), sg.GoalID, sg.ID, rc.RunID, "machine verification passed", "machine gate passed (run "+rc.RunID+")", now()); err != nil {
 			return fmt.Errorf("insert machine verification_result: %w", err)
 		}
+		// 决策 6-19: the assignee reports the machine-verified completion.
+		// A spawn node is EXCLUDED — its resolver already posted the child
+		// expansion as this node's report (a second "节点完成" comment would
+		// duplicate the same event). A failed type lookup must abort, not
+		// silently count the node as non-spawn and double-report it.
+		spawnNode, err = isBlueprintNodeTypeTx(ctx, tx, sg.ID, "spawn")
+		if err != nil {
+			return fmt.Errorf("classify node %s for completion feed: %w", sg.ID, err)
+		}
+		if !spawnNode {
+			if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+				GoalID:     sg.GoalID,
+				AuthorType: "agent",
+				AuthorID:   rc.AgentID,
+				ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+				RunID:      rc.RunID,
+				Content:    completedNodeFeedContent(sg.Title, rc.Summary, false),
+			}); err != nil {
+				return fmt.Errorf("insert node completion comment: %w", err)
+			} else {
+				evs = append(evs, commentEv)
+			}
+		}
 		changeID, err := s.materializeChangeTx(ctx, tx, sg, rc.BaseRef, rc.HeadRef)
 		if err != nil {
 			return err
@@ -510,8 +553,65 @@ func (s *GoalService) reconcileSubGoalRunOnce(ctx context.Context, rc goalRunCon
 		// this guard the bounded retry would enqueue a fresh run on a work item
 		// the owner already cancelled. (Any other raced terminal state is the
 		// same: no retry, no status write.)
-		if status != "running" {
-			break
+		//
+		// 决策 6-19: the platform reports the attempt in the node's feed thread
+		// BEFORE this guard. A real cancellation flips the sub_goal to
+		// 'cancelled' (CancelSubGoal, goal cancel, agent delete) before the
+		// killed run's late outcome reaches this reconcile — a report posted
+		// after the guard would never be reached and the node would stop
+		// silently. The cancelled report therefore lands for a sub_goal in
+		// {running, cancelled}. When it is already terminal the branch breaks
+		// with no retry and no status write; when it is still running, the
+		// existing retry path below is unchanged (a single run cancelled while
+		// the work item lives still retries). Failed attempts keep the stricter
+		// rule: report only while the node is still running (a raced terminal
+		// state stays quiet).
+		// The comment is written in THIS transaction, so a crash rolls it back
+		// with the transition and the replay lands it exactly once.
+		retrying := attempt < maxExecutionAttempts
+		if rc.Status == "cancelled" {
+			if status == "running" || status == "cancelled" {
+				// A terminal cancellation never bumped execution_attempt —
+				// the run this reconcile speaks for is attempt+1.
+				reported := attempt
+				if status != "running" {
+					reported = attempt + 1
+				}
+				if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+					GoalID:     sg.GoalID,
+					AuthorType: "system",
+					AuthorID:   "",
+					ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+					RunID:      rc.RunID,
+					Content:    cancelledNodeFeedContent(rc, sg.Title, reported, status == "running" && retrying),
+				}); err != nil {
+					return fmt.Errorf("insert node cancellation comment: %w", err)
+				} else {
+					evs = append(evs, commentEv)
+				}
+			}
+			if status != "running" {
+				break
+			}
+		} else {
+			if status != "running" {
+				break
+			}
+			// A SYSTEM comment (the platform is reporting a machine outcome,
+			// not the assignee's own words) that names the attempt and whether
+			// a retry still follows.
+			if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+				GoalID:     sg.GoalID,
+				AuthorType: "system",
+				AuthorID:   "",
+				ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+				RunID:      rc.RunID,
+				Content:    failedNodeFeedContent(rc, sg.Title, attempt, retrying),
+			}); err != nil {
+				return fmt.Errorf("insert node failure comment: %w", err)
+			} else {
+				evs = append(evs, commentEv)
+			}
 		}
 		if attempt < maxExecutionAttempts {
 			// Retry the assignee — the retry run is born in THIS transaction
@@ -703,7 +803,28 @@ func (s *GoalService) VerifySubGoal(ctx context.Context, runID, verdict, summary
 	// integration; rejected → assignee rework round).
 	logging.Infof("sub-goal: %s verdict=%s by verifier run %s (summary=%q)", sg.ID, verdict, runID, trimLog(summary, 60))
 
+	// 决策 6-19: the verdict is the VERIFIER's own voice (author=agent), in
+	// the SAME transaction as the verification_result/state transition. It
+	// replies to the latest execution report comment of this node so the
+	// feed reads dispatch → report → verdict as one thread.
+	verdictParent := latestNodeReportCommentTx(ctx, tx, sg.GoalID, sg.ID)
+	if verdictParent == "" {
+		verdictParent = subGoalFeedParentTx(ctx, tx, sg.ID)
+	}
+	_, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+		GoalID:     sg.GoalID,
+		AuthorType: "agent",
+		AuthorID:   agentID,
+		ParentID:   verdictParent,
+		RunID:      runID,
+		Content:    verdictNodeFeedContent(sg, verdict, summary, evidence),
+	})
+	if err != nil {
+		return fmt.Errorf("insert verdict feed comment: %w", err)
+	}
+
 	var evs []events.Event
+	evs = append(evs, commentEv)
 	if verdict == "passed" {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE sub_goal SET status='verified' WHERE id=? AND status='verifying'`, sg.ID); err != nil {

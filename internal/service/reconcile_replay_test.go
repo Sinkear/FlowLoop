@@ -74,14 +74,24 @@ func TestReconcilePendingTerminalReplays(t *testing.T) {
 	if after.Status != "verified" {
 		t.Fatalf("replay must verify the sub-goal, got %q", after.Status)
 	}
-	var changes, comments int
+	var changes int
 	if err := st.DB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM change WHERE goal_id=?`, g.ID).Scan(&changes); err != nil || changes != 1 {
 		t.Fatalf("replay must materialize exactly 1 change, got %d (err %v)", changes, err)
 	}
+	// 决策 6-19: the replay also lands the machine-verified node report —
+	// exactly ONCE, agent-authored by the assignee, threaded to the dispatch.
+	var reportID, reportAuthorType, reportAuthorID, reportParent string
 	if err := st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM comment WHERE run_id=?`, sgRun).Scan(&comments); err != nil || comments != 0 {
-		t.Fatalf("replay must NOT land a platform report comment (决策 4-4 revised — agent uses goal comment), got %d (err %v)", comments, err)
+		`SELECT id, author_type, author_id, parent_id FROM comment WHERE run_id=?`, sgRun).
+		Scan(&reportID, &reportAuthorType, &reportAuthorID, &reportParent); err != nil {
+		t.Fatalf("replay must land exactly one node report comment (决策 6-19), got err %v", err)
+	}
+	if reportAuthorType != "agent" || reportAuthorID != b {
+		t.Fatalf("node report must be authored by the assignee (agent %s), got %s/%s", b, reportAuthorType, reportAuthorID)
+	}
+	if reportParent != sg.DispatchCommentID {
+		t.Fatalf("node report must thread to the dispatch comment, got parent %q", reportParent)
 	}
 	var reconciledAt string
 	if err := st.DB().QueryRowContext(ctx,
@@ -89,7 +99,7 @@ func TestReconcilePendingTerminalReplays(t *testing.T) {
 		t.Fatalf("replay must stamp reconciled_at, got %q (err %v)", reconciledAt, err)
 	}
 
-	// Second replay: nothing new.
+	// Second replay: nothing new — the stamped reconciled_at is the dedupe.
 	n, err = rs.ReconcilePendingTerminal(ctx)
 	if err != nil || n != 0 {
 		t.Fatalf("second replay must find nothing, got n=%d err=%v", n, err)
@@ -98,9 +108,15 @@ func TestReconcilePendingTerminalReplays(t *testing.T) {
 		`SELECT COUNT(*) FROM change WHERE goal_id=?`, g.ID).Scan(&changes); err != nil || changes != 1 {
 		t.Fatalf("second replay must not duplicate changes, got %d (err %v)", changes, err)
 	}
+	var commentCount int
 	if err := st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM comment WHERE run_id=?`, sgRun).Scan(&comments); err != nil || comments != 0 {
-		t.Fatalf("second replay must not land a report comment (决策 4-4 revised), got %d (err %v)", comments, err)
+		`SELECT COUNT(*) FROM comment WHERE run_id=?`, sgRun).Scan(&commentCount); err != nil || commentCount != 1 {
+		t.Fatalf("second replay must not duplicate the node report (决策 6-19 — reconciled_at dedupes), got %d (err %v)", commentCount, err)
+	}
+	var sameID string
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT id FROM comment WHERE run_id=?`, sgRun).Scan(&sameID); err != nil || sameID != reportID {
+		t.Fatalf("second replay must keep the original report comment %s, got %q (err %v)", reportID, sameID, err)
 	}
 }
 
