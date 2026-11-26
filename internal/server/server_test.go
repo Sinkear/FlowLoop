@@ -58,6 +58,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		{"dev-server origin POST", http.MethodPost, "http://localhost:3000", "127.0.0.1:7373", http.StatusOK, true},
 		{"no origin (curl/CLI)", http.MethodPost, "", "127.0.0.1:7373", http.StatusOK, true},
 		{"cross-site POST", http.MethodPost, "https://evil.example", "127.0.0.1:7373", http.StatusForbidden, false},
+		{"proxied workspace domain without allowlist", http.MethodPost, "https://17246-d08a.workspace.developer.huaweicloud.com", "127.0.0.1:7373", http.StatusForbidden, false},
 		{"null origin POST", http.MethodPost, "null", "127.0.0.1:7373", http.StatusForbidden, false},
 		{"cross-site GET stays readable", http.MethodGet, "https://evil.example", "127.0.0.1:7373", http.StatusOK, true},
 	}
@@ -74,12 +75,180 @@ func TestCSRFMiddleware(t *testing.T) {
 				req.Header.Set("Origin", tc.origin)
 			}
 			rec := httptest.NewRecorder()
-			csrfMiddleware(next).ServeHTTP(rec, req)
+			csrfMiddleware(nil, next).ServeHTTP(rec, req)
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
 			}
 			if reached != tc.reached {
 				t.Fatalf("next reached = %v, want %v", reached, tc.reached)
+			}
+		})
+	}
+}
+
+func TestSplitOrigin(t *testing.T) {
+	cases := []struct {
+		raw          string
+		scheme, host string
+		port         string
+		ok           bool
+	}{
+		{"https://a.example", "https", "a.example", "443", true},
+		{"http://a.example:8080", "http", "a.example", "8080", true},
+		{"HTTPS://A.Example", "https", "a.example", "443", true},
+		{"https://*.a.example", "https", "*.a.example", "443", true},
+		{"http://[::1]:7373", "http", "[::1]", "7373", true},
+		{"https://a.example/path", "https", "a.example", "443", true},
+		{"null", "", "", "", false},
+		{"ftp://a.example", "", "", "", false},
+		{"https://", "", "", "", false},
+		{"", "", "", "", false},
+	}
+	for _, tc := range cases {
+		scheme, host, port, ok := splitOrigin(tc.raw)
+		if scheme != tc.scheme || host != tc.host || port != tc.port || ok != tc.ok {
+			t.Errorf("splitOrigin(%q) = (%q,%q,%q,%v), want (%q,%q,%q,%v)",
+				tc.raw, scheme, host, port, ok, tc.scheme, tc.host, tc.port, tc.ok)
+		}
+	}
+}
+
+func TestCSRFMiddlewareAllowlist(t *testing.T) {
+	t.Setenv("FLOWLOOP_ALLOWED_ORIGINS", "https://*.workspace.developer.huaweicloud.com, https://api.example:8443")
+	cases := []struct {
+		name   string
+		origin string
+		want   int
+	}{
+		{"wildcard subdomain", "https://17246-d08a67.workspace.developer.huaweicloud.com", http.StatusOK},
+		{"wildcard bare apex", "https://workspace.developer.huaweicloud.com", http.StatusForbidden},
+		{"wildcard requires scheme match", "http://17246-d08a67.workspace.developer.huaweicloud.com", http.StatusForbidden},
+		{"wildcard suffix smuggling", "https://17246-d08a67.workspace.developer.huaweicloud.com.evil.example", http.StatusForbidden},
+		{"exact entry with port", "https://api.example:8443", http.StatusOK},
+		{"exact entry wrong port", "https://api.example:8444", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7373/api/thing", nil)
+			req.Host = "127.0.0.1:7373"
+			req.Header.Set("Origin", tc.origin)
+			rec := httptest.NewRecorder()
+			csrfMiddleware(nil, next).ServeHTTP(rec, req)
+			if rec.Code != tc.want || reached != (tc.want == http.StatusOK) {
+				t.Fatalf("origin %q: status=%d reached=%v, want %d", tc.origin, rec.Code, reached, tc.want)
+			}
+		})
+	}
+}
+
+func TestCSRFMiddlewareLegacyEnvAllowlist(t *testing.T) {
+	t.Setenv("OUROFLOW_ALLOWED_ORIGINS", "https://legacy.example")
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7373/api/thing", nil)
+	req.Host = "127.0.0.1:7373"
+	req.Header.Set("Origin", "https://legacy.example")
+	rec := httptest.NewRecorder()
+	csrfMiddleware(nil, next).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("legacy env allowlist: status=%d, want 200", rec.Code)
+	}
+}
+
+func TestCSRFMiddlewareSettingsAllowlist(t *testing.T) {
+	settings := newTestSettings(t, "")
+	if err := settings.Set(context.Background(), allowedOriginsSettingKey, "https://app.example"); err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := csrfMiddleware(settings, next)
+
+	post := func(origin string) int {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7373/api/thing", nil)
+		req.Host = "127.0.0.1:7373"
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := post("https://app.example"); got != http.StatusOK {
+		t.Fatalf("settings allowlisted origin: status=%d, want 200", got)
+	}
+	if got := post("https://other.example"); got != http.StatusForbidden {
+		t.Fatalf("unlisted origin: status=%d, want 403", got)
+	}
+	// A hot rotation of the setting must be visible to the next request.
+	if err := settings.Set(context.Background(), allowedOriginsSettingKey, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := post("https://app.example"); got != http.StatusForbidden {
+		t.Fatalf("cleared allowlist: status=%d, want 403", got)
+	}
+}
+
+func TestSameOriginRequestThroughProxy(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		host       string
+		fproto     string
+		fhost      string
+		origin     string
+		want       bool
+	}{
+		{
+			"loopback peer behind TLS proxy",
+			"127.0.0.1:5555", "127.0.0.1:17450", "https", "17246-d08a67.workspace.developer.huaweicloud.com",
+			"https://17246-d08a67.workspace.developer.huaweicloud.com", true,
+		},
+		{
+			"proxy preserves host, forwarded proto only",
+			"127.0.0.1:5555", "17246-d08a67.workspace.developer.huaweicloud.com", "https", "",
+			"https://17246-d08a67.workspace.developer.huaweicloud.com", true,
+		},
+		{
+			"forwarded host carries the default port",
+			"127.0.0.1:5555", "127.0.0.1:17450", "https", "17246-d08a67.workspace.developer.huaweicloud.com:443",
+			"https://17246-d08a67.workspace.developer.huaweicloud.com", true,
+		},
+		{
+			"forwarded host non-default port mismatch",
+			"127.0.0.1:5555", "127.0.0.1:17450", "https", "17246-d08a67.workspace.developer.huaweicloud.com:8443",
+			"https://17246-d08a67.workspace.developer.huaweicloud.com", false,
+		},
+		{
+			"remote peer cannot spoof forwarded headers",
+			"192.0.2.9:4444", "127.0.0.1:17450", "https", "17246-d08a67.workspace.developer.huaweicloud.com",
+			"https://17246-d08a67.workspace.developer.huaweicloud.com", false,
+		},
+		{
+			"forwarded http stays http",
+			"127.0.0.1:5555", "127.0.0.1:17450", "http", "",
+			"http://127.0.0.1:17450", true,
+		},
+		{
+			"no forwarded proto keeps plain http",
+			"127.0.0.1:5555", "127.0.0.1:17450", "", "",
+			"https://127.0.0.1:17450", false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/api/thing", nil)
+			req.Host = tc.host
+			req.RemoteAddr = tc.remoteAddr
+			if tc.fproto != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.fproto)
+			}
+			if tc.fhost != "" {
+				req.Header.Set("X-Forwarded-Host", tc.fhost)
+			}
+			if got := sameOriginRequest(tc.origin, req); got != tc.want {
+				t.Errorf("sameOriginRequest(%q) = %v, want %v", tc.origin, got, tc.want)
 			}
 		})
 	}

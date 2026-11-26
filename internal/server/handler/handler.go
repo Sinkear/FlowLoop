@@ -1566,6 +1566,11 @@ type platformSettings struct {
 	// WebhookSecret verifies GitHub's X-Hub-Signature-256 ('' = webhook
 	// disabled; polling still covers issue intake).
 	WebhookSecret string `json:"webhook_secret"`
+	// AllowedOrigins is the CSRF allowlist for state-changing requests that
+	// arrive through a reverse proxy (a bare "https://*.workspace…" pattern
+	// allows every DevSpace workspace subdomain). Kept on its own key so the
+	// middleware can read it without parsing this blob.
+	AllowedOrigins string `json:"allowed_origins"`
 }
 
 func (h *Handlers) getPlatformSettings(w http.ResponseWriter, r *http.Request) {
@@ -1576,6 +1581,9 @@ func (h *Handlers) getPlatformSettings(w http.ResponseWriter, r *http.Request) {
 	if v, _ := h.Settings.Get(r.Context(), webhookSecretKey); v != "" {
 		out.WebhookSecret = v
 	}
+	// Single source of truth: the standalone key, never the blob (the blob
+	// value is cleared before writing, see putPlatformSettings).
+	out.AllowedOrigins, _ = h.Settings.Get(r.Context(), allowedOriginsKey)
 	writeJSON(w, out, nil)
 }
 
@@ -1593,6 +1601,9 @@ func (h *Handlers) putPlatformSettings(w http.ResponseWriter, r *http.Request) {
 	if v, _ := h.Settings.Get(r.Context(), webhookSecretKey); v != "" {
 		body.WebhookSecret = v
 	}
+	if v, _ := h.Settings.Get(r.Context(), allowedOriginsKey); v != "" {
+		body.AllowedOrigins = v
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, nil, service.NewValidationError("invalid body: "+err.Error()))
 		return
@@ -1609,14 +1620,27 @@ func (h *Handlers) putPlatformSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The webhook secret lives on its own key (a credential), the rest in
-	// the m3 blob.
+	origins, err := normalizeAllowedOrigins(body.AllowedOrigins)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	// The webhook secret and the CSRF allowlist live on their own keys; the
+	// rest stays in the m3 blob.
 	if err := h.Settings.Set(r.Context(), webhookSecretKey, body.WebhookSecret); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
-	body.WebhookSecret = ""
-	raw, _ := json.Marshal(body)
+	if err := h.Settings.Set(r.Context(), allowedOriginsKey, origins); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	// Keep the blob free of both standalone keys (a stale copy there would be
+	// resurrected by the merge-write on the next partial PUT).
+	blob := body
+	blob.WebhookSecret = ""
+	blob.AllowedOrigins = ""
+	raw, _ := json.Marshal(blob)
 	if err := h.Settings.Set(r.Context(), platformSettingsKey, string(raw)); err != nil {
 		writeJSON(w, nil, err)
 		return
