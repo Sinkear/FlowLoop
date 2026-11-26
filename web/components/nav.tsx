@@ -63,11 +63,14 @@ export function Nav() {
   const { data: goals } = useGoals();
   const { data: pendingGates } = usePendingGates();
   const { openMenu } = useCreateDialog();
-  // 「待审核」= 工作流人工门 + 待审批任务。人工门不改变 goal.status，所以
-  // 只数 review 会把「流程停着等人拍板」漏掉——这正是审核延迟的来源。
-  const pendingApprovalCount =
+  // 与工作台「待我处理」同一口径：人工门 + 待审批 + 失败 + 明确需要你介入。
+  // 人工门不改变 goal.status，只数 review 会把「流程停着等人拍板」漏掉；
+  // 两处数字不一致会让红点看起来像漏报。
+  const pendingAttentionCount =
     (pendingGates?.gates.length ?? 0) +
-    (goals ?? []).filter((g) => g.status === "review").length;
+    (goals ?? []).filter(
+      (g) => g.status === "review" || g.status === "failed" || g.attention
+    ).length;
   const onCreatePage = pathname === "/goals/new";
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -127,7 +130,7 @@ export function Nav() {
           <MobileGroup
             title="常用"
             items={[
-              { href: "/", label: "工作台", badge: pendingApprovalCount },
+              { href: "/", label: "工作台", badge: pendingAttentionCount },
               { href: "/goals", label: "任务" },
               { href: "/projects", label: "项目" },
               { href: "/squads", label: "小队" },
@@ -194,7 +197,7 @@ export function Nav() {
               <NavLink
                 item={item}
                 active={isActive(item)}
-                badge={item.href === "/" ? pendingApprovalCount : undefined}
+                badge={item.href === "/" ? pendingAttentionCount : undefined}
               />
               {item.href === "/projects" && recentProjects.length > 0 && (
                 <div className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2">
@@ -305,7 +308,7 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {badge ? (
         <span
-          title={`${badge} 项待你审核`}
+          title={`${badge} 项待你处理`}
           className="shrink-0 rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-medium leading-4 text-white"
         >
           {badge > 99 ? "99+" : badge}

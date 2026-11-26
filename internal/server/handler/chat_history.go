@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/Sinkear/flowloop/internal/service"
@@ -32,7 +33,16 @@ func (h *Handlers) saveChatConversation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in service.ChatConversation
+	// Reject oversized transcripts before decoding them into memory. The
+	// service still enforces the same cap, but only after the whole body has
+	// already been materialized here.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, tooBig)
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}

@@ -573,7 +573,12 @@ export function useCancelGoal() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: cancelGoal,
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.goals }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.goals });
+      // Cancel now skips parked blueprint nodes, so the global gate feed and
+      // nav badge must refresh without waiting for the 15s poll.
+      qc.invalidateQueries({ queryKey: qk.pendingGates() });
+    },
   });
 }
 export function useReopenGoal() {

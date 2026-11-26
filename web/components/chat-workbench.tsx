@@ -276,6 +276,20 @@ export function ChatWorkbench({ className }: { className?: string }) {
   indexRef.current = index;
   const messagesRef = useRef<ChatMsg[]>([]);
   messagesRef.current = messages;
+  // 已删除的会话：DELETE 发起后，排队中的保存一律跳过，不能把它写回来。
+  const deletedIds = useRef<Set<string>>(new Set());
+  // 所有写库请求串行化。删除会先等前面的 PUT 落地再发 DELETE，避免旧的
+  // PUT 晚于 DELETE 到达服务端，把删掉的会话“复活”。
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const saveConversation = useCallback((meta: ConvMeta, snapshot: ChatMsg[]) => {
+    if (deletedIds.current.has(meta.id)) return Promise.resolve(false);
+    const p = saveChain.current.then(() => {
+      if (deletedIds.current.has(meta.id)) return false;
+      return persistConversation(meta, snapshot);
+    });
+    saveChain.current = p.catch(() => false);
+    return p;
+  }, []);
   const participants = useMemo(() => {
     const ids = activeMeta?.participants ?? [];
     return ids.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => Boolean(a));
@@ -290,9 +304,10 @@ export function ChatWorkbench({ className }: { className?: string }) {
     if (!cur) return;
     const next = patch(cur);
     setIndex((prev) => prev.map((m) => (m.id === id ? next : m)));
-    // 参与者的变化也要落库；只对当前打开的一段有完整消息可写。
-    if (id === activeIdRef.current) void persistConversation(next, messagesRef.current);
-  }, []);
+    // 参与者的变化也要落库；但正文没载入时不能写（会把服务端记录清空）。
+    // 元数据会先在本地更新，等正文载入后的首次保存自然带上新参与者。
+    if (id === activeIdRef.current && loadedIds.current.has(id)) void saveConversation(next, messagesRef.current);
+  }, [saveConversation]);
 
   // ── 初始化：先从服务端拉列表（顺带一次性导入旧 localStorage 记录），
   //    再打开上次那段（或最新一段）。没有对话时等 agent 列表到了再建。 ──
@@ -318,7 +333,9 @@ export function ChatWorkbench({ className }: { className?: string }) {
         setActiveId(chosen.id);
         try {
           const conv = await getChatConversation(chosen.id);
-          if (cancelled) return;
+          // 加载期间用户可能已经切到别的一段：只把结果交给仍处于激活状态的会话，
+          // 否则旧会话的正文会被挂到新会话下，并在下一次保存时写错记录。
+          if (cancelled || activeIdRef.current !== chosen.id) return;
           const msgs = ((conv.messages ?? []) as ChatMsg[]).filter((m) => m && typeof m.text === "string");
           setMessages(msgs);
           loadedIds.current.add(chosen.id);
@@ -356,7 +373,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
       }
       const prevMeta = activeMetaRef.current;
       if (prevMeta && loadedIds.current.has(prevMeta.id)) {
-        void persistConversation(prevMeta, messagesRef.current);
+        void saveConversation(prevMeta, messagesRef.current);
       }
       const now = Date.now();
       const meta: ConvMeta = {
@@ -369,7 +386,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
       };
       setIndex((prev) => [meta, ...prev].slice(0, MAX_CONVS));
       // 先落一行空对话：刷新页面/换浏览器后它也要在列表里。
-      void persistConversation(meta, []);
+      void saveConversation(meta, []);
       loadedIds.current.add(meta.id);
       loadingConv.current = false;
       setActiveId(meta.id);
@@ -381,7 +398,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
       setBusyAgents(new Set());
       return meta;
     },
-    []
+    [saveConversation]
   );
 
   // 首次拿到 agent 列表：没有对话就建一段，参与者默认管家（否则第一个在线 agent）。
@@ -423,19 +440,25 @@ export function ChatWorkbench({ className }: { className?: string }) {
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
       const cur = activeMetaRef.current;
-      if (cur && cur.id === activeIdRef.current) void persistConversation(cur, messagesRef.current);
+      // 与保存 effect 同一套守卫：只有在正文已载入、且仍停在当前段时才写。
+      if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+        void saveConversation(cur, messagesRef.current);
+      }
     }, 900);
-  }, [messages, activeId, hydrated]);
+  }, [messages, activeId, hydrated, saveConversation]);
 
-  // 卸载/切页：把最后一次未去抖到期的修改补写一次。
+  // 卸载/切页：把最后一次未去抖到期的修改补写一次。只要正文已载入就允许
+  // 写空数组——用户清空最后一段后离开，服务端也应该记住“已清空”。
   useEffect(() => () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     const cur = activeMetaRef.current;
-    if (cur && messagesRef.current.length) void persistConversation(cur, messagesRef.current);
-  }, []);
+    if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+      void saveConversation(cur, messagesRef.current);
+    }
+  }, [saveConversation]);
 
   // 切对话 / 退出：取消在途回复并断开所有 ACP 连接，记录保留在 localStorage。
   const disconnectAll = useCallback(() => {
@@ -456,6 +479,9 @@ export function ChatWorkbench({ className }: { className?: string }) {
   // 打开某一段：正文按需从服务端拉（列表里只有元数据）。
   const loadConversation = useCallback((id: string) => {
     loadingConv.current = true;
+    // 在正文真正到位前，这段会话没有可写资格；否则空 messages 会被当作
+    // 最新状态覆盖服务端记录（GET 慢或失败时尤其危险）。
+    loadedIds.current.delete(id);
     setActiveId(id);
     setMessages([]);
     msgID.current = 1;
@@ -471,21 +497,28 @@ export function ChatWorkbench({ className }: { className?: string }) {
         loadedIds.current.add(id);
         msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
       })
-      .catch(() => {})
+      .catch(() => {
+        if (activeIdRef.current === id) {
+          setError("载入这段对话失败——先别在这里输入，切换一下重试，避免覆盖服务端记录。");
+        }
+      })
       .finally(() => {
         if (activeIdRef.current === id) loadingConv.current = false;
       });
   }, []);
 
-  // 切走前先把上一段未到期的修改写掉，避免丢最后一轮。
+  // 切走前先把上一段未到期的修改写掉，避免丢最后一轮。没有载入完的正文
+  // 不能写（messagesRef 还是空数组），否则会把服务端历史清空。
   const flushPendingSave = useCallback(() => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     const cur = activeMetaRef.current;
-    if (cur) void persistConversation(cur, messagesRef.current);
-  }, []);
+    if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+      void saveConversation(cur, messagesRef.current);
+    }
+  }, [saveConversation]);
 
   const openConversation = useCallback(
     (id: string) => {
@@ -499,7 +532,8 @@ export function ChatWorkbench({ className }: { className?: string }) {
 
   const deleteConversation = useCallback(
     (id: string) => {
-      void deleteChatConversation(id).catch(() => {});
+      // 先立墓碑：删除期间排队/在途的保存都跳过这段会话。
+      deletedIds.current.add(id);
       loadedIds.current.delete(id);
       setIndex((prev) => prev.filter((m) => m.id !== id));
       if (id === activeIdRef.current) {
@@ -520,6 +554,17 @@ export function ChatWorkbench({ className }: { className?: string }) {
           createConversation(primary ? [primary.id] : []);
         }
       }
+      // 等前面排队的保存都落地，再删服务端记录：否则旧的 PUT 可能后到，
+      // 把刚删掉的会话重新写回来（刷新后“复活”）。
+      void (async () => {
+        try {
+          await saveChain.current;
+          await deleteChatConversation(id);
+        } catch {
+          deletedIds.current.delete(id);
+          setError("删除这段对话失败——它可能还会出现在列表里，刷新后再试。");
+        }
+      })();
     },
     [disconnectAll, loadConversation, agents, isOnline, createConversation]
   );
