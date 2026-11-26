@@ -236,3 +236,37 @@ Web 端至少检查：
 | 升级后技能丢失 | 只备份了 DB，没备份 `runs/skills` | 从备份恢复 `runs/skills`，或在 Web 重新上传 |
 | 页面能开但接口 502 | Web 的 rewrite 指向了旧 daemon 端口 | 重新构建 web 或检查 `web/next.config.ts` / 启动端口 |
 | JEM start 失败 | 新制品缺少 `web/server.js` 或端口冲突 | 看 `/root/log/agent-env.log`；脚本会自动回滚旧 bin/web |
+| 页面能开、列表能看，但一切写操作（加入小队 / 建 goal / 改配置）返回 `cross-origin request rejected` | daemon 装在 127.0.0.1 后，前置反代（Caddy / DevSpace 工作台网关）终结了 TLS，浏览器 Origin 是 `https://…域名`，而 daemon 只看到 `http://127.0.0.1:端口` | 升级到含 origin allowlist 的版本（beta.3+），见 §8 |
+
+## 8. 反代后面的写操作被拒（`cross-origin request rejected`）
+
+daemon 默认只监听 loopback（`127.0.0.1:47813` / `:17450`），没有鉴权，所以对
+POST/PUT/DELETE 做了一层 CSRF 校验：浏览器 `Origin` 必须是 loopback、必须与
+请求的 host/scheme 同源，或在 allowlist 里。反代终结 TLS 后 daemon 看到的是
+`http://127.0.0.1:端口`，浏览器却报 `https://<工作台域名>`，两者对不上就整片
+写操作 403（GET 不受影响，所以列表页面看起来是好的）。
+
+从 beta.3 起有三条生效途径，按优先级：
+
+1. **反代转发真实来源**（多数情况免配置）：daemon 对 loopback peer 信任
+   `X-Forwarded-Proto` / `X-Forwarded-Host`（只取逗号分隔的第一个值）。Caddy v2
+   会向上游转发这两个头，若外层网关已经把 `X-Forwarded-Proto: https` 传下来、
+   Caddy 保留它，`https://<域名>` 就直接算同源。注意：如果 Caddy 收到的是明文
+   http（外层网关终结 TLS 且没传 proto），它写下去的会是 `http`，这条就不生效 ——
+   用第 2 条兜底。
+2. **环境变量 allowlist**（确定性，部署期固定）：在启动 daemon 的脚本里加
+
+   ```sh
+   export FLOWLOOP_ALLOWED_ORIGINS="https://*.workspace.developer.huaweicloud.com"
+   ```
+
+   逗号分隔，`*.` 只匹配左侧标签的子域（`a.example.com` 命中，
+   `example.com` 与 `a.example.com.evil.com` 不命中）；scheme 与端口严格比较。
+   旧名 `OUROFLOW_ALLOWED_ORIGINS` 仍被读取。
+3. **运行时设置**（改完立即生效，不用重启）：写 `app_settings` 的
+   `platform.allowed_origins`（与 `platform.worker_token` 同一个表/热读模式），
+   或 `PUT /settings/platform {"allowed_origins": "https://…"}`。
+
+被拒时 daemon 日志会留一行 `server: csrf rejected POST /path: origin "…" is
+neither … nor allowlisted`，先看这行再决定加哪条规则。**不要**用"反代删掉
+`Origin` 头"来绕过：那等于对所有经反代的请求关掉 CSRF 防护。

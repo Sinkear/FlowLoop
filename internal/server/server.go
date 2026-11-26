@@ -1026,7 +1026,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	if isLoopbackAddr(addr) {
 		// No auth on loopback by design; this adds the missing CSRF guard for
 		// state-changing browser requests.
-		handler = csrfMiddleware(handler)
+		handler = csrfMiddleware(settingsSvc, handler)
 	} else {
 		want, err := settingsSvc.Get(ctx, "platform.worker_token")
 		if err != nil || strings.TrimSpace(want) == "" {
@@ -1125,10 +1125,19 @@ func corsMiddleware(next http.Handler) http.Handler {
 // a hostile page could submit a simple cross-origin POST to 127.0.0.1 (the
 // response is unreadable to the attacker, but the side effect still happens —
 // e.g. spawning a model probe via /runtimes/{id}/models/refresh). Non-loopback
-// listens are token-gated and do not install this middleware, and a
-// reverse-proxied same-origin web UI still matches Origin == Host. Requests
-// without an Origin header (curl, the connect CLI) are allowed.
-func csrfMiddleware(next http.Handler) http.Handler {
+// listens are token-gated and do not install this middleware.
+//
+// Three cases pass: no Origin at all (curl, the connect CLI), a loopback
+// origin (local dev server), and an origin that sameOriginRequest recognizes —
+// which now also covers a TLS-terminating reverse proxy in front of the daemon
+// (Caddy in front of 127.0.0.1:17450, the DevSpace workspace gateway, …) via
+// X-Forwarded-Proto/Host. Origins that are none of those must be listed on the
+// allowlist (platform.allowed_origins, or FLOWLOOP_ALLOWED_ORIGINS at
+// deployment time) — see newCSRFAllowlist. Rejections are logged at warn level:
+// the failure is otherwise invisible in the daemon log and only surfaces as a
+// broken button in the UI.
+func csrfMiddleware(settings *service.SettingsService, next http.Handler) http.Handler {
+	allow := newCSRFAllowlist(settings)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -1136,29 +1145,34 @@ func csrfMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		if origin == "" || localDevOrigin(origin) || sameOriginRequest(origin, r) {
+		if origin == "" || localDevOrigin(origin) || sameOriginRequest(origin, r) || allow.allows(r.Context(), origin) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+		scheme, host := effectiveOrigin(r)
+		logging.Warnf("server: csrf rejected %s %s: origin %q is neither %s://%s nor allowlisted (platform.allowed_origins / FLOWLOOP_ALLOWED_ORIGINS)",
+			r.Method, r.URL.Path, origin, scheme, host)
+		http.Error(w, "cross-origin request rejected (add this origin to FLOWLOOP_ALLOWED_ORIGINS or the platform.allowed_origins setting)", http.StatusForbidden)
 	})
 }
 
 // sameOriginRequest reports whether origin (scheme://host[:port]) targets the
-// same host and scheme the request arrived on.
+// scheme and host the request arrived on. effectiveOrigin resolves the latter
+// through X-Forwarded-Proto/Host for loopback peers, so a reverse-proxied UI
+// still counts as same-origin even though the daemon itself only speaks http.
 func sameOriginRequest(origin string, r *http.Request) bool {
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
+	oscheme, ohost, oport, ok := splitOrigin(origin)
+	if !ok {
 		return false
 	}
-	if !strings.EqualFold(u.Host, r.Host) {
+	scheme, host := effectiveOrigin(r)
+	rscheme, rhost, rport, ok := splitOrigin(scheme + "://" + host)
+	if !ok {
 		return false
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return strings.EqualFold(u.Scheme, scheme)
+	// splitOrigin normalizes :443/:80 and lowercases, so
+	// "https://a.example" and "https://a.example:443" compare equal.
+	return oscheme == rscheme && ohost == rhost && oport == rport
 }
 
 // isLoopbackAddr reports whether the listen address binds to a loopback

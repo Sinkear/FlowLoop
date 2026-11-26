@@ -194,3 +194,32 @@ func TestAgentDeleteImpactHandler(t *testing.T) {
 		t.Fatalf("unknown agent: status %d, body %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestNormalizeAllowedOrigins(t *testing.T) {
+	valid := []struct{ in, want string }{
+		{"https://*.workspace.developer.huaweicloud.com", "https://*.workspace.developer.huaweicloud.com"},
+		{" https://a.example , http://b.example:8080\n", "https://a.example,http://b.example:8080"},
+		{"HTTPS://A.Example", "https://a.example"},
+		{"https://*.a.example:8443", "https://*.a.example:8443"},
+		{"", ""},
+	}
+	for _, c := range valid {
+		got, err := normalizeAllowedOrigins(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("normalizeAllowedOrigins(%q) = (%q,%v), want %q", c.in, got, err, c.want)
+		}
+	}
+	invalid := []string{
+		"a.example",              // no scheme
+		"ftp://a.example",        // wrong scheme
+		"https://a.example/path", // path
+		"https://a.example?q=1",  // query
+		"https://a.*.example",    // wildcard must be the leading label
+		"https://*",              // wildcard without a domain
+	}
+	for _, in := range invalid {
+		if got, err := normalizeAllowedOrigins(in); err == nil {
+			t.Errorf("normalizeAllowedOrigins(%q) = %q, want error", in, got)
+		}
+	}
+}
