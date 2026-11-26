@@ -71,6 +71,9 @@ type Handlers struct {
 	// rendering. A goal pins a published version and the compiler turns it
 	// into gated sub_goal rows.
 	Blueprint *service.BlueprintService
+	// ChatHistory persists the web chat workbench's conversations
+	// (server-side so every browser sees the same history).
+	ChatHistory *service.ChatHistoryService
 	// Hooks is the lifecycle-hooks registry + bus-subscribed executor
 	// (spec: tmp/hooks-spec.md v0.2). nil-safe: absent = hook endpoints
 	// return 500s and no lifecycle firing (tests may omit it).
@@ -110,6 +113,13 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /goals/{id}/submit-review", h.submitGoalReview)
 	mux.HandleFunc("POST /goals/{id}/reopen", h.reopenGoal)
 	mux.HandleFunc("POST /goals/{id}/activate", h.activateGoal)
+	mux.HandleFunc("GET /goal-gates", h.listPendingGates)
+	// Chat workbench history: list metadata, load one transcript, upsert,
+	// delete. The transcript is the web client's opaque JSON array.
+	mux.HandleFunc("GET /chat/conversations", h.listChatConversations)
+	mux.HandleFunc("GET /chat/conversations/{id}", h.getChatConversation)
+	mux.HandleFunc("PUT /chat/conversations/{id}", h.saveChatConversation)
+	mux.HandleFunc("DELETE /chat/conversations/{id}", h.deleteChatConversation)
 	mux.HandleFunc("GET /goals/{id}/blueprint-gates", h.listBlueprintGates)
 	mux.HandleFunc("GET /goals/{id}/plan-alignment", h.getPlanAlignment)
 	mux.HandleFunc("GET /goals/{id}/env-changes", h.listEnvChanges)
@@ -335,6 +345,11 @@ func (h *Handlers) refreshRuntimeModels(w http.ResponseWriter, r *http.Request) 
 	// exposes), so the UI never sees a future/past skew.
 	detectedAt := time.Now().UTC().Format(time.RFC3339)
 	out, err := h.Runtime.SetModels(ctx, id, res.Models, detectedAt)
+	if err == nil && res.ProbeOK != nil {
+		// ProbeOK is nil for machines that cannot run the prompt probe; leave
+		// their previous health untouched instead of inventing a failure.
+		out, err = h.Runtime.SetProbe(ctx, id, *res.ProbeOK, res.ProbeError, detectedAt)
+	}
 	writeJSON(w, out, err)
 }
 
@@ -588,6 +603,22 @@ func (h *Handlers) listEnvChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, out, nil)
+}
+
+// listPendingGates returns every OPEN blueprint gate across all goals — the
+// workbench feed and nav badge. It is read-only; deciding a gate still goes
+// through POST /goals/{id}/blueprint-gates/{nodeKey} (the transactional path).
+func (h *Handlers) listPendingGates(w http.ResponseWriter, r *http.Request) {
+	if h.Goal == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("goal service not configured"))
+		return
+	}
+	out, err := h.Goal.ListPendingGates(r.Context())
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, map[string]any{"gates": out}, nil)
 }
 
 // listBlueprintGates returns the goal's open human decision cards (held

@@ -558,6 +558,11 @@ export const createBlueprint = (body: {
 export const listHeldGates = (goalId: string) =>
   api<{ gates: import("./types").HeldGate[] }>(`/goals/${goalId}/blueprint-gates`);
 
+// 全局待审核门：所有任务里处于 held（等人拍板）的人工门，工作台 feed 与
+// 导航 badge 共用。只读；拍板仍走 resolveHeldGate。
+export const listPendingGates = () =>
+  api<{ gates: import("./types").PendingGate[] }>("/goal-gates");
+
 export const resolveHeldGate = (
   goalId: string,
   nodeKey: string,
@@ -697,3 +702,29 @@ export const listDomainHooks = (domainId: string) =>
   api<import("./types").HookBinding[]>(`/domains/${domainId}/hooks`);
 export const unbindDomainHook = (domainId: string, bindingId: string) =>
   api<{ deleted: string }>(`/domains/${domainId}/hooks/${bindingId}`, { method: "DELETE" });
+
+// ── 对话工作台历史（服务端持久化，bug 2）──
+// 列表只回元数据，打开某一段时才拉整段消息；换浏览器/换 origin 都能看到。
+export const listChatConversations = () =>
+  api<{ conversations: import("./types").ChatConversationMeta[] }>("/chat/conversations");
+
+export const getChatConversation = (id: string) =>
+  api<import("./types").ChatConversation>(`/chat/conversations/${encodeURIComponent(id)}`);
+
+export const saveChatConversation = (
+  id: string,
+  body: {
+    title: string;
+    participants: string[];
+    messages: unknown[];
+    created_at: number;
+    updated_at: number;
+  }
+) =>
+  api<import("./types").ChatConversationMeta>(`/chat/conversations/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
+export const deleteChatConversation = (id: string) =>
+  api<void>(`/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });

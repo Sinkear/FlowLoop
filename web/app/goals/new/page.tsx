@@ -153,7 +153,7 @@ const KIND_META: Record<
   },
 };
 
-const KIND_ORDER: CreateKind[] = ["goal", "project", "squad", "agent", "workflow", "schedule"];
+const KIND_ORDER: CreateKind[] = ["project", "goal", "squad", "agent", "workflow", "schedule"];
 
 const KIND_NOTES: Record<CreateKind, string[]> = {
   goal: [
@@ -212,14 +212,6 @@ export default function NewGoalPage() {
   const runtimeUp = (runtimes ?? []).some((r) => r.status === "active");
   const steps: CreateStep[] = [
     {
-      key: "infra",
-      label: "运行环境",
-      desc: "机器在线 + 运行时可用，智能体才能跑",
-      done: machineUp && runtimeUp,
-      count: (runtimes ?? []).filter((r) => r.status === "active").length,
-      href: "/infra",
-    },
-    {
       key: "project",
       label: "项目",
       desc: "任务的归属地，提供仓库与验收策略",
@@ -227,6 +219,14 @@ export default function NewGoalPage() {
       count: (domains ?? []).length,
       kind: "project",
       href: "/projects",
+    },
+    {
+      key: "infra",
+      label: "运行环境",
+      desc: "机器在线 + 运行时可用，智能体才能跑",
+      done: machineUp && runtimeUp,
+      count: (runtimes ?? []).filter((r) => r.status === "active").length,
+      href: "/infra",
     },
     {
       key: "agent",
@@ -269,6 +269,10 @@ export default function NewGoalPage() {
   const [followUp, setFollowUp] = useState("");
   const [slow, setSlow] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 最近一次活动时间跟着 store 走；effect 里通过 ref 读取，避免每次流式
+  // 文本都重建 60s 计时器。
+  const lastActivityRef = useRef(st.lastActivityAt);
+  lastActivityRef.current = st.lastActivityAt;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 深链：?kind= 决定初始类型；?squad= 给工作流预选归属。
@@ -300,13 +304,21 @@ export default function NewGoalPage() {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [st.lines, busy]);
 
+  // 「60 秒没有进展」只看最近一次活动时间，而不是 phase：一个回合里
+  // phase 会一直保持 running，只按 phase 计时会把持续输出的正常连接
+  // 误报成「半死」。
   useEffect(() => {
     if (st.phase !== "running" && st.phase !== "connecting") {
       setSlow(false);
       return;
     }
-    const timer = window.setTimeout(() => setSlow(true), 60_000);
-    return () => window.clearTimeout(timer);
+    const tick = () => {
+      const last = lastActivityRef.current || Date.now();
+      setSlow(Date.now() - last > 60_000);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
   }, [st.phase]);
 
   // 建成功 → 切回对应视图：任务进详情，其它进详情或列表。
@@ -634,7 +646,7 @@ export default function NewGoalPage() {
                 )}
                 {slow && st.phase !== "failed" && st.phase !== "created" && (
                   <div className="space-y-2 rounded-md border border-line bg-surface-2 px-3 py-2 text-xs text-ink-2">
-                    <p>已经 60 秒没有新的进展——连接可能处于半死状态（socket 还在，但机器那头没回应）。</p>
+                    <p>已经 60 秒没有收到新的进展了——如果智能体还在执行长命令，可以再等等；也可以直接断开重试。</p>
                     {st.lastAsk && (
                       <button type="button" onClick={retry} className="font-medium underline decoration-dotted underline-offset-2 hover:text-ink">
                         断开重试

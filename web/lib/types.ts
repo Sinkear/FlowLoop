@@ -185,6 +185,11 @@ export interface Runtime {
   // page lists it read-only; agents may pick from it.
   models?: RuntimeModel[];
   models_at?: string; // last successful detection ('' = never detected)
+  // Connectivity outcome of the last models refresh: '' = never probed,
+  // 'ok' = the default model answered, 'failed' = provider unreachable.
+  probe_status?: "ok" | "failed" | "";
+  probe_error?: string;
+  probe_at?: string;
   created_at: string;
 }
 
@@ -201,6 +206,9 @@ export interface RuntimeModels {
   machine_id: string;
   models: RuntimeModel[];
   detected_at: string;
+  probe_status?: "ok" | "failed" | "";
+  probe_error?: string;
+  probe_at?: string;
 }
 
 // McpServer mirrors acp.McpServer: an extra MCP server the agent's runs
@@ -1084,6 +1092,15 @@ export interface HeldGateAction {
   label: string;
 }
 
+// 全局待审核门（工作台 / 导航 badge）：HeldGate + 所属任务上下文。
+// 决策仍在任务详情页完成——拍板会剪枝执行图，所以这里只做导航。
+export interface PendingGate extends HeldGate {
+  goal_id: string;
+  goal_title: string;
+  goal_status: string;
+  domain_id: string;
+}
+
 export interface HeldGate {
   node_key: string;
   title: string;
@@ -1236,4 +1253,20 @@ export interface ABCompareResult {
   goal_b: ABGoalFace;
   deltas: Record<string, number>;
   notes?: string[];
+}
+
+// ── 对话工作台的服务端历史（bug 2）─────────────────────────────
+// 一端对话 = 元数据 + 消息（消息是 web 自己的 ChatMsg 数组，服务端不解析）。
+// created_at/updated_at 是客户端时钟的 unix ms；列表按 updated_at DESC。
+export interface ChatConversationMeta {
+  id: string;
+  title: string;
+  participants: string[];
+  message_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ChatConversation extends ChatConversationMeta {
+  messages: unknown[];
 }

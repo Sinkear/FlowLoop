@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Bot, Boxes, Monitor, Plus, ScrollText, Terminal, Trash2 } from "lucide-react";
+import { Bot, Boxes, CircleAlert, Monitor, Plus, ScrollText, Terminal, Trash2 } from "lucide-react";
 import { useDeleteRuntime } from "@/lib/queries";
 import { Button, Empty, SectionCard } from "@/components/ui";
 import { cn, relTime } from "@/lib/utils";
@@ -288,6 +288,15 @@ function RuntimeRow({
             <Boxes className="h-3 w-3" aria-hidden="true" />
             {modelCount > 0 ? `${modelCount} 个模型` : "未探测到模型"}
           </button>
+          {rt.probe_status === "failed" && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300"
+              title={rt.probe_error || "上次连通性检测失败：模型端点不可达"}
+            >
+              <CircleAlert className="h-3 w-3" aria-hidden="true" />
+              模型不可用
+            </span>
+          )}
 
           <span className="text-[11px] text-ink-3">
             Agent <span className="font-mono tabular-nums text-ink-2">{agents.length}</span>

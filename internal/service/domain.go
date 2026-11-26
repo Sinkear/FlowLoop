@@ -125,18 +125,8 @@ func (s *DomainService) Create(ctx context.Context, d Domain) (*Domain, error) {
 		}
 		return nil, fmt.Errorf("insert domain: %w", err)
 	}
-	// A project created with a squad already routed to its issues/PRs is by
-	// definition working with that squad; record the membership so the
-	// project↔squad relation and the routing invariant agree from day one.
-	for _, sq := range [][2]string{{d.IssueAssignee, d.IssueAssigneeType}, {d.PullAssignee, d.PullAssigneeType}} {
-		if sq[0] == "" || sq[1] != "squad" {
-			continue
-		}
-		if _, err := s.st.DB().ExecContext(ctx,
-			`INSERT OR IGNORE INTO project_squad (domain_id,squad_id,created_at) VALUES (?,?,?)`, d.ID, sq[0], d.CreatedAt); err != nil {
-			return nil, fmt.Errorf("insert project squad membership: %w", err)
-		}
-	}
+	// Squads are public resources: routing to a squad does not create a
+	// project↔squad membership (there is no such concept anymore).
 	s.bus.Publish(ctx, events.Event{Topic: "domain:created", Payload: d})
 	return &d, nil
 }
@@ -151,7 +141,7 @@ func fillScratchDir(d *Domain) {
 func (s *DomainService) List(ctx context.Context) ([]Domain, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
 		`SELECT id,type,name,git_url,default_branch,git_identity,git_credentials,max_run_duration,issue_repo,issue_assignee,issue_assignee_type,issue_provider,pull_assignee,pull_assignee_type,webhook_secret,acceptance_level,created_at
-		 FROM domain ORDER BY created_at`)
+		 FROM domain ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -353,24 +343,6 @@ func (s *DomainService) validateIssueTracking(ctx context.Context, d *Domain) er
 		default:
 			return NewValidationError("pull_assignee_type must be agent or squad")
 		}
-	}
-	return nil
-}
-
-// requireProjectSquad rejects routing a project's issues/PRs to a squad that
-// has not joined that project. The access-tab dropdown already filters to
-// joined squads, but the API must enforce the same invariant: otherwise a
-// project could hand work to a squad it has no relationship with, and the
-// squad page would show no project membership to explain why it is receiving
-// work.
-func (s *DomainService) requireProjectSquad(ctx context.Context, domainID, squadID, label string) error {
-	var n int
-	if err := s.st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM project_squad WHERE domain_id=? AND squad_id=?`, domainID, squadID).Scan(&n); err != nil {
-		return fmt.Errorf("check project squad membership: %w", err)
-	}
-	if n == 0 {
-		return NewValidationError(fmt.Sprintf("%s %q is not a member of this project — add the squad to the project first", label, squadID))
 	}
 	return nil
 }
@@ -589,9 +561,6 @@ func (s *DomainService) validateAssigneeRouting(ctx context.Context, d *Domain) 
 			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.IssueAssignee, "issue assignee squad"); err != nil {
 				return err
 			}
-			if err := s.requireProjectSquad(ctx, d.ID, d.IssueAssignee, "issue assignee squad"); err != nil {
-				return err
-			}
 		default:
 			return NewValidationError("issue_assignee_type must be agent or squad")
 		}
@@ -616,9 +585,6 @@ func (s *DomainService) validateAssigneeRouting(ctx context.Context, d *Domain) 
 			}
 		case "squad":
 			if err := mustExist(ctx, s.st, `SELECT COUNT(*) FROM squad WHERE id=?`, d.PullAssignee, "PR assignee squad"); err != nil {
-				return err
-			}
-			if err := s.requireProjectSquad(ctx, d.ID, d.PullAssignee, "PR assignee squad"); err != nil {
 				return err
 			}
 		default:

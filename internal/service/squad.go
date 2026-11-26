@@ -170,7 +170,7 @@ func (s *SquadService) UpsertByName(ctx context.Context, name, description, lead
 
 func (s *SquadService) List(ctx context.Context) ([]Squad, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT id,name,description,leader_id,instructions,default_workflow_id,created_at FROM squad ORDER BY created_at`)
+		`SELECT id,name,description,leader_id,instructions,default_workflow_id,created_at FROM squad ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -527,17 +527,10 @@ func (s *SquadService) Delete(ctx context.Context, id string) error {
 			fmt.Sprintf("squad %q owns %d workflow(s); delete or move them first", name, n),
 			map[string]any{"name": name, "count": n})
 	}
-	// A squad joined to projects (project_squad) or with a repo connection is
-	// still in use: the connection would fire webhooks for a deleted squad.
-	// Force the caller to remove it from those projects / delete the
-	// connection first.
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM project_squad WHERE squad_id=?`, id).Scan(&n); err != nil {
-		return fmt.Errorf("check project memberships: %w", err)
-	}
-	if n > 0 {
-		return NewValidationError(fmt.Sprintf("squad %q is still joined to %d project(s); remove it from those projects first", id, n))
-	}
+	// A squad with a repo connection is still in use: the connection would
+	// fire webhooks for a deleted squad. Force the caller to delete the
+	// connection first. project_squad rows are not a blocker: squads are
+	// public resources and projects no longer own them.
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM connection WHERE squad_id=?`, id).Scan(&n); err != nil {
 		return fmt.Errorf("check connections: %w", err)

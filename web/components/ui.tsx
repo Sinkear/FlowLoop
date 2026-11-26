@@ -237,7 +237,10 @@ export function Dialog({
 
   if (inline) {
     return (
-      <div className="flex w-full flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
+      // 独立新建页里的卡片：交给页面（main）滚动，自己不做滚动容器。
+      // 之前内层 overflow-y-auto + overscroll-contain 在卡片高度自由增长时
+      // 永远滚不动，还会把滚轮事件拦住，导致整页没法用鼠标滚动。
+      <div className="flex w-full flex-col rounded-xl border border-line bg-surface-1">
         <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-3.5">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
@@ -248,7 +251,7 @@ export function Dialog({
             ×
           </button>
         </div>
-        <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-5">{children}</div>
+        <div className="space-y-4 p-5">{children}</div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3.5">{footer}</div>
       </div>
     );

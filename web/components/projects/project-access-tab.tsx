@@ -9,7 +9,6 @@ import {
   useConnections,
   useDeleteConnection,
   usePatchDomainAssignees,
-  useProjectSquads,
   useSquads,
 } from "@/lib/queries";
 import type { Agent, Domain, Squad } from "@/lib/types";
@@ -68,7 +67,6 @@ function AgentSquadSelect({
 export function ProjectAccessTab({ project }: { project: Domain }) {
   const { data: agents } = useAgents();
   const { data: squads } = useSquads();
-  const { data: members } = useProjectSquads(project.id);
   const { data: connections } = useConnections();
   const patch = usePatchDomainAssignees();
   const removeConnection = useDeleteConnection();
@@ -81,8 +79,6 @@ export function ProjectAccessTab({ project }: { project: Domain }) {
   )));
   const [saved, setSaved] = useState(false);
 
-  const memberIds = new Set((members ?? []).map((member) => member.squad_id));
-  const projectSquads = (squads ?? []).filter((squad) => memberIds.has(squad.id));
   const domainConnections = (connections ?? []).filter((connection) => connection.domain_id === project.id);
   const selectedIssue = parsePick(issue);
   const selectedPull = parsePick(pull);
@@ -116,11 +112,11 @@ export function ProjectAccessTab({ project }: { project: Domain }) {
         bodyClassName="p-4"
       >
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Issue 执行者" hint="新建的 issue 自动派给谁；也可以不自动处理">
-            <AgentSquadSelect value={issue} onChange={(value) => { setIssue(value); setSaved(false); }} agents={agents ?? []} squads={projectSquads} />
+          <Field label="Issue 执行者" hint="新建的 issue 自动派给谁；可以选任意智能体或小队，也可以不自动处理">
+            <AgentSquadSelect value={issue} onChange={(value) => { setIssue(value); setSaved(false); }} agents={agents ?? []} squads={squads ?? []} />
           </Field>
-          <Field label="PR 执行者" hint="打开的 PR 自动派给谁；也可以不自动处理">
-            <AgentSquadSelect value={pull} onChange={(value) => { setPull(value); setSaved(false); }} agents={agents ?? []} squads={projectSquads} />
+          <Field label="PR 执行者" hint="打开的 PR 自动派给谁；可以选任意智能体或小队，也可以不自动处理">
+            <AgentSquadSelect value={pull} onChange={(value) => { setPull(value); setSaved(false); }} agents={agents ?? []} squads={squads ?? []} />
           </Field>
         </div>
         <div className="mt-4 flex items-center gap-3">
@@ -136,7 +132,7 @@ export function ProjectAccessTab({ project }: { project: Domain }) {
           </p>
         )}
         <p className="mt-2 text-[11px] leading-relaxed text-ink-3">
-          只有加入本项目的小队才会出现在“小队”分组；智能体是公共资源，可以直接选中。
+          小队和智能体都是公共资源，任何一支小队都可以直接被选中；选小队时由该队队长接单。
         </p>
         {!project.git_credentials && (
           <p className="mt-1 text-[11px] leading-relaxed text-amber-300/90">
@@ -185,7 +181,7 @@ export function ProjectAccessTab({ project }: { project: Domain }) {
         <div className="flex items-start gap-2.5 text-[12px] leading-relaxed text-ink-3">
           <Users className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" />
           <p>
-            当前项目有 {projectSquads.length} 支小队、{agents?.length ?? 0} 个可选智能体。小队是路由层，事件最终仍由选定的小队 leader 或智能体执行。
+            小队是公共资源：当前有 {squads?.length ?? 0} 支可选小队、{agents?.length ?? 0} 个可选智能体。选小队时由该队队长接单，事件最终仍落到具体智能体执行。
           </p>
         </div>
       </SectionCard>

@@ -3166,6 +3166,129 @@ func (s *GoalService) ListHeldGates(ctx context.Context, goalID string) ([]HeldG
 	return out, rows.Err()
 }
 
+// PendingGate is one open human gate with enough goal context to render a
+// single workbench row. The decision itself still happens on the goal page:
+// resolving a gate prunes the spec graph inside a transaction there.
+type PendingGate struct {
+	GoalID        string           `json:"goal_id"`
+	GoalTitle     string           `json:"goal_title"`
+	GoalStatus    string           `json:"goal_status"`
+	DomainID      string           `json:"domain_id"`
+	NodeKey       string           `json:"node_key"`
+	Title         string           `json:"title"`
+	Prompt        string           `json:"prompt"`
+	Actions       []SpecGateAction `json:"actions"`
+	HeldSince     string           `json:"held_since,omitempty"`
+	TimeoutAfter  string           `json:"timeout_after,omitempty"`
+	TimeoutAction string           `json:"timeout_action,omitempty"`
+	SubGoalID     string           `json:"sub_goal_id"`
+}
+
+// ListPendingGates returns every OPEN gate across ALL goals, oldest first —
+// the workbench "待我审核" feed and the nav badge. One goal may hold several
+// gates; each is its own row because each needs its own decision.
+//
+// Only goals that can still act on a decision are included: a cancelled or
+// failed goal keeps its stale gate rows (nothing reconciles them), and those
+// must never pin the badge forever. The pinned spec content comes back in the
+// same query, parsed once per version — previously this ran ListHeldGates
+// (goal + spec + gate queries) once per goal.
+func (s *GoalService) ListPendingGates(ctx context.Context) ([]PendingGate, error) {
+	rows, err := s.st.DB().QueryContext(ctx, `
+		SELECT g.id, g.title, g.status, COALESCE(g.domain_id,''), COALESCE(g.blueprint_version_id,''),
+		       bn.node_key, COALESCE(bn.resolved_config,''), COALESCE(sg.description,''), COALESCE(bn.sub_goal_id,''),
+		       COALESCE(bv.content,'')
+		FROM blueprint_node bn
+		JOIN goal g ON g.id = bn.goal_id
+		LEFT JOIN sub_goal sg ON sg.id = bn.sub_goal_id
+		LEFT JOIN blueprint_version bv ON bv.id = g.blueprint_version_id
+		WHERE bn.node_type='gate' AND bn.state='running'
+		  AND g.status IN ('active','review')
+		ORDER BY bn.created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("scan pending gates: %w", err)
+	}
+	defer rows.Close()
+
+	type specEntry struct {
+		gates map[string]*SpecNode
+		ok    bool
+	}
+	specs := map[string]*specEntry{}
+	out := []PendingGate{}
+	for rows.Next() {
+		var gid, title, status, domainID, versionID string
+		var key, cfg, prompt, subGoalID, content string
+		if err := rows.Scan(&gid, &title, &status, &domainID, &versionID, &key, &cfg, &prompt, &subGoalID, &content); err != nil {
+			return nil, err
+		}
+		e := specs[versionID]
+		if e == nil {
+			e = &specEntry{}
+			if versionID != "" && content != "" {
+				var spec SpecGraph
+				if err := json.Unmarshal([]byte(content), &spec); err != nil {
+					logging.Warnf("pending gates: goal %s spec %s: %v", gid, versionID, err)
+				} else {
+					e.gates = map[string]*SpecNode{}
+					for i := range spec.Nodes {
+						if spec.Nodes[i].Type == "gate" {
+							e.gates[spec.Nodes[i].ID] = &spec.Nodes[i]
+						}
+					}
+					e.ok = true
+				}
+			} else {
+				// A goal whose pinned spec vanished must not blank the whole
+				// feed; its gate still shows on the goal page (which surfaces
+				// the error), but there is nothing to render here.
+				logging.Warnf("pending gates: goal %s has no pinned spec", gid)
+			}
+			specs[versionID] = e
+		}
+		if !e.ok {
+			continue
+		}
+		n := e.gates[key]
+		if n == nil {
+			continue // spec drifted — hide rather than guess
+		}
+		hg := PendingGate{
+			GoalID: gid, GoalTitle: title, GoalStatus: status, DomainID: domainID,
+			NodeKey: key, Title: n.Title, Prompt: prompt, Actions: n.Gate.Actions, SubGoalID: subGoalID,
+		}
+		var c struct {
+			HeldSince     string `json:"held_since"`
+			TimeoutAfter  string `json:"timeout_after"`
+			TimeoutAction string `json:"timeout_action"`
+			AutoWhen      string `json:"auto_when"`
+			AutoAction    string `json:"auto_action"`
+		}
+		if json.Unmarshal([]byte(cfg), &c) == nil {
+			hg.HeldSince = c.HeldSince
+			hg.TimeoutAfter = c.TimeoutAfter
+			hg.TimeoutAction = c.TimeoutAction
+		}
+		out = append(out, hg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].HeldSince != out[j].HeldSince {
+			if out[i].HeldSince == "" {
+				return false
+			}
+			if out[j].HeldSince == "" {
+				return true
+			}
+			return out[i].HeldSince < out[j].HeldSince
+		}
+		return out[i].GoalID < out[j].GoalID
+	})
+	return out, nil
+}
+
 func containsString(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {

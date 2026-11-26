@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS runtime (
     -- machine; models_at is when detection last succeeded ('' = never).
     models        TEXT NOT NULL DEFAULT '[]',
     models_at     TEXT NOT NULL DEFAULT '',
+    -- Connectivity health of the LAST models refresh: '' = never probed,
+    -- 'ok' = a minimal prompt got an answer, 'failed' = the model endpoint
+    -- was unreachable/auth-failed. Fresh DBs get these here; store.go's
+    -- migration list retrofits old DBs.
+    probe_status  TEXT NOT NULL DEFAULT '',
+    probe_error   TEXT NOT NULL DEFAULT '',
+    probe_at      TEXT NOT NULL DEFAULT '',
     -- status: active | absent — absent = the machine's latest probe no
     -- longer sees this CLI (uninstalled). The row survives (agents
     -- reference it) but the claim gate rejects it.
@@ -575,6 +582,23 @@ CREATE TABLE IF NOT EXISTS chat_message (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_message_run ON chat_message(run_id, created_at);
+
+-- chat_conversation: the web chat workbench's transcript (one row per
+-- conversation). Unlike chat_message (a run's live stream cache), this is the
+-- durable history the left sidebar lists; messages is an opaque JSON array in
+-- the web client's ChatMsg shape. Stored server-side so every browser/origin
+-- sees the same conversations.
+CREATE TABLE IF NOT EXISTS chat_conversation (
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL DEFAULT '',
+    participants  TEXT NOT NULL DEFAULT '[]', -- JSON []string (agent ids)
+    messages      TEXT NOT NULL DEFAULT '[]', -- JSON []web ChatMsg (opaque)
+    message_count INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL DEFAULT 0, -- unix ms (client clock)
+    updated_at    INTEGER NOT NULL DEFAULT 0  -- unix ms; list order = DESC
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_conversation_updated ON chat_conversation(updated_at DESC);
 
 -- Append-only audit trail. Handoffs, child creations, squad evaluations, ...
 CREATE TABLE IF NOT EXISTS activity_log (

@@ -1017,6 +1017,14 @@ func (s *GoalService) Cancel(ctx context.Context, goalID string) (*Goal, error) 
 		`UPDATE sub_goal SET status='cancelled' WHERE goal_id=? AND status NOT IN ('verified','cancelled','failed')`, goalID); err != nil {
 		return nil, fmt.Errorf("cancel sub-goals: %w", err)
 	}
+	// Parked blueprint nodes (human gates, ready/running steps) are reconciled
+	// by run completions, which never arrive after a cancel. Mark them skipped
+	// so an open gate cannot keep the workbench feed / nav badge alive forever.
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE blueprint_node SET state='skipped'
+		 WHERE goal_id=? AND state IN ('pending','running')`, goalID); err != nil {
+		return nil, fmt.Errorf("skip blueprint nodes: %w", err)
+	}
 	if _, err := s.st.DB().ExecContext(ctx,
 		`INSERT INTO activity_log (id,goal_id,actor_type,actor_id,action,detail,created_at) VALUES (?,?,?,?,'cancelled','{}',?)`,
 		newID(), goalID, "human", "", now()); err != nil {

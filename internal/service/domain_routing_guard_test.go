@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/Sinkear/flowloop/internal/events"
@@ -43,9 +41,9 @@ func TestDomainDeleteCleansProjectLinks(t *testing.T) {
 	}
 }
 
-// Project-level issue/PR routing may only target a squad that has joined the
-// project. The access dropdown filters, but the API must enforce it too.
-func TestProjectSquadRoutingRequiresMembership(t *testing.T) {
+// Squads are public resources: a project may route its issues/PRs to any
+// existing squad without first "joining" it to the project.
+func TestProjectSquadRoutingWithoutMembership(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
 	bus := events.NewBus()
@@ -63,16 +61,8 @@ func TestProjectSquadRoutingRequiresMembership(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 
-	_, err = ds.SetAssignees(ctx, d.ID, sq.ID, "squad", "", "")
-	if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "not a member") {
-		t.Fatalf("unjoined squad routing must be refused, got %v", err)
-	}
-
-	if _, err := NewProjectSquadService(st).Add(ctx, d.ID, sq.ID); err != nil {
-		t.Fatalf("add membership: %v", err)
-	}
 	if _, err := ds.SetAssignees(ctx, d.ID, sq.ID, "squad", "", ""); err != nil {
-		t.Fatalf("joined squad routing must succeed: %v", err)
+		t.Fatalf("public squad routing must succeed without membership: %v", err)
 	}
 
 	// A later project edit must keep the routing and must not require the

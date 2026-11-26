@@ -213,7 +213,7 @@ func (s *AgentService) UpsertByName(ctx context.Context, name, description, syst
 func (s *AgentService) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.st.DB().QueryContext(ctx,
 		`SELECT id,name,type,description,runtime_id,system_prompt,model,env,mcp_servers,skills,max_concurrent,created_at
-		 FROM agent ORDER BY created_at`)
+		 FROM agent ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}

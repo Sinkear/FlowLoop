@@ -2,15 +2,13 @@
 
 import { cn } from "@/lib/utils";
 
-export type WorkflowTab = "spec" | "versions" | "reviews" | "proposals" | "ab" | "json";
+export type WorkflowTab = "spec" | "reviews" | "proposals" | "ab";
 
 const TABS: { value: WorkflowTab; label: string }[] = [
-  { value: "spec", label: "规范图" },
-  { value: "versions", label: "版本" },
+  { value: "spec", label: "规范" },
   { value: "reviews", label: "复盘" },
   { value: "proposals", label: "优化提案" },
   { value: "ab", label: "A/B 对比" },
-  { value: "json", label: "规范 JSON" },
 ];
 
 /**
@@ -20,15 +18,14 @@ const TABS: { value: WorkflowTab; label: string }[] = [
 export function WorkflowTabs({
   value,
   onChange,
-  versionCount,
-  showJson,
+  proposalCount,
+  pendingProposalCount,
 }: {
   value: WorkflowTab;
   onChange: (tab: WorkflowTab) => void;
-  versionCount: number;
-  showJson: boolean;
+  proposalCount: number;
+  pendingProposalCount: number;
 }) {
-  const visible = TABS.filter((tab) => tab.value !== "json" || showJson);
   return (
     <div className="-mx-4 border-b border-line md:-mx-8">
       <div
@@ -36,7 +33,7 @@ export function WorkflowTabs({
         aria-label="工作流分区"
         className="flex items-center gap-1 overflow-x-auto px-4 [scrollbar-width:none] md:px-8 [&::-webkit-scrollbar]:hidden"
       >
-        {visible.map((tab) => {
+        {TABS.map((tab) => {
           const current = tab.value === value;
           return (
             <button
@@ -53,14 +50,19 @@ export function WorkflowTabs({
               )}
             >
               {tab.label}
-              {tab.value === "versions" && versionCount > 0 && (
+              {tab.value === "proposals" && proposalCount > 0 && (
                 <span
+                  title={`${pendingProposalCount} 条待批，共 ${proposalCount} 条提案`}
                   className={cn(
                     "rounded-full px-1.5 py-0.5 font-mono text-[10px] leading-none",
-                    current ? "bg-accent/15 text-accent" : "bg-surface-2 text-ink-3",
+                    current
+                      ? "bg-accent/15 text-accent"
+                      : pendingProposalCount > 0
+                        ? "bg-amber-500/15 text-amber-300"
+                        : "bg-surface-2 text-ink-3",
                   )}
                 >
-                  {versionCount}
+                  {proposalCount}
                 </span>
               )}
             </button>

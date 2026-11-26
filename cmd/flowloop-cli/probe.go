@@ -828,6 +828,202 @@ func probeModelsViaACP(ctx context.Context, spawn []string) ([]link.ModelInfo, b
 	return filterModelsByAuth(parseACPModels(result), initResult), true
 }
 
+// modelPromptTimeout bounds the manual-refresh connectivity probe (a real
+// session/prompt, not just the model catalog). A cold provider route can
+// spend tens of seconds before its first token, so this is deliberately
+// longer than the catalog handshake's 15s; a truly unreachable endpoint
+// normally fails much earlier with ECONNREFUSED rather than timing out.
+const modelPromptTimeout = 60 * time.Second
+
+// probeModelPrompt verifies that the CLI's configured default model can
+// actually answer — the missing check behind "网关挂了但探针显示成功".
+//
+// Detection (detectCLIModelsUncached) only performs initialize + session/new,
+// which succeed even when the provider endpoint is unreachable: the catalog
+// comes from the CLI's config, not from a model call. This function sends a
+// minimal session/prompt and watches for the first agent chunk (success), a
+// permission request (the model already produced output — also success), or
+// a JSON-RPC error carrying the real cause (ECONNREFUSED, auth, ...).
+func probeModelPrompt(ctx context.Context, spawn []string) error {
+	if len(spawn) == 0 {
+		return fmt.Errorf("no ACP spawn configured for this CLI")
+	}
+	cwd, err := os.MkdirTemp("", "flowloop-model-probe-")
+	if err != nil {
+		return fmt.Errorf("create probe cwd: %w", err)
+	}
+	defer os.RemoveAll(cwd)
+
+	pctx, cancel := context.WithTimeout(ctx, modelPromptTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(pctx, spawn[0], spawn[1:]...)
+	cmd.Dir = cwd
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("probe stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("probe stdout: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start CLI for model probe: %w", err)
+	}
+	defer func() {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	lines := make(chan []byte, 64)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(make([]byte, 64*1024), 4<<20)
+		for sc.Scan() {
+			line := append([]byte(nil), sc.Bytes()...)
+			select {
+			case lines <- line:
+			case <-pctx.Done():
+				return
+			}
+		}
+	}()
+
+	send := func(id int, method string, params any) error {
+		frame, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			return err
+		}
+		if _, err := stdin.Write(append(frame, '\n')); err != nil {
+			return fmt.Errorf("write %s: %w", method, err)
+		}
+		return nil
+	}
+	// rpcError extracts the human-readable error of a JSON-RPC envelope.
+	type rpcError struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    any    `json:"data"`
+	}
+	parseErr := func(raw json.RawMessage) error {
+		var re rpcError
+		if json.Unmarshal(raw, &re) == nil && strings.TrimSpace(re.Message) != "" {
+			return fmt.Errorf("%s", re.Message)
+		}
+		return fmt.Errorf("probe failed: %s", strings.TrimSpace(string(raw)))
+	}
+	// call waits for the reply with the given id, ignoring notifications.
+	call := func(id int, method string, params any) (json.RawMessage, error) {
+		if err := send(id, method, params); err != nil {
+			return nil, err
+		}
+		for {
+			select {
+			case <-pctx.Done():
+				return nil, fmt.Errorf("%s: no reply within %s", method, modelPromptTimeout)
+			case line, ok := <-lines:
+				if !ok {
+					return nil, fmt.Errorf("%s: CLI exited before replying", method)
+				}
+				var env struct {
+					ID     json.RawMessage `json:"id"`
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if json.Unmarshal(line, &env) != nil {
+					continue
+				}
+				if strings.TrimSpace(string(env.ID)) != strconv.Itoa(id) {
+					continue // a notification, or another id
+				}
+				if e := strings.TrimSpace(string(env.Error)); e != "" && e != "null" {
+					return nil, parseErr(env.Error)
+				}
+				return env.Result, nil
+			}
+		}
+	}
+
+	if _, err := call(1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	}); err != nil {
+		return fmt.Errorf("initialize: %w", err)
+	}
+	newResult, err := call(2, "session/new", map[string]any{
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if err != nil {
+		return fmt.Errorf("session/new: %w", err)
+	}
+	var session struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(newResult, &session); err != nil || session.SessionID == "" {
+		return fmt.Errorf("session/new returned no sessionId")
+	}
+	if err := send(3, "session/prompt", map[string]any{
+		"sessionId": session.SessionID,
+		"prompt":    []any{map[string]any{"type": "text", "text": "Reply with the single word OK."}},
+	}); err != nil {
+		return fmt.Errorf("session/prompt: %w", err)
+	}
+	for {
+		select {
+		case <-pctx.Done():
+			return fmt.Errorf("model did not answer within %s — the provider endpoint may be unreachable", modelPromptTimeout)
+		case line, ok := <-lines:
+			if !ok {
+				return fmt.Errorf("CLI exited before the model answered")
+			}
+			var env struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Result json.RawMessage `json:"result"`
+				Error  json.RawMessage `json:"error"`
+			}
+			if json.Unmarshal(line, &env) != nil {
+				continue
+			}
+			if e := strings.TrimSpace(string(env.Error)); e != "" && e != "null" {
+				return parseErr(env.Error)
+			}
+			switch {
+			case env.Method == "session/request_permission":
+				// The model already produced a tool decision: the provider is
+				// reachable. Cancel the request so the probe leaves no trace.
+				if id := strings.TrimSpace(string(env.ID)); id != "" && id != "null" {
+					reply, _ := json.Marshal(map[string]any{
+						"jsonrpc": "2.0", "id": json.RawMessage(id),
+						"result": map[string]any{"outcome": map[string]any{"outcome": "cancelled"}},
+					})
+					_, _ = stdin.Write(append(reply, '\n'))
+				}
+				return nil
+			case env.Method == "session/update":
+				var upd struct {
+					Params struct {
+						Update struct {
+							SessionUpdate string `json:"sessionUpdate"`
+						} `json:"update"`
+					} `json:"params"`
+				}
+				_ = json.Unmarshal(line, &upd)
+				switch upd.Params.Update.SessionUpdate {
+				case "agent_message_chunk", "agent_thought_chunk":
+					return nil
+				}
+			case strings.TrimSpace(string(env.ID)) == "3":
+				return nil
+			}
+		}
+	}
+}
+
 // scanDirsFor expands one --scan argument into concrete directories: ~ is
 // expanded, glob patterns are resolved via doublestar (`*` one segment,
 // `**` recursive — /opt/**/ = any depth under /opt), and non-directory

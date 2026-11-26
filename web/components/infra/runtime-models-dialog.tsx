@@ -22,6 +22,10 @@ export function RuntimeModelsDialog({ rt, onClose }: { rt: Runtime; onClose: () 
   const detectedAt = fresh?.detected_at ?? data?.detected_at ?? rt.models_at ?? "";
   const loading = isLoading && !data;
   const refreshing = refresh.isPending;
+  // 目录探测与连通性探测是两件事：目录来自 CLI 配置，连通性来自一次真实的
+  // 最小 session/prompt。网关挂掉时目录仍能读到，必须单独把连通性标出来。
+  const probeStatus = fresh?.probe_status ?? data?.probe_status ?? rt.probe_status ?? "";
+  const probeError = fresh?.probe_error ?? data?.probe_error ?? rt.probe_error ?? "";
   // 409/404 是后端契约里的已知错误：直接给出可执行的中文说明，而不是把
   // 「machine offline」之类的原始 message 抛给用户。
   const refreshError = refresh.error
@@ -85,6 +89,23 @@ export function RuntimeModelsDialog({ rt, onClose }: { rt: Runtime; onClose: () 
           {refreshing ? "刷新中…" : "刷新检测"}
         </Button>
       </div>
+
+      {probeStatus === "failed" && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5">
+          <p className="text-xs font-medium text-red-300">模型不可用</p>
+          <p className="mt-0.5 break-words text-[11px] leading-relaxed text-red-200/90">
+            {probeError || "模型端点没有响应"}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-3">
+            目录能读到不等于模型能用（模型清单来自 CLI 配置）。请确认网关 / API 服务在运行，再点「刷新检测」。
+          </p>
+        </div>
+      )}
+      {probeStatus === "ok" && (
+        <p className="text-[11px] text-emerald-300">
+          模型连通正常：最近一次最小请求已收到模型回复。
+        </p>
+      )}
 
       {refreshError && <p className="text-xs text-amber-300">{refreshError}</p>}
 

@@ -311,9 +311,24 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 			return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
 		}
 		cliLogf("models refresh: %s → %d model(s)", p.CLI, len(models))
+		// Catalog detection only reads the CLI's config, so it still succeeds
+		// when the provider endpoint is unreachable. Run one minimal prompt to
+		// learn whether the model actually answers, and report it alongside the
+		// catalog; a failed prompt is a result (ProbeOK=false), not an RPC error,
+		// so the daemon can keep the catalog and flag the model as unusable.
+		probeCtx, probeCancel := context.WithTimeout(ctx, modelPromptTimeout+10*time.Second)
+		probeErrText := ""
+		if err := probeModelPrompt(probeCtx, spawn); err != nil {
+			probeErrText = err.Error()
+			cliLogf("models refresh: %s connectivity probe failed: %v", p.CLI, err)
+		}
+		probeCancel()
+		probeOK := probeErrText == ""
 		return link.ModelsRefreshResult{
 			Models:     models,
 			DetectedAt: time.Now().UTC().Format(time.RFC3339),
+			ProbeOK:    &probeOK,
+			ProbeError: probeErrText,
 		}, nil
 	})
 	// Every handler is registered — StartReadLoop must run BEFORE the first

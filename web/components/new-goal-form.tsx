@@ -254,17 +254,14 @@ export function NewGoalForm({
       );
       return;
     }
-    // v2: agent/squad-executed goals must belong to a domain (DESIGN.md §2).
-    if (assigneeType === "agent" || assigneeType === "squad") {
-      if (!domainId) {
-        setDomainErr("请选择所属项目——智能体/小队执行的任务必须挂在一个项目上（项目提供 worktree 与验收策略）");
-        return;
-      }
+    // 任务必须挂在项目下（DESIGN.md §2 / IA：项目是任务的第一层上下文）。
+    // 不再给「无项目 backlog」开后门：没有项目就没有 worktree、验收策略和
+    // 项目级默认绑定，任务落地后无处可执行。
+    if (!domainId) {
+      setDomainErr("请选择所属项目——任务必须挂在一个项目下（项目提供 worktree、验收策略与工作流）");
+      return;
     }
-    // 项目归属不只为执行：验收级别默认值也来自项目（任务 > 项目 > HITL）。
-    // 未指定负责人的待办任务只要选了项目，也把 domain_id 带上，否则
-    // 后端只能落到平台默认 HITL，项目级验收级别会被静默丢掉。
-    if (domainId) body.domain_id = domainId;
+    body.domain_id = domainId;
     // 运行模式随 goal 一起落库：infer 只记基础指标，train 才建分析会话。
     body.execution_mode = executionMode;
     // 工作流钉版本：只允许钉当前小队自己的已发布工作流（深链老版本除外，
@@ -428,7 +425,7 @@ export function NewGoalForm({
             />
           </Field>
         </div>
-        <Field label="所属项目" hint="智能体/小队执行的任务必填">
+        <Field label="所属项目" hint="必填：任务必须挂在项目下（项目提供 worktree、验收策略与工作流）">
           <select
             value={domainId}
             onChange={(e) => {

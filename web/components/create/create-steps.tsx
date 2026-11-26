@@ -40,7 +40,7 @@ export function CreateSteps({
             第一次使用，按 01 → 06 建出最小闭环；已有对象会自动打勾。
           </p>
         </div>
-        <span className="text-[11px] text-ink-3">运行环境 → 项目 → 智能体 → 小队 → 工作流 → 任务</span>
+        <span className="text-[11px] text-ink-3">项目 → 运行环境 → 智能体 → 小队 → 工作流 → 任务</span>
       </div>
 
       <ol className="grid grid-cols-1 divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-6">

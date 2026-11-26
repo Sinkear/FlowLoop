@@ -5,6 +5,7 @@ import { Providers } from "@/components/providers";
 import { Nav } from "@/components/nav";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { CreateDialogProvider } from "@/components/create/create-dialog";
+import { PendingApprovalsToast } from "@/components/pending-approvals-toast";
 
 const plexSans = IBM_Plex_Sans({
   variable: "--font-plex-sans",
@@ -53,6 +54,7 @@ export default function RootLayout({
             <main className="min-h-0 flex-1 overflow-y-auto">
               <ErrorBoundary>{children}</ErrorBoundary>
             </main>
+            <PendingApprovalsToast />
           </CreateDialogProvider>
         </Providers>
       </body>

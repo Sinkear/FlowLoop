@@ -22,20 +22,28 @@ import { AcpChatClient, ChatEvent, PermissionRequest } from "@/lib/acp";
 import { describeStewardFailure } from "@/lib/steward";
 import { StreamCards } from "@/lib/run-messages";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
-import { listSkills } from "@/lib/api";
+import {
+  deleteChatConversation,
+  getChatConversation,
+  listChatConversations,
+  listSkills,
+  saveChatConversation,
+} from "@/lib/api";
 import { useAgents, useRuntimes } from "@/lib/queries";
-import type { Agent, Runtime, Skill } from "@/lib/types";
+import type { Agent, ChatConversationMeta, Runtime, Skill } from "@/lib/types";
 
 // ── 对话工作台 ───────────────────────────────────────────────
 //
-// 一个对话 = 本机持久化的一段记录 + 每个参与智能体各自的 ACP 会话。
+// 一个对话 = 服务端持久化的一段记录 + 每个参与智能体各自的 ACP 会话。
 // 支持在一个对话里 @ 多个智能体：每次发送会把「共享上下文」拼进每个被
 // 叫到的智能体的 prompt，所以它们看到的是同一段讨论，而不是各聊各的。
 //
-// 存储结构（localStorage）：
-//   flowloop-chat-index-v1         [{id,title,participants,updatedAt,...}]
-//   flowloop-chat-conv-v1-<id>     {messages:[...]}
-//   flowloop-chat-active-v1        上一次打开的对话 id
+// 存储结构（服务端，bug 2）：
+//   GET /chat/conversations       [{id,title,participants,message_count,...}]
+//   GET /chat/conversations/<id>  {..meta, messages:[...]}（打开时才拉整段）
+//   PUT /chat/conversations/<id>  前端去抖保存（流式回复期间不逐字写）
+// localStorage 只剩两件小事：flowloop-chat-active-v1（本浏览器上次打开哪段）
+// 和旧版 flowloop-chat-index-v1 / conv key —— 首次访问自动导入服务端后删掉。
 // 只存文本事件；工具卡片的输入输出已在事件里，加载历史后仍能展开。
 
 type ChatMsg = ChatEvent & {
@@ -54,9 +62,10 @@ type ConvMeta = {
   messageCount: number;
 };
 
-const INDEX_KEY = "flowloop-chat-index-v1";
 const ACTIVE_KEY = "flowloop-chat-active-v1";
-const convKey = (id: string) => `flowloop-chat-conv-v1-${id}`;
+const LEGACY_INDEX_KEY = "flowloop-chat-index-v1";
+const LEGACY_IMPORTED_KEY = "flowloop-chat-imported-v1";
+const legacyConvKey = (id: string) => `flowloop-chat-conv-v1-${id}`;
 const MAX_CONVS = 30;
 const MAX_MSGS = 300;
 const NEW_TITLE = "新对话";
@@ -70,36 +79,30 @@ function readJSON<T>(key: string): T | null {
   }
 }
 
-function writeJSON(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // 配额满或 SSR：静默降级，不打断对话。
-  }
+function newID(): string {
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function loadIndex(): ConvMeta[] {
-  const list = readJSON<ConvMeta[]>(INDEX_KEY);
+// 旧版 localStorage 索引/记录：只用于一次性导入服务端。
+function readLegacyIndex(): ConvMeta[] {
+  const list = readJSON<ConvMeta[]>(LEGACY_INDEX_KEY);
   if (!Array.isArray(list)) return [];
-  return list.filter((m) => m && typeof m.id === "string");
+  return list.filter((m) => m && typeof m.id === "string").slice(0, MAX_CONVS);
 }
 
-function saveIndex(list: ConvMeta[]) {
-  writeJSON(INDEX_KEY, list.slice(0, MAX_CONVS));
-}
-
-function readConv(id: string): ChatMsg[] {
-  const data = readJSON<{ messages?: ChatMsg[] }>(convKey(id));
+function readLegacyConv(id: string): ChatMsg[] {
+  const data = readJSON<{ messages?: ChatMsg[] }>(legacyConvKey(id));
   if (!data || !Array.isArray(data.messages)) return [];
   return data.messages.filter((m) => m && typeof m.text === "string");
 }
 
-function writeConv(id: string, messages: ChatMsg[]) {
-  writeJSON(convKey(id), { messages: messages.slice(-MAX_MSGS) });
-}
-
-function newID(): string {
-  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+function clearLegacyHistory(index: ConvMeta[]) {
+  try {
+    for (const m of index) localStorage.removeItem(legacyConvKey(m.id));
+    localStorage.removeItem(LEGACY_INDEX_KEY);
+  } catch {
+    // 清理失败不影响服务端记录；下次启动会因 imported 标记跳过。
+  }
 }
 
 // 旧版管家历史迁移：只迁移一次，迁完删旧 key，避免两套记录同时存在。
@@ -127,6 +130,56 @@ function migrateLegacy(): { meta: ConvMeta; messages: ChatMsg[] } | null {
     return { meta, messages };
   }
   return null;
+}
+
+// 服务端元数据 → 组件内的 camelCase 形状（时间保留 unix ms，比较/显示都用它）。
+function toMeta(m: ChatConversationMeta): ConvMeta {
+  return {
+    id: m.id,
+    title: m.title,
+    createdAt: m.created_at,
+    updatedAt: m.updated_at,
+    participants: m.participants ?? [],
+    messageCount: m.message_count,
+  };
+}
+
+// 把一段对话写进服务端。失败静默：对话仍在本页可用，下一次保存会重试。
+async function persistConversation(meta: ConvMeta, messages: ChatMsg[]): Promise<boolean> {
+  try {
+    await saveChatConversation(meta.id, {
+      title: meta.title,
+      participants: meta.participants,
+      messages: messages.slice(-MAX_MSGS),
+      created_at: meta.createdAt,
+      updated_at: meta.updatedAt,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 首次访问：把旧版本地记录整体搬到服务端；成功后才删本地副本并记标记。
+async function importLegacyHistoryOnce() {
+  try {
+    if (localStorage.getItem(LEGACY_IMPORTED_KEY)) return;
+  } catch {
+    return; // SSR/隐私模式：没有旧记录可导，直接跳过。
+  }
+  const index = readLegacyIndex();
+  const legacy = migrateLegacy();
+  const items: { meta: ConvMeta; messages: ChatMsg[] }[] = [];
+  for (const m of index) items.push({ meta: m, messages: readLegacyConv(m.id) });
+  if (legacy) items.push(legacy);
+  for (const it of items) {
+    const ok = await persistConversation(it.meta, it.messages);
+    if (!ok) return; // 服务端不可用：保留本地数据，下次启动重试（按 id upsert，不会重复）。
+  }
+  clearLegacyHistory(index);
+  try {
+    localStorage.setItem(LEGACY_IMPORTED_KEY, "1");
+  } catch {}
 }
 
 const STARTERS = [
@@ -197,7 +250,12 @@ export function ChatWorkbench({ className }: { className?: string }) {
   const [openSkill, setOpenSkill] = useState<string | null>(null);
 
   const msgID = useRef(1);
-  const skipSave = useRef(false);
+  // 服务端拉取期间禁止把尚未加载的空消息写回去（否则会清空服务端记录）。
+  const loadingConv = useRef(false);
+  // 正文已从服务端载入的对话 id：只有这些才有资格回写，避免把未加载的
+  // 空 messages 覆盖掉服务端已有记录。
+  const loadedIds = useRef<Set<string>>(new Set());
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conns = useRef<
     Map<string, { client: AcpChatClient; promise: Promise<{ client: AcpChatClient; sessionId: string }> }>
   >(new Map());
@@ -209,6 +267,29 @@ export function ChatWorkbench({ className }: { className?: string }) {
   const scrollRef = useStickToBottom<HTMLDivElement>([messages, busyAgents.size]);
 
   const activeMeta = index.find((m) => m.id === activeId) ?? null;
+  // 保存/切换回调里读最新值，避免把它们塞进依赖导致 effect 反复触发。
+  const activeMetaRef = useRef<ConvMeta | null>(null);
+  activeMetaRef.current = activeMeta;
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+  const indexRef = useRef<ConvMeta[]>([]);
+  indexRef.current = index;
+  const messagesRef = useRef<ChatMsg[]>([]);
+  messagesRef.current = messages;
+  // 已删除的会话：DELETE 发起后，排队中的保存一律跳过，不能把它写回来。
+  const deletedIds = useRef<Set<string>>(new Set());
+  // 所有写库请求串行化。删除会先等前面的 PUT 落地再发 DELETE，避免旧的
+  // PUT 晚于 DELETE 到达服务端，把删掉的会话“复活”。
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const saveConversation = useCallback((meta: ConvMeta, snapshot: ChatMsg[]) => {
+    if (deletedIds.current.has(meta.id)) return Promise.resolve(false);
+    const p = saveChain.current.then(() => {
+      if (deletedIds.current.has(meta.id)) return false;
+      return persistConversation(meta, snapshot);
+    });
+    saveChain.current = p.catch(() => false);
+    return p;
+  }, []);
   const participants = useMemo(() => {
     const ids = activeMeta?.participants ?? [];
     return ids.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => Boolean(a));
@@ -217,41 +298,56 @@ export function ChatWorkbench({ className }: { className?: string }) {
   const busyCount = busyAgents.size;
 
   const patchMeta = useCallback((id: string, patch: (m: ConvMeta) => ConvMeta) => {
-    setIndex((prev) => {
-      const next = prev.map((m) => (m.id === id ? patch(m) : m));
-      saveIndex(next);
-      return next;
-    });
-  }, []);
+    const cur = id === activeMetaRef.current?.id
+      ? activeMetaRef.current
+      : indexRef.current.find((m) => m.id === id);
+    if (!cur) return;
+    const next = patch(cur);
+    setIndex((prev) => prev.map((m) => (m.id === id ? next : m)));
+    // 参与者的变化也要落库；但正文没载入时不能写（会把服务端记录清空）。
+    // 元数据会先在本地更新，等正文载入后的首次保存自然带上新参与者。
+    if (id === activeIdRef.current && loadedIds.current.has(id)) void saveConversation(next, messagesRef.current);
+  }, [saveConversation]);
 
-  // ── 初始化：读索引 + 迁移旧记录；没有对话时等 agent 列表到了再建 ──
+  // ── 初始化：先从服务端拉列表（顺带一次性导入旧 localStorage 记录），
+  //    再打开上次那段（或最新一段）。没有对话时等 agent 列表到了再建。 ──
   useEffect(() => {
-    const list = loadIndex();
-    const migrated = migrateLegacy();
-    if (migrated) {
-      writeConv(migrated.meta.id, migrated.messages);
-      const next = [migrated.meta, ...list];
-      saveIndex(next);
-      setIndex(next);
-      setActiveId(migrated.meta.id);
-      setMessages(migrated.messages);
-      try { localStorage.setItem(ACTIVE_KEY, migrated.meta.id); } catch {}
-      msgID.current = Math.max(0, ...migrated.messages.map((m) => m.id)) + 1;
+    let cancelled = false;
+    loadingConv.current = true;
+    (async () => {
+      await importLegacyHistoryOnce();
+      let list: ConvMeta[] = [];
+      try {
+        const res = await listChatConversations();
+        list = (res.conversations ?? []).map(toMeta).slice(0, MAX_CONVS);
+      } catch {
+        // 服务端不可用：保持空历史，不清任何本地数据（下次启动重试导入）。
+      }
+      if (cancelled) return;
+      setIndex(list);
+      const last = (() => {
+        try { return localStorage.getItem(ACTIVE_KEY); } catch { return null; }
+      })();
+      const chosen = list.find((m) => m.id === last) ?? list[0] ?? null;
+      if (chosen) {
+        setActiveId(chosen.id);
+        try {
+          const conv = await getChatConversation(chosen.id);
+          // 加载期间用户可能已经切到别的一段：只把结果交给仍处于激活状态的会话，
+          // 否则旧会话的正文会被挂到新会话下，并在下一次保存时写错记录。
+          if (cancelled || activeIdRef.current !== chosen.id) return;
+          const msgs = ((conv.messages ?? []) as ChatMsg[]).filter((m) => m && typeof m.text === "string");
+          setMessages(msgs);
+          loadedIds.current.add(chosen.id);
+          msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
+        } catch {
+          // 列表有元数据但正文拉取失败：先留空，稍后切走再切回来会重试。
+        }
+      }
+      loadingConv.current = false;
       setHydrated(true);
-      return;
-    }
-    setIndex(list);
-    const last = (() => {
-      try { return localStorage.getItem(ACTIVE_KEY); } catch { return null; }
     })();
-    const chosen = list.find((m) => m.id === last) ?? list[0] ?? null;
-    if (chosen) {
-      setActiveId(chosen.id);
-      const msgs = readConv(chosen.id);
-      setMessages(msgs);
-      msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
-    }
-    setHydrated(true);
+    return () => { cancelled = true; };
   }, []);
 
   // 技能库只拉一次。
@@ -270,6 +366,15 @@ export function ChatWorkbench({ className }: { className?: string }) {
 
   const createConversation = useCallback(
     (participantList: string[], title = NEW_TITLE): ConvMeta => {
+      // 切到新对话前先把上一段未去抖的修改写掉，否则最后几条消息会丢。
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      const prevMeta = activeMetaRef.current;
+      if (prevMeta && loadedIds.current.has(prevMeta.id)) {
+        void saveConversation(prevMeta, messagesRef.current);
+      }
       const now = Date.now();
       const meta: ConvMeta = {
         id: newID(),
@@ -279,15 +384,13 @@ export function ChatWorkbench({ className }: { className?: string }) {
         participants: participantList,
         messageCount: 0,
       };
-      setIndex((prev) => {
-        const next = [meta, ...prev].slice(0, MAX_CONVS);
-        saveIndex(next);
-        return next;
-      });
-      writeConv(meta.id, []);
+      setIndex((prev) => [meta, ...prev].slice(0, MAX_CONVS));
+      // 先落一行空对话：刷新页面/换浏览器后它也要在列表里。
+      void saveConversation(meta, []);
+      loadedIds.current.add(meta.id);
+      loadingConv.current = false;
       setActiveId(meta.id);
       try { localStorage.setItem(ACTIVE_KEY, meta.id); } catch {}
-      skipSave.current = true;
       setMessages([]);
       msgID.current = 1;
       setInput("");
@@ -295,7 +398,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
       setBusyAgents(new Set());
       return meta;
     },
-    []
+    [saveConversation]
   );
 
   // 首次拿到 agent 列表：没有对话就建一段，参与者默认管家（否则第一个在线 agent）。
@@ -317,27 +420,45 @@ export function ChatWorkbench({ className }: { className?: string }) {
     try { if (activeId) localStorage.setItem(ACTIVE_KEY, activeId); } catch {}
   }, [activeId]);
 
-  // 持久化当前对话：切对话时跳过第一次（避免用空数组覆盖刚读出来的记录）。
+  // 持久化当前对话到服务端。流式回复期间每条事件都会改 messages，所以
+  // 去抖 900ms：一次回复结束后只写一次，避免把存库打成每秒几十次。
   useEffect(() => {
-    if (!hydrated || !activeId) return;
-    if (skipSave.current) { skipSave.current = false; return; }
-    writeConv(activeId, messages);
+    if (!hydrated || !activeId || loadingConv.current) return;
+    const meta = activeMetaRef.current;
+    if (!meta) return;
+    // 正文尚未载入的对话不能回写（会把服务端记录清空）。
+    if (!loadedIds.current.has(activeId)) return;
     const firstUser = messages.find((m) => m.kind === "user" && m.text.trim());
-    setIndex((prev) => {
-      const next = prev.map((m) =>
-        m.id === activeId
-          ? {
-              ...m,
-              messageCount: messages.length,
-              updatedAt: Date.now(),
-              title: m.title === NEW_TITLE && firstUser ? truncate(firstUser.text, 40) : m.title,
-            }
-          : m
-      );
-      saveIndex(next);
-      return next;
-    });
-  }, [messages, activeId, hydrated]);
+    const next: ConvMeta = {
+      ...meta,
+      messageCount: messages.length,
+      updatedAt: Date.now(),
+      title: meta.title === NEW_TITLE && firstUser ? truncate(firstUser.text, 40) : meta.title,
+    };
+    setIndex((prev) => prev.map((m) => (m.id === activeId ? next : m)));
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      const cur = activeMetaRef.current;
+      // 与保存 effect 同一套守卫：只有在正文已载入、且仍停在当前段时才写。
+      if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+        void saveConversation(cur, messagesRef.current);
+      }
+    }, 900);
+  }, [messages, activeId, hydrated, saveConversation]);
+
+  // 卸载/切页：把最后一次未去抖到期的修改补写一次。只要正文已载入就允许
+  // 写空数组——用户清空最后一段后离开，服务端也应该记住“已清空”。
+  useEffect(() => () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const cur = activeMetaRef.current;
+    if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+      void saveConversation(cur, messagesRef.current);
+    }
+  }, [saveConversation]);
 
   // 切对话 / 退出：取消在途回复并断开所有 ACP 连接，记录保留在 localStorage。
   const disconnectAll = useCallback(() => {
@@ -355,51 +476,97 @@ export function ChatWorkbench({ className }: { className?: string }) {
     }
   }, []);
 
+  // 打开某一段：正文按需从服务端拉（列表里只有元数据）。
+  const loadConversation = useCallback((id: string) => {
+    loadingConv.current = true;
+    // 在正文真正到位前，这段会话没有可写资格；否则空 messages 会被当作
+    // 最新状态覆盖服务端记录（GET 慢或失败时尤其危险）。
+    loadedIds.current.delete(id);
+    setActiveId(id);
+    setMessages([]);
+    msgID.current = 1;
+    setInput("");
+    setError("");
+    setPermQueue([]);
+    setOpenSkill(null);
+    getChatConversation(id)
+      .then((conv) => {
+        if (activeIdRef.current !== id) return;
+        const msgs = ((conv.messages ?? []) as ChatMsg[]).filter((m) => m && typeof m.text === "string");
+        setMessages(msgs);
+        loadedIds.current.add(id);
+        msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
+      })
+      .catch(() => {
+        if (activeIdRef.current === id) {
+          setError("载入这段对话失败——先别在这里输入，切换一下重试，避免覆盖服务端记录。");
+        }
+      })
+      .finally(() => {
+        if (activeIdRef.current === id) loadingConv.current = false;
+      });
+  }, []);
+
+  // 切走前先把上一段未到期的修改写掉，避免丢最后一轮。没有载入完的正文
+  // 不能写（messagesRef 还是空数组），否则会把服务端历史清空。
+  const flushPendingSave = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const cur = activeMetaRef.current;
+    if (cur && cur.id === activeIdRef.current && loadedIds.current.has(cur.id)) {
+      void saveConversation(cur, messagesRef.current);
+    }
+  }, [saveConversation]);
+
   const openConversation = useCallback(
     (id: string) => {
-      if (id === activeId) return;
+      if (id === activeIdRef.current) return;
+      flushPendingSave();
       disconnectAll();
-      skipSave.current = true;
-      setActiveId(id);
-      const msgs = readConv(id);
-      setMessages(msgs);
-      msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
-      setInput("");
-      setError("");
-      setPermQueue([]);
-      setOpenSkill(null);
+      loadConversation(id);
     },
-    [activeId, disconnectAll]
+    [disconnectAll, flushPendingSave, loadConversation]
   );
 
   const deleteConversation = useCallback(
     (id: string) => {
-      try { localStorage.removeItem(convKey(id)); } catch {}
-      setIndex((prev) => {
-        const next = prev.filter((m) => m.id !== id);
-        saveIndex(next);
-        return next;
-      });
-      if (id === activeId) {
+      // 先立墓碑：删除期间排队/在途的保存都跳过这段会话。
+      deletedIds.current.add(id);
+      loadedIds.current.delete(id);
+      setIndex((prev) => prev.filter((m) => m.id !== id));
+      if (id === activeIdRef.current) {
         disconnectAll();
-        const rest = index.filter((m) => m.id !== id);
+        if (saveTimer.current) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+        const rest = indexRef.current.filter((m) => m.id !== id);
         const nextConv = rest[0];
         if (nextConv) {
-          setActiveId(nextConv.id);
-          const msgs = readConv(nextConv.id);
-          skipSave.current = true;
-          setMessages(msgs);
-          msgID.current = Math.max(0, ...msgs.map((m) => m.id)) + 1;
+          loadConversation(nextConv.id);
         } else {
+          loadingConv.current = false;
           setActiveId(null);
-          skipSave.current = true;
           setMessages([]);
           const primary = agents.find((a) => a.type === "steward") ?? agents.find(isOnline) ?? agents[0];
           createConversation(primary ? [primary.id] : []);
         }
       }
+      // 等前面排队的保存都落地，再删服务端记录：否则旧的 PUT 可能后到，
+      // 把刚删掉的会话重新写回来（刷新后“复活”）。
+      void (async () => {
+        try {
+          await saveChain.current;
+          await deleteChatConversation(id);
+        } catch {
+          deletedIds.current.delete(id);
+          setError("删除这段对话失败——它可能还会出现在列表里，刷新后再试。");
+        }
+      })();
     },
-    [activeId, index, disconnectAll, agents, isOnline, createConversation]
+    [disconnectAll, loadConversation, agents, isOnline, createConversation]
   );
 
   const handleNewChat = useCallback(() => {
@@ -771,7 +938,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
           </div>
         </div>
         <p className="shrink-0 border-t border-line px-3 py-2 text-[10px] text-ink-3">
-          记录只存在本机浏览器 · 最近 {MAX_CONVS} 段
+          记录保存在服务端 · 换浏览器也能看到 · 最近 {MAX_CONVS} 段
         </p>
       </aside>
 
@@ -1143,7 +1310,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
       {confirmClear && (
         <ConfirmDialog
           title="清空这段对话？"
-          message="会清掉本机保存的显示记录；各 CLI 侧的真实会话不受影响，但聊天记录无法恢复。"
+          message="会清掉服务端保存的显示记录（所有浏览器都看不到了）；各 CLI 侧的真实会话不受影响，但聊天记录无法恢复。"
           onConfirm={() => {
             setMessages([]);
             setError("");
