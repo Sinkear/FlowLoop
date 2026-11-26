@@ -2308,21 +2308,22 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 	}
 	plan, perr := parseSpawnPlan(summary)
 	if perr != nil {
-		return s.spawnContractFailedTx(ctx, tx, sg, "拆解契约不满足: "+perr.Error())
+		return s.spawnContractFailedTx(ctx, tx, sg, rc, "拆解契约不满足: "+perr.Error())
 	}
 	if len(plan) > maxKids {
-		return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %d 超过上限 %d", len(plan), maxKids))
+		return s.spawnContractFailedTx(ctx, tx, sg, rc, fmt.Sprintf("拆解契约不满足: 子项 %d 超过上限 %d", len(plan), maxKids))
 	}
 	// Validate members + materialize children.
 	evs := []events.Event{}
 	childIDs := make([]string, 0, len(plan))
+	childTitles := make([]string, 0, len(plan))
 	for i, item := range plan {
 		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.Brief) == "" {
-			return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %d 缺 title 或 brief", i+1))
+			return s.spawnContractFailedTx(ctx, tx, sg, rc, fmt.Sprintf("拆解契约不满足: 子项 %d 缺 title 或 brief", i+1))
 		}
 		assignee := strings.TrimSpace(item.Assignee)
 		if assignee == "" {
-			return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %q 缺 assignee", item.Title))
+			return s.spawnContractFailedTx(ctx, tx, sg, rc, fmt.Sprintf("拆解契约不满足: 子项 %q 缺 assignee", item.Title))
 		}
 		if sg.TeamSquadID != "" {
 			var ok int
@@ -2332,10 +2333,10 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 				return nil, false, fmt.Errorf("validate child assignee: %w", err)
 			}
 			if ok == 0 {
-				return s.spawnContractFailedTx(ctx, tx, sg, fmt.Sprintf("拆解契约不满足: 子项 %q 的 assignee 不在拆解小队名册里（越界派工）", item.Title))
+				return s.spawnContractFailedTx(ctx, tx, sg, rc, fmt.Sprintf("拆解契约不满足: 子项 %q 的 assignee 不在拆解小队名册里（越界派工）", item.Title))
 			}
 		} else if assignee != sg.AssigneeID {
-			return s.spawnContractFailedTx(ctx, tx, sg, "拆解契约不满足: 无小队的拆解只能把子项派给规划者自己")
+			return s.spawnContractFailedTx(ctx, tx, sg, rc, "拆解契约不满足: 无小队的拆解只能把子项派给规划者自己")
 		}
 		child := SubGoal{
 			ID:          newID(),
@@ -2357,6 +2358,7 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 			return nil, false, fmt.Errorf("materialize spawn child %q: %w", child.Title, err)
 		}
 		childIDs = append(childIDs, sgOut.ID)
+		childTitles = append(childTitles, child.Title)
 		// Ledger the elastic fan-out (§11.4 double bookkeeping): the schema
 		// reserved node_key '<spawn_key>#<seq>' + parent_key for exactly this,
 		// but no row was ever written — so "which extra work item came from
@@ -2431,6 +2433,22 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, snap, sg.ID); err != nil {
 		return nil, false, fmt.Errorf("snapshot spawn children: %w", err)
 	}
+	// 决策 6-19: the spawn's expansion IS this node's report — a SYSTEM
+	// comment in the same transaction as the children, threaded under the
+	// dispatch comment that asked for the split. The child titles make the
+	// feed self-explanatory (no blueprint graph needed).
+	if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+		GoalID:     goalID,
+		AuthorType: "system",
+		AuthorID:   "",
+		ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+		RunID:      rc.RunID,
+		Content:    spawnNodeFeedContent(sg.Title, childTitles),
+	}); err != nil {
+		return nil, false, fmt.Errorf("insert spawn feed comment: %w", err)
+	} else {
+		evs = append(evs, commentEv)
+	}
 	logging.Infof("blueprint: spawn %s materialized %d children for goal %s", sg.ID, len(childIDs), goalID)
 	return evs, true, nil
 }
@@ -2439,7 +2457,7 @@ func (s *GoalService) resolveSpawnTx(ctx context.Context, tx *sql.Tx, sg *SubGoa
 // planner output violated the contract — the SAME semantics as the
 // failed-path (attempt bump → retry run, or terminal fail + cascade) so
 // spawn retries behave exactly like execution retries.
-func (s *GoalService) spawnContractFailedTx(ctx context.Context, tx *sql.Tx, sg *SubGoal, reason string) ([]events.Event, bool, error) {
+func (s *GoalService) spawnContractFailedTx(ctx context.Context, tx *sql.Tx, sg *SubGoal, rc goalRunContext, reason string) ([]events.Event, bool, error) {
 	logging.Warnf("blueprint: spawn %s contract violation — %s", sg.ID, reason)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE sub_goal SET execution_attempt=execution_attempt+1 WHERE id=? AND status IN ('running','done')`,
@@ -2456,6 +2474,21 @@ func (s *GoalService) spawnContractFailedTx(ctx context.Context, tx *sql.Tx, sg 
 		return nil, false, nil // raced terminal (cancelled) — nothing to retry
 	}
 	var evs []events.Event
+	// 决策 6-19: a refused planner contract is a SYSTEM event — the platform
+	// rejected the plan, the planner did not report a success. Same attempt
+	// information as the failed path.
+	if _, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+		GoalID:     sg.GoalID,
+		AuthorType: "system",
+		AuthorID:   "",
+		ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+		RunID:      rc.RunID,
+		Content:    spawnFailedNodeFeedContent(rc, sg.Title, attempt, attempt < maxExecutionAttempts, reason),
+	}); err != nil {
+		return nil, false, fmt.Errorf("insert spawn failure comment: %w", err)
+	} else {
+		evs = append(evs, commentEv)
+	}
 	if attempt < maxExecutionAttempts {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE sub_goal SET status='running' WHERE id=?`, sg.ID); err != nil {
@@ -2762,11 +2795,25 @@ func (s *GoalService) resolveRouterTx(ctx context.Context, tx *sql.Tx, sg *SubGo
 		now()); err != nil {
 		return nil, false, fmt.Errorf("insert router verification_result: %w", err)
 	}
+	// 决策 6-19: the machine routing decision is a platform event in the
+	// feed (SYSTEM voice), same transaction as the promotion.
+	_, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+		GoalID:     goalID,
+		AuthorType: "system",
+		AuthorID:   "",
+		ParentID:   subGoalFeedParentTx(ctx, tx, sg.ID),
+		RunID:      rc.RunID,
+		Content:    routerNodeFeedContent(sg.Title, nodeKey, chosen, raw, fallbackUsed),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("insert router feed comment: %w", err)
+	}
 	logging.Infof("blueprint: router %s chose %q (fallback=%t) for goal %s", nodeKey, chosen, fallbackUsed, goalID)
 	wakeEvs, err := s.wakeDependentsTx(ctx, tx, goalID, sg.ID)
 	if err != nil {
 		return nil, false, err
 	}
+	wakeEvs = append(wakeEvs, commentEv)
 	return wakeEvs, true, nil
 }
 
@@ -2846,19 +2893,36 @@ func (s *GoalService) ResolveBlueprintGate(ctx context.Context, goalID, nodeKey,
 		`UPDATE blueprint_node SET resolved_config=? WHERE sub_goal_id=?`, merged, sgID); err != nil {
 		return fmt.Errorf("snapshot gate decision: %w", err)
 	}
-	// A decision record the workflow graph can show as the gate's verify.
+	// A decision record the workflow graph can show as the gate's verify. The
+	// authority is rendered from the SAME label the feed comment uses, so the
+	// graph's audit row and the feed never disagree (human / auto rule /
+	// timeout sweep).
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO verification_result (id,goal_id,sub_goal_id,verifier_run_id,status,summary,evidence,created_at) VALUES (?,?,?,'','passed',?,?,?)`,
 		newID(), goalID, sgID,
-		fmt.Sprintf("人工决策：%s（%s）", action, reason),
+		fmt.Sprintf("%s：%s（%s）", gateDecisionLabel(decidedBy), action, reason),
 		fmt.Sprintf("gate decision by %s (node %s, action %s)", decidedBy, nodeKey, action),
 		now()); err != nil {
 		return fmt.Errorf("insert gate verification_result: %w", err)
+	}
+	// 决策 6-19: the gate decision is a SYSTEM comment in the same
+	// transaction — the feed must name the deciding authority (human, auto
+	// rule, or timeout sweep) instead of silently changing the graph.
+	_, commentEv, err := insertNodeCommentTx(ctx, tx, Comment{
+		GoalID:     goalID,
+		AuthorType: "system",
+		AuthorID:   "",
+		ParentID:   subGoalFeedParentTx(ctx, tx, sgID),
+		Content:    gateNodeFeedContent(nodeKey, action, reason, decidedBy),
+	})
+	if err != nil {
+		return fmt.Errorf("insert gate feed comment: %w", err)
 	}
 	wakeEvs, err := s.wakeDependentsTx(ctx, tx, goalID, sgID)
 	if err != nil {
 		return err
 	}
+	wakeEvs = append(wakeEvs, commentEv)
 	if err := tx.Commit(); err != nil {
 		return err
 	}

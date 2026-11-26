@@ -93,7 +93,7 @@ export function Nav() {
   const recentProjects = (domains ?? []).slice(0, 3);
 
   return (
-    <nav className="sticky top-0 z-50 flex h-12 w-full shrink-0 items-center border-b border-line bg-surface-1/95 backdrop-blur md:h-screen md:w-60 md:flex-col md:items-stretch md:border-b-0 md:border-r md:p-3">
+    <nav className="sticky top-0 z-50 flex h-12 w-full shrink-0 items-center border-b border-line bg-surface-1/95 backdrop-blur md:h-screen md:w-60 md:flex-col md:items-stretch md:overflow-y-auto md:border-b-0 md:border-r md:p-3">
       <div className="flex w-full items-center gap-2 px-3 md:hidden">
         <Link href="/" className="flex min-w-0 items-center gap-2">
           <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />

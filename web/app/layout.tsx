@@ -43,6 +43,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
+      {/* h-dvh 定高：app shell 的滚动发生在 <main> 内部，页面里的
+          `h-full` / `min-h-0` 才有确定的父高度。此前 body 只有
+          min-h-full，高度由内容撑开，`PageBody full` 的全屏工作台
+          （goal 详情、chat）会退化成"整页跟着内容变长"。 */}
       <body className="flex h-dvh flex-col overflow-hidden bg-surface-0 md:flex-row">
         <Providers>
           <CreateDialogProvider>
