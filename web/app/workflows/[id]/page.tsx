@@ -7,6 +7,7 @@ import { Button, ConfirmDialog, Dialog, Field, PageBody, Skeleton, inputCls } fr
 import {
   useBlueprint,
   useBlueprintGraph,
+  useBlueprintProposals,
   useDeleteBlueprint,
   useDeleteBlueprintVersion,
   useNewBlueprintDraft,
@@ -30,7 +31,8 @@ function mutError(e: unknown): string {
 }
 
 /**
- * 工作流详情：首屏 = 规范图 + 一个明确动作；版本、提案、A/B、JSON 依次降级。
+ * 工作流详情：规范图 / 版本 / JSON 合并为一个「规范」分区，切换版本时图和原文一起变；
+ * 复盘、提案、A/B 作为次级页签。
  */
 export default function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -39,6 +41,9 @@ export default function WorkflowDetailPage() {
 
   const { data: detail, isLoading, isError, error, refetch } = useBlueprint(id);
   const { data: squads } = useSquads();
+  const proposals = useBlueprintProposals(id);
+  const proposalList = proposals.data?.proposals ?? [];
+  const pendingProposalCount = proposalList.filter((proposal) => proposal.status === "pending").length;
   const versions = useMemo(
     () => [...(detail?.versions ?? [])].sort((a, b) => b.version - a.version),
     [detail?.versions],
@@ -176,37 +181,39 @@ export default function WorkflowDetailPage() {
           <WorkflowTabs
             value={tab}
             onChange={setTab}
-            versionCount={versions.length}
-            showJson={!!selected}
+            proposalCount={proposalList.length}
+            pendingProposalCount={pendingProposalCount}
           />
 
           {tab === "spec" && (
-            <WorkflowGraphPanel
-              versions={versions}
-              selectedId={effectiveVersionId}
-              selected={selected}
-              onSelect={setSelectedVersionId}
-              graph={graph.data}
-              loading={graph.isLoading}
-              error={graphError}
-              onEditStructure={() => setEditorOpen(true)}
-              onCreateDraft={openNewDraft}
-            />
-          )}
-
-          {tab === "versions" && (
-            <WorkflowVersions
-              versions={versions}
-              selectedId={effectiveVersionId}
-              selected={selected}
-              squadId={squadId}
-              onSelect={setSelectedVersionId}
-              onEditStructure={() => setEditorOpen(true)}
-              onPublish={openPublish}
-              onDeleteDraft={() => selected && openDeleteVersion(selected.id)}
-              onNewDraft={openNewDraft}
-              onCreateTask={() => selected && open("task", { blueprintVersionId: selected.id })}
-            />
+            <div className="space-y-5">
+              <WorkflowGraphPanel
+                versions={versions}
+                selectedId={effectiveVersionId}
+                selected={selected}
+                onSelect={setSelectedVersionId}
+                graph={graph.data}
+                loading={graph.isLoading}
+                error={graphError}
+                onEditStructure={() => setEditorOpen(true)}
+                onCreateDraft={openNewDraft}
+              />
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+                <WorkflowVersions
+                  versions={versions}
+                  selectedId={effectiveVersionId}
+                  selected={selected}
+                  squadId={squadId}
+                  onSelect={setSelectedVersionId}
+                  onEditStructure={() => setEditorOpen(true)}
+                  onPublish={openPublish}
+                  onDeleteDraft={() => selected && openDeleteVersion(selected.id)}
+                  onNewDraft={openNewDraft}
+                  onCreateTask={() => selected && open("task", { blueprintVersionId: selected.id })}
+                />
+                {selected && <WorkflowJsonCard content={prettyContent} />}
+              </div>
+            </div>
           )}
 
           {tab === "reviews" && <SquadReviews blueprintId={id} />}
@@ -216,14 +223,12 @@ export default function WorkflowDetailPage() {
               blueprintId={id}
               onDraftCreated={(versionId) => {
                 setSelectedVersionId(versionId);
-                setTab("versions");
+                setTab("spec");
               }}
             />
           )}
 
           {tab === "ab" && <WorkflowAB blueprintId={id} />}
-
-          {tab === "json" && selected && <WorkflowJsonCard content={prettyContent} />}
         </>
       )}
 
