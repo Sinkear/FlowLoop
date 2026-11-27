@@ -349,15 +349,17 @@ function GoalDetailPageInner() {
         </SectionCard>
       )}
 
-      {/* ── 主体：左对话（固定高度、内部自滚）+ 右上下文栏。
-          1280 以下右栏会挤压对话列，所以并排只在 xl 生效；对话行内容
-          宽度由 goal-comments 内部 max-w 控制，不受页面宽度影响。 */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+      {/* ── 主体：左对话（主要宽度）+ 右上下文栏（只留一小条）。
+          并排从 1024（lg）就开始：用户期望的标准版式就是「上编排、
+          左会话主宽、右上下文一小栏」；再窄才退化为上下堆叠。 */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
         {/* 固定尺寸的对话面板：整页滚动时它不跟着变高，比原来一屏式的
             68vh 再收一点，读长对话靠面板内部滚。 */}
         <div className="flex h-[440px] flex-col">
           <GoalComments goalId={id} className="min-h-0" />
         </div>
+        {/* 并排时右栏与对话面板等高（440px），内容在栏内自滚，
+            不再垂成 2000px 的长条把页面拖长；堆叠态（<lg）恢复自然高度。 */}
         <GoalContextRail
           goal={goal}
           goalId={id}
@@ -373,6 +375,7 @@ function GoalDetailPageInner() {
           }
           tab={railTab}
           onTabChange={setRailTab}
+          className="lg:h-[440px]"
         />
       </div>
     </PageBody>
