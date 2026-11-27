@@ -21,7 +21,11 @@ import {
 } from "@/components/training/format";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { cn } from "@/lib/utils";
-import type { BlueprintProposalDiff, WorkflowGraph } from "@/lib/types";
+import type {
+  DiffNode,
+  StructuredGraphDiff,
+  WorkflowGraph,
+} from "@/lib/types";
 
 // A/B 指标的中文名（§13.1：verify_pass_rate 已落地；cost_per_success 仍诚实缺席）。
 // 键顺序＝后端 ABMetricKeys 的展示顺序，页面不再依赖 deltas map 的遍历顺序。
@@ -166,7 +170,15 @@ function edgeKindLabel(edges: WorkflowGraph["edges"], key: string): string {
   return edge ? EDGE_KIND_LABEL[edge.kind] ?? "边" : "边";
 }
 
-export function ProposalDiffChanges({ diff }: { diff: BlueprintProposalDiff }) {
+export function ProposalDiffChanges({
+  diff,
+  emptyText = "补丁没有增删改任何节点或边——改动后的规范图与改动前一致。",
+}: {
+  /** 提案 diff 与版本 diff 共用的结构化变更子集（StructuredGraphDiff）。 */
+  diff: StructuredGraphDiff;
+  /** 没有任何增删改时的占位文案；版本对比与提案补丁的语境不同，各自传。 */
+  emptyText?: string;
+}) {
   const groups: DiffChangeGroup[] = [
     {
       key: "nodes_added",
@@ -211,7 +223,7 @@ export function ProposalDiffChanges({ diff }: { diff: BlueprintProposalDiff }) {
   if (groups.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-line bg-surface-2/20 px-3 py-2 text-xs text-ink-3">
-        补丁没有增删改任何节点或边——改动后的规范图与改动前一致。
+        {emptyText}
       </p>
     );
   }
@@ -249,6 +261,161 @@ export function ProposalDiffChanges({ diff }: { diff: BlueprintProposalDiff }) {
           </ul>
         </section>
       ))}
+    </div>
+  );
+}
+
+// ── nodes_changed 的字段级渲染（issue #31 P1）──
+// base/patched 是整节点 map（SpecNode 序列化：顶层 id/type/title + 按 kind 一
+// 段嵌套 task:{assignee,brief} / condition / router / gate / spawn / end）。
+// 重点字段 assignee/title/brief 都在两层以内，所以按叶子路径展开到「两侧同
+// 为对象」为止，取两侧键并集逐叶比对；两侧结构不一致（一侧对象一侧标量）
+// 或三层以上的值就整体 JSON 文本比，务实够用。
+
+const NODE_FIELD_LABELS: Record<string, string> = {
+  id: "ID",
+  type: "类型",
+  title: "标题",
+  assignee: "负责人",
+  brief: "简报",
+  mode: "验证方式",
+  verifier: "验证人",
+  outcome: "结局",
+  expr: "表达式",
+  else: "否则分支",
+  timeout_after: "超时时长",
+  timeout_action: "超时动作",
+  max_children: "子项上限",
+};
+
+type FieldRow = { path: string; base: unknown; patched: unknown };
+
+/** path 形如 "title" / "task.assignee"——叶子段查中文标签，父段留作上下文。 */
+function fieldLabel(path: string): string {
+  const segs = path.split(".");
+  const leaf = segs[segs.length - 1];
+  const label = NODE_FIELD_LABELS[leaf] ?? leaf;
+  return segs.length > 1 ? `${label}（${segs.slice(0, -1).join(".")}）` : label;
+}
+
+function jsonEq(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function leafRows(path: string, b: unknown, p: unknown, out: FieldRow[]) {
+  const bObj = b !== null && typeof b === "object";
+  const pObj = p !== null && typeof p === "object";
+  if (bObj && pObj) {
+    const bRec = b as Record<string, unknown>;
+    const pRec = p as Record<string, unknown>;
+    for (const k of new Set([...Object.keys(bRec), ...Object.keys(pRec)])) {
+      leafRows(`${path}.${k}`, bRec[k], pRec[k], out);
+    }
+    return;
+  }
+  if (!jsonEq(b, p)) out.push({ path, base: b, patched: p });
+}
+
+/** 一个节点的键并集 → { 变化叶子行, 未变叶子键 }；变化行按路径排序稳定输出。 */
+function nodeFieldRows(n: DiffNode): { changed: FieldRow[]; sameKeys: string[] } {
+  const changed: FieldRow[] = [];
+  const same = new Set<string>();
+  const bRec = n.base as Record<string, unknown>;
+  const pRec = n.patched as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(bRec), ...Object.keys(pRec)])) {
+    const before = changed.length;
+    leafRows(k, bRec[k], pRec[k], changed);
+    if (changed.length === before) same.add(k);
+  }
+  changed.sort((a, b) => a.path.localeCompare(b.path));
+  return { changed, sameKeys: [...same].sort() };
+}
+
+function fmtLeaf(v: unknown): string {
+  if (v === undefined) return "（无）";
+  if (v === null) return "（空）";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+// 长文本（brief 等）竖排两块 pre：旧值红调、新值绿调，保留换行。短值内联一行。
+const LONG_TEXT = 48;
+
+function LeafValue({ v, tone }: { v: unknown; tone: "old" | "new" }) {
+  const text = fmtLeaf(v);
+  const cls =
+    tone === "old"
+      ? "border-red-500/25 bg-red-500/[0.06] text-red-300"
+      : "border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300";
+  if (text.length > LONG_TEXT || text.includes("\n")) {
+    return (
+      <pre
+        className={cn(
+          "max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-[11px] leading-relaxed",
+          cls
+        )}
+      >
+        {text}
+      </pre>
+    );
+  }
+  return (
+    <span className={cn("rounded border px-1.5 py-px font-mono text-[11px]", cls)}>{text}</span>
+  );
+}
+
+/**
+ * 字段级变更表：每个 nodes_changed 节点一张小卡（节点类型 + id + 变化数），
+ * 卡内逐字段「旧值 → 新值」；未变字段收成一行灰字，证明并集遍历过而非漏看。
+ */
+export function NodeFieldChanges({ nodes }: { nodes: DiffNode[] }) {
+  if (nodes.length === 0) return null;
+  return (
+    <div className="space-y-2.5">
+      {nodes.map((n) => {
+        const meta = nodeKindMeta(n.kind);
+        const { changed, sameKeys } = nodeFieldRows(n);
+        return (
+          <div key={n.id} className="overflow-hidden rounded-lg border border-line">
+            <div className="flex flex-wrap items-center gap-2 bg-surface-2/40 px-3 py-1.5 text-[11px]">
+              <span className={cn("rounded border px-1.5 py-px text-[10px]", meta.badge)}>
+                {meta.label}
+              </span>
+              <span className="font-mono tabular-nums text-ink-2" title={n.id}>
+                {n.id}
+              </span>
+              <span className="ml-auto font-mono tabular-nums text-ink-3">
+                {changed.length} 项变化
+              </span>
+            </div>
+            {changed.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-ink-3">
+                没有可比对的字段级差异（两侧仅结构不同）。
+              </p>
+            ) : (
+              <ul className="divide-y divide-line/60">
+                {changed.map((r) => (
+                  <li key={r.path} className="px-3 py-2">
+                    <div className="text-[11px] font-medium text-ink-2">{fieldLabel(r.path)}</div>
+                    <div className="mt-1.5 grid items-start gap-1.5 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                      <LeafValue v={r.base} tone="old" />
+                      <span className="pt-0.5 text-ink-3" aria-hidden>
+                        →
+                      </span>
+                      <LeafValue v={r.patched} tone="new" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {sameKeys.length > 0 && (
+              <div className="border-t border-line/60 px-3 py-1.5 text-[10px] text-ink-3">
+                未变字段：{sameKeys.map(fieldLabel).join("、")}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

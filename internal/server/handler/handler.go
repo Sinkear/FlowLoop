@@ -165,6 +165,10 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /blueprint-versions/{versionId}", h.deleteBlueprintVersion)
 	mux.HandleFunc("POST /blueprint-versions/{versionId}/publish", h.publishBlueprintVersion)
 	mux.HandleFunc("GET /blueprint-versions/{versionId}/graph", h.blueprintVersionGraph)
+	// P1 (issue #31): version-to-version structured diff so field-level
+	// changes (assignee/brief) between versions are reviewable instead of
+	// eyeballing two topology canvases side by side.
+	mux.HandleFunc("GET /blueprint-versions/{versionId}/diff/{targetVersionId}", h.blueprintVersionDiff)
 	// Phase C (proposal §12): patch proposals + diff + same-issue A/B.
 	mux.HandleFunc("GET /blueprints/{id}/proposals", h.listBlueprintProposals)
 	mux.HandleFunc("POST /blueprints/{id}/proposals", h.createBlueprintProposal)

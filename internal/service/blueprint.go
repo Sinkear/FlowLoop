@@ -3734,6 +3734,17 @@ func (s *BlueprintService) ListProposals(ctx context.Context, blueprintID string
 // ApproveProposal applies the patches (re-validated, fail-closed on drift) and
 // opens a NEW DRAFT version with changelog = hypothesis. Publishing stays a
 // separate human act — 「提案不自动应用」原则原样保留.
+//
+// P2 (issue #31): the replay base no longer has to be the proposal's own
+// base_version_id. When a sibling proposal landed a newer version first
+// (approved while this one sat pending on the same base), replaying against
+// the stale base would silently DROP the sibling's edits the moment this
+// draft is published — the 11-26 incident: v2 carried the wrong_assignee
+// reassignment, v3 forked from v1 and buried it. Now approve replays the
+// patches against the blueprint's LATEST version content (auto-rebase), and
+// the changelog records the rebase so the reviewer can see the draft carries
+// both changes. A patch that no longer applies to the newer content fails
+// closed as a conflict instead of silently dropping edits.
 func (s *BlueprintService) ApproveProposal(ctx context.Context, proposalID, decidedByType, decidedByID string) (*BlueprintProposal, *BlueprintVersion, error) {
 	p, err := s.getProposal(ctx, proposalID)
 	if err != nil {
@@ -3746,8 +3757,29 @@ func (s *BlueprintService) ApproveProposal(ctx context.Context, proposalID, deci
 	if err != nil {
 		return nil, nil, err
 	}
-	content, _, err := s.patchedContent(ctx, base, p.Patches)
+	// Auto-rebase: find the blueprint's newest version (draft or published) —
+	// a sibling proposal approved after this one was drafted may have opened
+	// v(N+1) already. The P2 fix replays THIS proposal's patches on top of
+	// that latest content instead of the stale base.
+	replay := base
+	var rebaseNote string
+	var latest BlueprintVersion
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT id,blueprint_id,version,content,content_hash,status,changelog,created_at FROM blueprint_version
+		 WHERE blueprint_id=? ORDER BY version DESC LIMIT 1`, p.BlueprintID).
+		Scan(&latest.ID, &latest.BlueprintID, &latest.Version, &latest.Content, &latest.ContentHash, &latest.Status, &latest.Changelog, &latest.CreatedAt); err != nil {
+		return nil, nil, fmt.Errorf("load latest version for rebase check: %w", err)
+	}
+	if latest.ID != base.ID {
+		replay = &latest
+		rebaseNote = fmt.Sprintf("（rebase：基于 v%d，已合并到最新 v%d 上）", base.Version, latest.Version)
+		logging.Infof("blueprint: approve %q auto-rebased from v%d onto v%d", p.Title, base.Version, latest.Version)
+	}
+	content, _, err := s.patchedContent(ctx, replay, p.Patches)
 	if err != nil {
+		if latest.ID != base.ID {
+			return nil, nil, NewConflictError(fmt.Sprintf("提案基于 v%d，但蓝本最新版本已是 v%d，补丁在最新内容上校验失败（%v）——请退回重新分析或人工合并", base.Version, latest.Version, err))
+		}
 		return nil, nil, fmt.Errorf("re-validate patch on approve (base may have drifted): %w", err)
 	}
 
@@ -3768,7 +3800,7 @@ func (s *BlueprintService) ApproveProposal(ctx context.Context, proposalID, deci
 		Content:     content,
 		ContentHash: hashContent(content),
 		Status:      "draft",
-		Changelog:   p.Hypothesis, // §12.1: changelog = hypothesis
+		Changelog:   p.Hypothesis + rebaseNote, // §12.1: changelog = hypothesis (+ rebase provenance, P2)
 		CreatedAt:   now(),
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -3925,6 +3957,127 @@ func (s *BlueprintService) ProposalDiff(ctx context.Context, proposalID string) 
 	}
 	for k := range baseEdges {
 		if !patchedEdges[k] {
+			d.EdgesRemoved = append(d.EdgesRemoved, k)
+		}
+	}
+	sort.Strings(d.NodesAdded)
+	sort.Strings(d.NodesRemoved)
+	sort.Strings(d.EdgesAdded)
+	sort.Strings(d.EdgesRemoved)
+	return d, nil
+}
+
+// BlueprintVersionDiff (P1, issue #31): the structured diff between two
+// PUBLISHED-or-draft versions of the same blueprint. 11-26 postmortem: v2
+// (assignee reassignments) was silently buried by v3 (forked from v1), and
+// the version list could only show two topology canvases side by side —
+// the assignee/brief field changes that mattered were INVISIBLE, so nobody
+// caught the burial before publishing. Same DiffNode shape as ProposalDiff
+// so the frontend renders both with one component.
+type BlueprintVersionDiff struct {
+	BaseVersionID   string         `json:"base_version_id"`
+	TargetVersionID string         `json:"target_version_id"`
+	Base            *WorkflowGraph `json:"base"`
+	Patched         *WorkflowGraph `json:"patched"`
+	ChangelogBase   string         `json:"changelog_base"`
+	ChangelogTarget string         `json:"changelog_target"`
+	NodesAdded      []string       `json:"nodes_added"`
+	NodesRemoved    []string       `json:"nodes_removed"`
+	NodesChanged    []DiffNode     `json:"nodes_changed"`
+	EdgesAdded      []string       `json:"edges_added"`
+	EdgesRemoved    []string       `json:"edges_removed"`
+}
+
+// VersionDiff diffs two versions of the SAME blueprint. Either direction is
+// allowed; "base" is whichever version the caller names first. Versions from
+// different blueprints are refused — a cross-blueprint diff compares specs
+// that never shared history and produces noise, not a reviewable change.
+func (s *BlueprintService) VersionDiff(ctx context.Context, baseVersionID, targetVersionID string) (*BlueprintVersionDiff, error) {
+	if baseVersionID == targetVersionID {
+		return nil, NewValidationError("不能对比同一版本")
+	}
+	base, err := s.getVersion(ctx, baseVersionID)
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.getVersion(ctx, targetVersionID)
+	if err != nil {
+		return nil, err
+	}
+	if base.BlueprintID != target.BlueprintID {
+		return nil, NewValidationError("两个版本不属于同一蓝本")
+	}
+	baseG, err := parseSpecContent(base)
+	if err != nil {
+		return nil, err
+	}
+	targetG, err := parseSpecContent(target)
+	if err != nil {
+		return nil, err
+	}
+
+	d := &BlueprintVersionDiff{
+		BaseVersionID:   base.ID,
+		TargetVersionID: target.ID,
+		Base:            specGraphToWorkflow(base.ID, baseG),
+		Patched:         specGraphToWorkflow(target.ID, targetG),
+		ChangelogBase:   base.Changelog,
+		ChangelogTarget: target.Changelog,
+		NodesAdded:      []string{},
+		NodesRemoved:    []string{},
+		NodesChanged:    []DiffNode{},
+		EdgesAdded:      []string{},
+		EdgesRemoved:    []string{},
+	}
+	baseNodes := map[string]SpecNode{}
+	for _, n := range baseG.Nodes {
+		baseNodes[n.ID] = n
+	}
+	targetNodes := map[string]SpecNode{}
+	for _, n := range targetG.Nodes {
+		targetNodes[n.ID] = n
+	}
+	for _, n := range targetG.Nodes {
+		if _, ok := baseNodes[n.ID]; !ok {
+			d.NodesAdded = append(d.NodesAdded, n.ID)
+		}
+	}
+	for _, n := range baseG.Nodes {
+		if _, ok := targetNodes[n.ID]; !ok {
+			d.NodesRemoved = append(d.NodesRemoved, n.ID)
+		}
+	}
+	for _, b := range baseG.Nodes {
+		tn, ok := targetNodes[b.ID]
+		if !ok {
+			continue
+		}
+		bj := mustMarshalSpec(&SpecGraph{Nodes: []SpecNode{b}})
+		pj := mustMarshalSpec(&SpecGraph{Nodes: []SpecNode{tn}})
+		if bj != pj {
+			d.NodesChanged = append(d.NodesChanged, DiffNode{
+				ID:      b.ID,
+				Kind:    b.Type,
+				Base:    jsonMapOf(b),
+				Patched: jsonMapOf(tn),
+			})
+		}
+	}
+	baseEdges := map[string]bool{}
+	for _, e := range baseG.Edges {
+		baseEdges[edgeKey(e)] = true
+	}
+	targetEdges := map[string]bool{}
+	for _, e := range targetG.Edges {
+		targetEdges[edgeKey(e)] = true
+	}
+	for k := range targetEdges {
+		if !baseEdges[k] {
+			d.EdgesAdded = append(d.EdgesAdded, k)
+		}
+	}
+	for k := range baseEdges {
+		if !targetEdges[k] {
 			d.EdgesRemoved = append(d.EdgesRemoved, k)
 		}
 	}
