@@ -134,9 +134,11 @@ export function ChatMessage({
 
       <div
         className={cn(
-          // 窄屏收窄到 70%，给气泡右侧的 hover「回复」留出空间，避免
-          // 绝对定位的动作溢出滚动容器、把面板顶出横向滚动条。
-          "flex min-w-0 max-w-[70%] flex-col sm:max-w-[78%]",
+          // 气泡上限：桌面 86%（对话列已放宽到 max-w-4xl，行内容 ~850px，
+          // 气泡 ~730px，回复按钮 54px 放在气泡侧边的剩余空间里）；
+          // 窄屏压回 78%，给绝对定位的 hover「回复」留出空间，避免动作
+          // 溢出滚动容器、把面板顶出横向滚动条。
+          "flex min-w-0 max-w-[78%] flex-col sm:max-w-[86%]",
           isHuman ? "items-end" : "items-start"
         )}
       >

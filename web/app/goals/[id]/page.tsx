@@ -26,7 +26,9 @@ import type { Goal, HeldGate } from "@/lib/types";
 //
 // 高度约定与 chat-workbench.tsx 一致：页面用 PageBody full 撑满，主体 grid
 // 是 flex-1 + min-h-0，两列各自 min-h-0 并把滚动交给子组件。移动端
-// （<lg）取消整页定高、对话给 62vh，右栏在下方自然展开。
+// （<lg）取消整页定高、对话给 68vh，右栏在下方自然展开。
+// 宽度：对话工作台是“驾驶舱”型页面，不用全站统一的 1360 上限——
+// 大屏上放开设给对话和右栏，正文行宽由消息列自己的 max-w 控制。
 
 export default function GoalDetailPage() {
   // useSearchParams 要求 Suspense 边界。
@@ -195,7 +197,7 @@ function GoalDetailPageInner() {
     !!goal.blueprint_version_id && !!alignment?.pinned && (!alignment.materialized || deviations.length > 0);
 
   return (
-    <PageBody full className="h-full min-h-0 max-xl:h-auto space-y-2.5 py-3.5">
+    <PageBody full className="h-full min-h-0 max-xl:h-auto space-y-2.5 px-4 py-3.5 sm:px-6 xl:max-w-[1600px] 2xl:max-w-[1760px]">
       {/* ── 顶栏（shrink-0）：返回 / 标题 + 状态 / 元信息 / 操作 ── */}
       <header className="shrink-0 space-y-1.5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -325,10 +327,10 @@ function GoalDetailPageInner() {
 
       {/* ── 主体：左对话（主体）+ 右上下文栏，各自滚动 ──
           1280 以下右栏会挤压对话到 300px 出头（读不了气泡），所以并排
-          只在 xl 生效；以下纵向堆叠，对话保持 62vh 的可用高度。 */}
-      <div className="grid min-h-[460px] flex-none grid-cols-1 gap-3 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
-        {/* 移动端给对话 62vh（整页可滚），桌面端由 grid 行高撑满 */}
-        <div className="flex h-[62vh] min-h-0 flex-col xl:h-full">
+          只在 xl 生效；以下纵向堆叠，对话给足 68vh 且至少 480px 高。 */}
+      <div className="grid min-h-[520px] flex-none grid-cols-1 gap-3 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+        {/* 移动端给对话 68vh + 最小可用高度（整页可滚），桌面端由 grid 行高撑满 */}
+        <div className="flex h-[68vh] min-h-[480px] flex-col xl:h-full">
           <GoalComments goalId={id} className="min-h-0" />
         </div>
         <GoalContextRail

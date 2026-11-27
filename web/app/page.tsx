@@ -125,7 +125,9 @@ export default function WorkbenchPage() {
             label: "待我处理",
             value: attentionCount,
             tone: attentionCount ? "info" : "muted",
-            hint: attentionCount ? "人工门、待审批、失败或需要你介入" : "没有卡点",
+            hint: attentionCount
+              ? "左侧「工作台」上的红点就是这个数：在下面清单里逐条处理，清零后红点消失"
+              : "没有卡点",
           },
           {
             label: "进行中",
@@ -161,6 +163,15 @@ export default function WorkbenchPage() {
             }
             bodyClassName="p-0"
           >
+            {attentionCount > 0 && (
+              <div className="flex items-start gap-2 border-b border-line bg-red-500/[0.06] px-4 py-2 text-[11px] leading-relaxed text-red-200/90">
+                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                <span>
+                  左侧「工作台」的红点就是这里的 {attentionCount} 项：
+                  拍板人工门、审批或处理失败任务，逐条处理完后红点自动清零。
+                </span>
+              </div>
+            )}
             {attentionCount === 0 ? (
               <Empty icon={<Sparkles className="h-5 w-5" />}>
                 没有需要你处理的卡点。去项目里看看，或者给小队派一条新任务。

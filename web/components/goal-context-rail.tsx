@@ -88,7 +88,7 @@ export function GoalContextRail({
             <GoalRuns goalId={goalId} />
 
             {/* 编排：live DAG（终态复盘冻结的是同一张图的终态版本）。
-                窄栏里图自带横向/缩放滚动，卡片不设固定宽。 */}
+                窄栏里图先自动适应宽度给整图概览，细节读图点工具条「全屏」。 */}
             <SectionCard
               title="编排"
               count={workflow?.nodes?.length}
@@ -101,6 +101,7 @@ export function GoalContextRail({
                 loading={workflowLoading}
                 error={workflowError}
                 heightClass="min-h-[220px]"
+                autoFit
               />
             </SectionCard>
           </>
@@ -125,6 +126,7 @@ export function GoalContextRail({
                     variant="spec"
                     showMetrics={false}
                     heightClass="min-h-[220px]"
+                    autoFit
                   />
                 </SectionCard>
 

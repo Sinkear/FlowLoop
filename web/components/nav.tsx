@@ -8,7 +8,6 @@ import {
   FolderGit2,
   LayoutDashboard,
   LayoutTemplate,
-  ListChecks,
   Menu,
   MessageSquare,
   MessagesSquare,
@@ -27,7 +26,8 @@ import { cn } from "@/lib/utils";
 
 // 一级入口只回答“我平时在哪干活”：工作台 / 项目 / 小队 / 智能体 / 资源 / 运行环境 / 设置。
 // 智能体是公共执行者，紧跟“小队”之后；工作流不在全局导航里（它归小队）；技能、Hooks、实践库退到“资源”下；
-// IM 渠道属于运行环境的接入配置；日志压到左下角。任务板不再是首屏，而是项目、工作台和“新建任务”共同的落点。
+// IM 渠道属于运行环境的接入配置；日志压到左下角。任务板不出现在侧栏：它是项目、工作台和“新建任务”
+// 共同的落点——从工作台「待我处理 / 进行中」清单、项目页或左上角「新建」进入。
 type NavItem = {
   href: string;
   label: string;
@@ -37,7 +37,6 @@ type NavItem = {
 
 const MAIN_ITEMS: NavItem[] = [
   { href: "/", label: "工作台", icon: LayoutDashboard },
-  { href: "/goals", label: "任务", icon: ListChecks },
   { href: "/projects", label: "项目", icon: FolderGit2 },
   { href: "/squads", label: "小队", icon: Users },
   { href: "/agents", label: "智能体", icon: Bot },
@@ -131,7 +130,6 @@ export function Nav() {
             title="常用"
             items={[
               { href: "/", label: "工作台", badge: pendingAttentionCount },
-              { href: "/goals", label: "任务" },
               { href: "/projects", label: "项目" },
               { href: "/squads", label: "小队" },
               { href: "/agents", label: "智能体" },
@@ -285,7 +283,7 @@ function MobileGroup({
             className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           >
             <span>{item.label}</span>
-            {item.badge ? <span className="rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-medium leading-4 text-white">{item.badge > 99 ? "99+" : item.badge}</span> : null}
+            {item.badge ? <AttentionBadge n={item.badge} /> : null}
           </Link>
         ))}
       </div>
@@ -306,15 +304,23 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
       {active && <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-accent" />}
       <Icon className={cn("h-4 w-4 shrink-0", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")} />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
-      {badge ? (
-        <span
-          title={`${badge} 项待你处理`}
-          className="shrink-0 rounded-full bg-red-500 px-1.5 font-mono text-[10px] font-medium leading-4 text-white"
-        >
-          {badge > 99 ? "99+" : badge}
-        </span>
-      ) : null}
+      {badge ? <AttentionBadge n={badge} /> : null}
       {item.note && <span className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-3">{item.note}</span>}
     </Link>
+  );
+}
+
+// 「待我处理」计数徽标：桌面侧栏与移动菜单共用同一颗。
+// 上一版是 16px 高的红色药丸 + 10px 等宽字，在侧栏里显得大而糊；这里压到
+// 14px 高、9px 半粗数字（tabular-nums 保证位数变化时宽度不跳动），单数字
+// 保持正圆，并直接在 tooltip 里告诉用户红点在哪消费——不让他们点进来猜。
+function AttentionBadge({ n }: { n: number }) {
+  return (
+    <span
+      title={`${n} 项待你处理 —— 点开工作台，在「待我处理」清单里逐条处理即清零`}
+      className="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-semibold leading-none text-white tabular-nums"
+    >
+      {n > 99 ? "99+" : n}
+    </span>
   );
 }
