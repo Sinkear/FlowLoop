@@ -627,11 +627,25 @@ export const getBlueprintProposalDiff = (proposalId: string) =>
     `/blueprint-proposals/${proposalId}/diff`
   );
 
-export const approveBlueprintProposal = (proposalId: string) =>
-  api<{ proposal: import("./types").BlueprintProposal; draft: import("./types").BlueprintVersion }>(
-    `/blueprint-proposals/${proposalId}/approve`,
-    { method: "POST" }
+// 版本对版本 diff（issue #31 P1）：两个已存在版本的字段级对比。
+// base/target 位置不可互换——patched 恒为 target（新）版本。
+export const getBlueprintVersionDiff = (versionId: string, targetVersionId: string) =>
+  api<import("./types").BlueprintVersionDiff>(
+    `/blueprint-versions/${versionId}/diff/${targetVersionId}`
   );
+
+export const approveBlueprintProposal = (proposalId: string) =>
+  api<{
+    proposal: import("./types").BlueprintProposal;
+    draft: import("./types").BlueprintVersion;
+    // issue #31 P4：批准 RSI 提案时服务端自动创建下一轮训练 goal（backlog
+    // 未启动）。空串 = 没有创建（旧后端/非 RSI 提案）；前端读它做引导。
+    next_round_goal_id: string;
+    // 服务端附加字段（Go handler 同一响应里带出）：created=false 表示复用了
+    // 已存在的下一轮 goal（幂等）；创建失败时批准本身仍成功，错误放这里。
+    next_round_created?: boolean;
+    next_round_error?: string;
+  }>(`/blueprint-proposals/${proposalId}/approve`, { method: "POST" });
 
 export const rejectBlueprintProposal = (proposalId: string) =>
   api<import("./types").BlueprintProposal>(`/blueprint-proposals/${proposalId}/reject`, {

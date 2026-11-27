@@ -216,16 +216,63 @@ func (h *Handlers) blueprintProposalDiff(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, out, err)
 }
 
+// blueprintVersionDiff: GET /blueprint-versions/{versionId}/diff/{targetVersionId} —
+// P1 (issue #31): version-to-version structured diff. The 11-26 review could
+// only eyeball two topology canvases side by side, so v2's assignee
+// reassignments being silently buried by v3 (forked from v1) stayed
+// invisible until the postmortem. Field-level nodes_changed (same DiffNode
+// shape as the proposal diff) + changelogs of both versions.
+func (h *Handlers) blueprintVersionDiff(w http.ResponseWriter, r *http.Request) {
+	if h.Blueprint == nil {
+		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
+		return
+	}
+	out, err := h.Blueprint.VersionDiff(r.Context(), r.PathValue("versionId"), r.PathValue("targetVersionId"))
+	writeJSON(w, out, err)
+}
+
 // approveBlueprintProposal: POST /blueprint-proposals/{proposalId}/approve —
 // apply + re-validate + open a NEW DRAFT (changelog = hypothesis). Never
 // auto-publishes.
+//
+// P4 (issue #31): approving an RSI proposal now ALSO opens the next-round
+// training goal automatically — parked in BACKLOG, never started (the human
+// stays the trigger for execution). Before this the next round only existed
+// behind a separate "开始下一轮" button nobody pressed on 11-26 (v3
+// published, 0 executions, expected_metric=wall_ms down unverifiable). The
+// button stays: the auto round is idempotent (source_ref=
+// "rsi-proposal:"+id), so pressing it later returns the same goal with
+// created=false instead of stacking duplicates.
 func (h *Handlers) approveBlueprintProposal(w http.ResponseWriter, r *http.Request) {
 	if h.Blueprint == nil {
 		writeErr(w, http.StatusServiceUnavailable, service.NewValidationError("workflow service not configured"))
 		return
 	}
 	p, v, err := h.Blueprint.ApproveProposal(r.Context(), r.PathValue("proposalId"), "human", "")
-	writeJSON(w, map[string]any{"proposal": p, "draft": v}, err)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	// Always present so the web type (next_round_goal_id: string) stays
+	// honest: "" means "no next round was opened" (manual proposal, or Goal
+	// service not wired on this deployment).
+	resp := map[string]any{"proposal": p, "draft": v, "next_round_goal_id": ""}
+	// Only RSI proposals (finding-linked) have a next-round to open; a manual
+	// proposal has no origin training goal, and StartNextRoundFromProposal
+	// would fail its finding lookup — skip silently for those.
+	if h.Goal != nil && p.FindingID != "" {
+		nextGoal, created, nrErr := h.Goal.StartNextRoundFromProposal(r.Context(), p.ID, "human", "", false)
+		if nrErr != nil {
+			// The approval itself succeeded — a next-round failure is
+			// reported but must not fail the response (the reviewer can
+			// still press the idempotent button).
+			resp["next_round_error"] = nrErr.Error()
+		} else {
+			resp["next_round_goal_id"] = nextGoal.ID
+			resp["next_round_created"] = created
+		}
+	}
+	writeJSON(w, resp, nil)
 }
 
 // deleteBlueprintVersion: DELETE /blueprint-versions/{versionId} — removes a

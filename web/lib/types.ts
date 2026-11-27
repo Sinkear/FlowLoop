@@ -1240,6 +1240,31 @@ export interface BlueprintProposalDiff {
   edges_removed: string[];
 }
 
+// 版本对版本 diff（issue #31 P1）：GET
+// /blueprint-versions/{versionId}/diff/{targetVersionId}。JSON 形状复用
+// BlueprintDiff（去掉提案相关字段，多两份 changelog）；patched 字段名沿用
+// diff 组件约定，承载 target 版本的图。
+export interface BlueprintVersionDiff {
+  base_version_id: string; // 旧版本
+  target_version_id: string; // 新版本
+  base: WorkflowGraph;
+  patched: WorkflowGraph; // = 新版本图（字段名沿用 diff 组件约定）
+  nodes_added: string[];
+  nodes_removed: string[];
+  nodes_changed: DiffNode[];
+  edges_added: string[];
+  edges_removed: string[];
+  changelog_base: string;
+  changelog_target: string;
+}
+
+// BlueprintProposalDiff / BlueprintVersionDiff 共用的结构化变更子集——
+// 渲染组件只关心增删改与两张图，不关心 diff 从哪来。
+export type StructuredGraphDiff = Pick<
+  BlueprintProposalDiff,
+  "base" | "patched" | "nodes_added" | "nodes_removed" | "nodes_changed" | "edges_added" | "edges_removed"
+>;
+
 export interface ABGoalFace {
   goal_id: string;
   goal_title: string;

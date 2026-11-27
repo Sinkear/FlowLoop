@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Sinkear/flowloop/internal/events"
+	"github.com/Sinkear/flowloop/internal/logging"
 )
 
 // Structure analysis (W-RSI). Input: the assembled WorkflowGraph + entity
@@ -49,7 +50,10 @@ const (
 	ruleConsultRepeat        = 2 // ≥2 mid-execution consults for the same sub-goal
 	ruleRetryAmplification   = 3.0
 	ruleHumanWaitShare       = 0.30
-	ruleHumanWaitFloorMS     = 600000 // wait must also exceed 10 min
+	ruleHumanWaitFloorMS     = 600000  // wait must also exceed 10 min
+	ruleHumanWaitAbsoluteMS  = 3600000 // OR absolute: ≥1h of human wait fires even when a long wall dilutes the share (P5, issue #31: R2 waited 86 min but 225 min wall held the share at 27.7%)
+	ruleDispatchWaitShare    = 0.15
+	ruleDispatchWaitFloorMS  = 300000 // dispatch delay must exceed 5 min to be a signal, not noise
 )
 
 // Finding scores share one scale so the "top finding" ordering means
@@ -233,7 +237,31 @@ func (s *RSIService) Analyze(ctx context.Context, sessionID string) error {
 	// deterministic translation) is complete" signal, so a client that reacts
 	// to it must not find an empty proposal list (the blank-proposal race
 	// reported in the 2026-11-21 blueprint-self-iteration use case).
-	s.draftAutoProposals(ctx, goalID, graph, findings)
+	blocks := s.draftAutoProposals(ctx, goalID, graph, findings)
+	// P3 (issue #31): rounds after a pending round-1 proposal used to draft
+	// nothing with zero trace. The block list is the "why" — surface it on the
+	// goal feed so the human reviewer sees WHICH proposal to approve/reject
+	// instead of an empty proposal panel.
+	if len(blocks) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "🔒 本轮分析有 %d 条可执行优化建议未生成提案——待审提案占用了相关节点（或同名提案已存在）：\n", len(blocks))
+		for i, blk := range blocks {
+			switch blk.Reason {
+			case "touched":
+				fmt.Fprintf(&b, "%d. [%s]《%s》：待审提案 %s 已占用节点/边 %s\n", i+1, blk.FindingCategory, blk.ProposalTitle, blk.OwnerProposalID, blk.Key)
+			case "same-title":
+				fmt.Fprintf(&b, "%d. [%s]《%s》：同名提案 %s 已存在\n", i+1, blk.FindingCategory, blk.ProposalTitle, blk.OwnerProposalID)
+			default:
+				fmt.Fprintf(&b, "%d. [%s]《%s》：%s\n", i+1, blk.FindingCategory, blk.ProposalTitle, blk.Reason)
+			}
+		}
+		b.WriteString("请先审批或拒绝上述待审提案，下一轮分析即可继续自动转化。")
+		if _, err := s.st.DB().ExecContext(ctx,
+			`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
+			newID(), goalID, b.String(), now()); err != nil {
+			logging.Warnf("[rsi] surface translation blocks on goal %s: %v", goalID, err)
+		}
+	}
 	// 'ready' means the whole analysis pipeline settled — findings persisted
 	// AND deterministic proposals drafted. It is set after the tx (so a crash
 	// leaves the session retryable) and before the event below, so readers of
@@ -759,14 +787,17 @@ func (s *RSIService) nodeFindings(ctx context.Context, goalID string, g *Workflo
 	}
 
 	// human_wait: both final delivery reviews (gate_decision) and blueprint
-	// gate decisions (holder run windows) are human wall-clock. A share alone
-	// can fire on a tiny goal with one 2-minute review, so a 10-minute floor
-	// guards the signal.
+	// gate decisions (holder run windows) are human wall-clock. Two trigger
+	// shapes (P5, issue #31): share ≥30% (with a 10-min floor against tiny
+	// goals), OR absolute ≥1h — a 225-minute wall clock can hold the share
+	// below 30% while the humans still burned 86 minutes doing nothing.
 	humanMSv := mi(metrics, "human_wait_ms")
 	wall := mi(metrics, "wall_ms")
 	gateWait := mi(metrics, "gate_wait_ms")
 	share := mf(metrics, "human_wait_share")
-	if share >= ruleHumanWaitShare && humanMSv >= ruleHumanWaitFloorMS {
+	shareFired := share >= ruleHumanWaitShare && humanMSv >= ruleHumanWaitFloorMS
+	absFired := humanMSv >= ruleHumanWaitAbsoluteMS
+	if shareFired || absFired {
 		out = append(out, RsiFinding{
 			Category: "human_wait", Severity: "info", Confidence: "L1",
 			Title: fmt.Sprintf("人工等待占总时长 %.0f%%", 100*share),
@@ -775,9 +806,31 @@ func (s *RSIService) nodeFindings(ctx context.Context, goalID string, g *Workflo
 			Suggestion: "把高频 gate 的证据包固化成模板（结论+差异+回滚方案置顶），缩短人工判读时间；纯技术性 gate 可评估改为自动通过+事后抽查。",
 			Evidence: []string{
 				fmt.Sprintf("human_wait_ms=%d gate_wait_ms=%d wall_ms=%d share=%.2f", humanMSv, gateWait, wall, share),
+				fmt.Sprintf("trigger=%s", map[bool]string{true: "share", false: "absolute"}[shareFired]),
 			},
 			Score: ruleScore(scoreBaseInfo, share, ruleHumanWaitShare),
 		})
+	}
+
+	// dispatch_wait (P5, issue #31): pure orchestration delay — started_at
+	// minus ready_at, dependency gating excluded. It was collected
+	// (dispatch_wait_ms) and fed into lost_parallelism evidence but had NO
+	// rule of its own, so a scheduler that just dispatched late produced
+	// findings about "too many dependencies" instead of "dispatch is slow".
+	if dw := mi(metrics, "dispatch_wait_ms"); wall > 0 && dw >= ruleDispatchWaitFloorMS {
+		if dwShare := float64(dw) / float64(wall); dwShare >= ruleDispatchWaitShare {
+			out = append(out, RsiFinding{
+				Category: "dispatch_wait", Severity: "info", Confidence: "L1",
+				Title:       fmt.Sprintf("派发等待占墙钟 %.0f%%（%s）", 100*dwShare, humanMS(dw)),
+				Explanation: fmt.Sprintf("子任务就绪到开跑的派发延迟累计 %s，占墙钟 %.0f%%（墙钟 %s）。该指标不含依赖门控（dependency_wait_ms 单列）。派发慢通常来自并发队列、lane 争用或人工/系统派发节奏，而不是图结构问题。",
+					humanMS(dw), 100*dwShare, humanMS(wall)),
+				Suggestion: "检查并发派发上限与 lane 通道数：dispatch 慢而依赖不重时，提高并行认领的通道数或预派发（ready 即派发）比改图更有效。",
+				Evidence: []string{
+					fmt.Sprintf("dispatch_wait_ms=%d wall_ms=%d share=%.2f lane_count=%d", dw, wall, dwShare, mi(metrics, "lane_count")),
+				},
+				Score: ruleScore(scoreBaseInfo, dwShare, ruleDispatchWaitShare),
+			})
+		}
 	}
 	return out
 }
@@ -790,8 +843,14 @@ func (s *RSIService) nodeFindings(ctx context.Context, goalID string, g *Workflo
 func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]any {
 	// Same-domain history only: comparing a benchmark task against an
 	// unrelated goal's metrics makes L2 claims meaningless.
+	// P7 (issue #31): fault-window sessions are skipped as samples. Live:
+	// R3's analysis ran inside the 19:43-19:54 quota outage, so its
+	// dispatch_wait/wall/retry numbers describe the OUTAGE, not the
+	// blueprint — letting them into the median would shift every future
+	// comparison toward the broken window. A session whose goal had ANY
+	// non-retryable (quota/billing) failed run is marked degraded here.
 	rows, err := s.st.DB().QueryContext(ctx,
-		`SELECT rp.metrics_json FROM rsi_report rp
+		`SELECT rp.metrics_json, g.id FROM rsi_report rp
 		 JOIN training_session ts ON ts.id=rp.session_id
 		 JOIN goal g ON g.id=ts.goal_id
 		 WHERE rp.status='ready' AND rp.session_id!=?
@@ -802,13 +861,32 @@ func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]
 		return map[string]any{}
 	}
 	defer rows.Close()
-	samples := []map[string]any{}
+	// Collect BEFORE the fault filter: the in-memory test store pins ONE
+	// connection, so a nested goalHadFaultRuns query while this cursor is
+	// open would wait forever for the pool's only conn (analyze-side
+	// deadlock, seen in the round-scope test hang).
+	type sample struct {
+		metrics string
+		goalID  string
+	}
+	var collected []sample
 	for rows.Next() {
-		var mj string
-		if err := rows.Scan(&mj); err != nil {
+		var smp sample
+		if err := rows.Scan(&smp.metrics, &smp.goalID); err != nil {
 			continue
 		}
-		samples = append(samples, decodeMap(mj))
+		collected = append(collected, smp)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return map[string]any{}
+	}
+	samples := []map[string]any{}
+	for _, smp := range collected {
+		if s.goalHadFaultRuns(ctx, smp.goalID) {
+			continue
+		}
+		samples = append(samples, decodeMap(smp.metrics))
 	}
 	if len(samples) < 5 {
 		return map[string]any{}
@@ -831,6 +909,29 @@ func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]
 		}
 	}
 	return out
+}
+
+// goalHadFaultRuns reports whether the session's goal ended any run with a
+// non-retryable (quota/billing/model) failure — the marker of an execution
+// window the orchestrator itself could not run healthily in. Such sessions
+// must not donate baseline samples (P7, issue #31).
+func (s *RSIService) goalHadFaultRuns(ctx context.Context, goalID string) bool {
+	rows, err := s.st.DB().QueryContext(ctx,
+		`SELECT result_summary FROM run WHERE goal_id=? AND status='failed'`, goalID)
+	if err != nil {
+		return false // cannot tell → do not exclude (fail-open for the sample)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var summary string
+		if err := rows.Scan(&summary); err != nil {
+			continue
+		}
+		if isNonRetryable(summary) {
+			return true
+		}
+	}
+	return false
 }
 
 func summarize(g *WorkflowGraph, findings []RsiFinding) string {

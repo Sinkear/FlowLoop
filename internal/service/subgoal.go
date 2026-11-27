@@ -1779,6 +1779,121 @@ func (s *GoalService) wakeDependentsTx(ctx context.Context, tx *sql.Tx, goalID, 
 			evs = append(evs, *runEv)
 		}
 	}
+	revived, err := s.reviveFailedDependentsTx(ctx, tx, goalID, justVerified)
+	if err != nil {
+		return nil, err
+	}
+	return append(evs, revived...), nil
+}
+
+// reviveFailedDependentsTx (P6, issue #31): a CASCADE-failed sub-goal — one
+// that never ran because a dependency was dead when it tried to release —
+// stayed failed FOREVER even after the blocker later verified:
+// gatedSubGoalsTx only scans status='running', so wakeDependentsTx was blind
+// to failed rows. Live: the 11-26 openviking run's gate was approved at
+// 19:34, yet downstream 9d3236b9/3f1df997 sat failed for 35+ minutes with
+// the Verifier re-check passing — nothing in the release path ever looked at
+// failed rows again.
+//
+// Revive candidates, strictly scoped so the automatic revive never treads on
+// the human retry path (TestRetryGatedSubGoalRespectsDependsOn keeps
+// force-failed rows for RetrySubGoal):
+//   - status='failed', NO role='subgoal' run yet — a failed sub-goal that
+//     RAN is owned by the retry chain + human RetrySubGoal;
+//   - carries the cascade-failure marker comment ("依赖 … failed，无法满足门控"
+//     written by failGatedSubGoalTx) — only a CASCADE casualty is auto-revived;
+//     a hand-forced or otherwise-failed row stays for the human;
+//   - every depends_on now verified. The revive mirrors the release path
+//     (resolve brief refs, blueprint node failed→running, enqueue, comment)
+//     so downstream behaves exactly as a fresh release.
+func (s *GoalService) reviveFailedDependentsTx(ctx context.Context, tx *sql.Tx, goalID, trigger string) ([]events.Event, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, COALESCE(depends_on,'[]'), COALESCE(dispatch_comment_id,'') FROM sub_goal
+		  WHERE goal_id=? AND status='failed'
+		    AND NOT EXISTS (SELECT 1 FROM run WHERE run.sub_goal_id=sub_goal.id AND run.role='subgoal')
+		    AND EXISTS (SELECT 1 FROM comment c WHERE c.goal_id=sub_goal.goal_id AND c.author_type='system'
+		                  AND c.content LIKE '%无法满足门控%')`,
+		goalID)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed dependents: %w", err)
+	}
+	var candidates []gatedSubGoal
+	for rows.Next() {
+		var g gatedSubGoal
+		var depsRaw string
+		if err := rows.Scan(&g.id, &depsRaw, &g.dispatchID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		g.deps = decodeDeps(depsRaw)
+		candidates = append(candidates, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var evs []events.Event
+	for _, g := range candidates {
+		if len(g.deps) == 0 {
+			continue // defensive: a cascade casualty always carries its dep list
+		}
+		statuses, err := depStatusesTx(ctx, tx, g.deps)
+		if err != nil {
+			return nil, err
+		}
+		if deadDep, deadStatus := firstDeadDep(g.deps, statuses); deadDep != "" {
+			_ = deadStatus
+			continue // still blocked by a dead dependency — the cascade stands
+		}
+		ready := true
+		for _, d := range g.deps {
+			if statuses[d] != "verified" {
+				ready = false
+				break
+			}
+		}
+		if !ready {
+			continue
+		}
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sub_goal SET status='running', execution_attempt=0 WHERE id=? AND status='failed'`, g.id)
+		if err != nil {
+			return nil, fmt.Errorf("revive failed dependent %s: %w", g.id, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue // raced to non-terminal by someone else — fine
+		}
+		// Blueprint mirror: failGatedSubGoalTx stamped the node 'failed'; the
+		// release path uses markBlueprintNodeRunningTx (pending→running), so
+		// the revive flips failed→running with the same guarded shape.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE blueprint_node SET state='running' WHERE sub_goal_id=? AND state='failed'`, g.id); err != nil {
+			return nil, fmt.Errorf("revive blueprint node %s: %w", g.id, err)
+		}
+		// The node never released, so its brief still holds unresolved
+		// {{node.*}} refs — run the same resolution the release path does.
+		if err := s.resolveReleasedBriefTx(ctx, tx, goalID, g.id); err != nil {
+			return nil, fmt.Errorf("resolve revived brief %s: %w", g.id, err)
+		}
+		_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, g.id, g.dispatchID)
+		if err != nil {
+			return nil, fmt.Errorf("enqueue revived sub-goal %s: %w", g.id, err)
+		}
+		logging.Infof("sub-goal: revived cascade-failed %s — all depends_on verified (trigger %s)", g.id, trigger)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
+			newID(), goalID,
+			fmt.Sprintf("工作项 %s 之前的依赖级联失败已解除（触发：%s），已自动复位并重新派发。", g.id, trigger), now()); err != nil {
+			return nil, fmt.Errorf("insert revive comment: %w", err)
+		}
+		evs = append(evs, events.Event{Topic: "sub_goal.retrying", Payload: map[string]any{
+			"goal_id": goalID, "sub_goal_id": g.id, "execution_attempt": 0,
+			"revived": true, "trigger_sub_goal_id": trigger,
+		}})
+		if runEv != nil {
+			evs = append(evs, *runEv)
+		}
+	}
 	return evs, nil
 }
 

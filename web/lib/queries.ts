@@ -9,6 +9,7 @@ import {
 import {
   listBlueprintProposals,
   getBlueprintProposalDiff,
+  getBlueprintVersionDiff,
   approveBlueprintProposal,
   rejectBlueprintProposal,
   startNextRoundFromProposal,
@@ -181,6 +182,8 @@ export const qk = {
     ["blueprints", blueprintId, "proposals"] as const,
   blueprintProposalDiff: (proposalId: string) =>
     ["blueprint-proposals", proposalId, "diff"] as const,
+  blueprintVersionDiff: (baseId: string, targetId: string) =>
+    ["blueprint-versions", baseId, "diff", targetId] as const,
   blueprintAB: (blueprintId: string, a: string, b: string) =>
     ["blueprints", blueprintId, "ab", a, b] as const,
   squads: ["squads"] as const,
@@ -1491,12 +1494,24 @@ export function useBlueprintProposalDiff(proposalId: string | null) {
   });
 }
 
+// 版本对版本 diff（issue #31 P1）：两份都齐了才发请求；方向不同结果不同
+// （base/patched 与 changelog 都跟着换），所以 queryKey 含两个 id。
+export function useBlueprintVersionDiff(baseVersionId: string | null, targetVersionId: string | null) {
+  return useQuery({
+    queryKey: qk.blueprintVersionDiff(baseVersionId!, targetVersionId!),
+    queryFn: () => getBlueprintVersionDiff(baseVersionId!, targetVersionId!),
+    enabled: !!baseVersionId && !!targetVersionId,
+  });
+}
+
 export function useApproveBlueprintProposal(blueprintId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (proposalId: string) => approveBlueprintProposal(proposalId),
-    onSuccess: () => {
-      // 批准产出新草稿：版本列表、规范图、提案列表全要刷新。
+    onSuccess: (r) => {
+      // 批准产出新草稿（可能还自动建了下一轮训练 goal）：版本列表、规范图、
+      // 提案列表、goal 列表全要刷新。next_round_goal_id 由调用方读取做引导。
+      if (r.next_round_goal_id) qc.invalidateQueries({ queryKey: qk.goals });
       qc.invalidateQueries({ queryKey: qk.blueprint(blueprintId) });
       qc.invalidateQueries({ queryKey: qk.blueprintProposals(blueprintId) });
     },

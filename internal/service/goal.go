@@ -131,8 +131,16 @@ const maxAttempts = 3
 // (model-configuration errors); transient faults keep the full retry
 // behavior below. Extend only with equally unambiguous markers.
 // (RSI R2 提案3【已批准】—— 基线重建 flowloop-int-v2 时语义化重放)
+//
+// P7 (issue #31): quota/billing markers added. Live: 11-26 the SAME
+// "免费 Token 额度已用完" summary retried 9 times across two windows
+// (15:08-15:20 ×3, 19:43-19:54 ×6) — 10 failed runs total, because a daily
+// quota reset cannot happen inside a retry backoff window. These faults are
+// deterministic per-day, fail fast, and surface to the human instead.
 var nonRetryableMarkers = []string{
 	"Model unavailable",
+	"额度已用完", "已用完", "quota exceeded", "insufficient quota", "配额不足",
+	"余额不足", "insufficient balance", "payment required",
 }
 
 // isNonRetryable reports whether a failed run's summary matches a
@@ -3463,6 +3471,34 @@ func (s *GoalService) MarkDelivered(ctx context.Context, goalID string, success 
 		_ = statusCheck
 
 		if success {
+			// C1 made real (P6, issue #31): the comment below claimed pending
+			// sub-goals cannot exist here, but the gate-approve path never
+			// re-checks them — a goal pinned to a blueprint could sit in
+			// review while a sub_goal still ran (live: agent-browser goal
+			// done, Packager sub_goal running, verification_result empty).
+			// Delivering would strand those rows in non-terminal states
+			// forever. Refuse the close and tell the human what to do; the
+			// goal stays in review so reject/stay options still work.
+			var pendingSG int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM sub_goal WHERE goal_id=? AND status NOT IN ('verified','cancelled','failed')`,
+				goalID).Scan(&pendingSG); err != nil {
+				return fmt.Errorf("count pending sub-goals on deliver: %w", err)
+			}
+			if pendingSG > 0 {
+				// The "deliver:" prefix is load-bearing: pendingDeliverGoalIDs
+				// excludes review_request LIKE 'deliver:%' from the 10-minute
+				// recovery replay, so a guard refusal (which needs HUMAN
+				// action on the sub-goals, not a replay) is not retried every
+				// tick. Without it the recovery ticker would re-deliver, get
+				// refused again, and spam the log forever.
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE goal SET review_request=? WHERE id=? AND status='review'`,
+					fmt.Sprintf("deliver:guard: %d 个 sub_goal 仍未收口（running/pending）——先完成或取消它们，再重试交付", pendingSG), goalID); err != nil {
+					return fmt.Errorf("annotate deliver guard: %w", err)
+				}
+				return NewValidationError(fmt.Sprintf("goal still has %d pending sub-goals — finish or cancel them before delivering (they would be stranded non-terminal under a done goal)", pendingSG))
+			}
 			// A delivered goal is done: the deliver already merged this goal's
 			// branch. Pending sub-goals cannot exist here — the finalization guard
 			// (决策 6-8) keeps the goal out of the gate judgment while work is

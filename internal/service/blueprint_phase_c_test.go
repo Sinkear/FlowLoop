@@ -426,3 +426,153 @@ func TestGoalABCompareFacesAndDeltas(t *testing.T) {
 	}
 	_ = json.Marshal // keep import if assertions above change
 }
+
+// TestBlueprintVersionDiffListsFieldChanges (P1, issue #31): version-to-
+// version diff must surface the FIELD-level changes (assignee/brief) that the
+// 11-26 review could not see when v2's reassignments were buried by v3.
+// Two sibling proposals approved on the same base → v2 changes an assignee,
+// v3 (auto-rebased by P2) carries BOTH: the diff must show v3 as the union.
+func TestBlueprintVersionDiffListsFieldChanges(t *testing.T) {
+	_, _, bs, _, st := propCluster(t)
+	bpID, baseID, worker := publishedChain(t, bs, st, "ver-diff")
+	other := seedAgent(t, st, "w-verdiff-other")
+
+	// v2: reassign n2 to the other worker.
+	p1, err := bs.CreateProposal(context.Background(), bpID, baseID,
+		"reassign n2", "move n2 to the idle lane", "", "",
+		[]BlueprintPatch{{Op: "update_node", ID: "n2", Node: &SpecNode{
+			ID: "n2", Type: "task", Title: "step two",
+			Task: &SpecTask{Assignee: "agent:" + other, Brief: "second step"},
+		}}}, "", "human", "")
+	if err != nil {
+		t.Fatalf("create p1: %v", err)
+	}
+	_, v2, err := bs.ApproveProposal(context.Background(), p1.ID, "human", "")
+	if err != nil {
+		t.Fatalf("approve p1: %v", err)
+	}
+	// v3: re-wire n1→n2 through a review node (P2 auto-rebases onto v2).
+	p2, err := bs.CreateProposal(context.Background(), bpID, baseID,
+		"add review", "review catches more", "", "",
+		[]BlueprintPatch{
+			patchAdd("review the work", "n_r", worker),
+			{Op: "delete_edge", Edge: &SpecEdge{Source: "n1", SourceHandle: "done", Target: "n2"}},
+			{Op: "add_edge", Edge: &SpecEdge{Source: "n1", SourceHandle: "done", Target: "n_r"}},
+			{Op: "add_edge", Edge: &SpecEdge{Source: "n_r", SourceHandle: "done", Target: "n2"}},
+		}, "", "human", "")
+	if err != nil {
+		t.Fatalf("create p2: %v", err)
+	}
+	_, v3, err := bs.ApproveProposal(context.Background(), p2.ID, "human", "")
+	if err != nil {
+		t.Fatalf("approve p2: %v", err)
+	}
+
+	// base → v2: exactly one changed node, and the change is the assignee.
+	d1, err := bs.VersionDiff(context.Background(), baseID, v2.ID)
+	if err != nil {
+		t.Fatalf("diff base→v2: %v", err)
+	}
+	if len(d1.NodesChanged) != 1 || d1.NodesChanged[0].ID != "n2" {
+		t.Fatalf("base→v2 nodes_changed = %+v, want exactly n2", d1.NodesChanged)
+	}
+	if got := d1.NodesChanged[0].Patched["task"].(map[string]any)["assignee"]; got != "agent:"+other {
+		t.Fatalf("n2 patched assignee = %v, want %s", got, "agent:"+other)
+	}
+	if d1.ChangelogBase != "init" {
+		t.Fatalf("changelog_base = %q, want init", d1.ChangelogBase)
+	}
+
+	// v2 → v3: v3 carries the reassignment AND the added node — the burial
+	// must be VISIBLE as a changed+added union, not a silent overwrite.
+	d2, err := bs.VersionDiff(context.Background(), v2.ID, v3.ID)
+	if err != nil {
+		t.Fatalf("diff v2→v3: %v", err)
+	}
+	if len(d2.NodesAdded) != 1 || d2.NodesAdded[0] != "n_r" {
+		t.Fatalf("v2→v3 nodes_added = %v, want [n_r]", d2.NodesAdded)
+	}
+	// n2's assignee from v2 survives in v3 (rebase kept it) → no change row.
+	for _, ch := range d2.NodesChanged {
+		if ch.ID == "n2" {
+			t.Fatalf("n2 must survive rebase unchanged, got change row %+v", ch)
+		}
+	}
+
+	// same version refused; cross-blueprint refused.
+	if _, err := bs.VersionDiff(context.Background(), v3.ID, v3.ID); err == nil {
+		t.Fatal("diffing a version against itself must be refused")
+	}
+	otherBP, _, _ := publishedChain(t, bs, st, "ver-diff-2")
+	_ = otherBP
+	bp2, err := bs.Create(context.Background(), "ver-diff-other-bp", "d", strings.ReplaceAll(bpJSON("ver-diff-other-bp", "x"), "agent:WORKER", "agent:"+worker), "human", "")
+	if err != nil {
+		t.Fatalf("create second blueprint: %v", err)
+	}
+	_, vs2, err := bs.Get(context.Background(), bp2.ID)
+	if err != nil || len(vs2) == 0 {
+		t.Fatalf("versions of bp2: %v", err)
+	}
+	if _, err := bs.VersionDiff(context.Background(), v3.ID, vs2[0].ID); err == nil {
+		t.Fatal("cross-blueprint diff must be refused")
+	}
+}
+
+// TestApproveProposalAutoRebasesSibling (P2, issue #31): two proposals forked
+// from the SAME base — the 11-26 incident shape. Approving the second after
+// the first must NOT silently drop the first's edits: the new draft is
+// rebased onto the latest version, and the changelog records the rebase.
+func TestApproveProposalAutoRebasesSibling(t *testing.T) {
+	_, _, bs, _, st := propCluster(t)
+	bpID, baseID, worker := publishedChain(t, bs, st, "rebase-sib")
+	other := seedAgent(t, st, "w-rebase-other")
+
+	// Sibling 1: reassign n2 (lands as draft v2).
+	p1, err := bs.CreateProposal(context.Background(), bpID, baseID,
+		"reassign n2", "move n2 to the idle lane", "", "",
+		[]BlueprintPatch{{Op: "update_node", ID: "n2", Node: &SpecNode{
+			ID: "n2", Type: "task", Title: "step two",
+			Task: &SpecTask{Assignee: "agent:" + other, Brief: "second step"},
+		}}}, "", "human", "")
+	if err != nil {
+		t.Fatalf("create p1: %v", err)
+	}
+	_, v2, err := bs.ApproveProposal(context.Background(), p1.ID, "human", "")
+	if err != nil {
+		t.Fatalf("approve p1: %v", err)
+	}
+	if v2.Version != 2 {
+		t.Fatalf("p1 draft must be v2, got v%d", v2.Version)
+	}
+
+	// Sibling 2 on the SAME stale base: add a review step.
+	p2, err := bs.CreateProposal(context.Background(), bpID, baseID,
+		"add review", "review catches more", "", "",
+		[]BlueprintPatch{
+			patchAdd("review the work", "n_r", worker),
+			{Op: "delete_edge", Edge: &SpecEdge{Source: "n1", SourceHandle: "done", Target: "n2"}},
+			{Op: "add_edge", Edge: &SpecEdge{Source: "n1", SourceHandle: "done", Target: "n_r"}},
+			{Op: "add_edge", Edge: &SpecEdge{Source: "n_r", SourceHandle: "done", Target: "n2"}},
+		}, "", "human", "")
+	if err != nil {
+		t.Fatalf("create p2: %v", err)
+	}
+	_, v3, err := bs.ApproveProposal(context.Background(), p2.ID, "human", "")
+	if err != nil {
+		t.Fatalf("approve p2 (must auto-rebase, not conflict): %v", err)
+	}
+	if v3.Version != 3 {
+		t.Fatalf("rebased draft must be v3, got v%d", v3.Version)
+	}
+	// The rebase note is in the changelog so the reviewer SEES the merge.
+	if !strings.Contains(v3.Changelog, "rebase") {
+		t.Fatalf("changelog must record the rebase, got %q", v3.Changelog)
+	}
+	// v3 carries BOTH changes: n2 reassigned (v2's edit survives) + n_r added.
+	if !strings.Contains(v3.Content, "agent:"+other) {
+		t.Fatal("v3 silently dropped v2's reassignment — the 11-26 burial")
+	}
+	if !strings.Contains(v3.Content, "n_r") {
+		t.Fatal("v3 must carry its own review node")
+	}
+}

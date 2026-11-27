@@ -73,7 +73,24 @@ type translateCtx struct {
 	remaining int // remaining cap budget; -1 = uncapped
 	seen      map[string]bool
 	touched   map[string]bool // node/edge keys already claimed by a draft (this run + live proposals)
+	owners    map[string]string // patch key → proposal id of the live pending/approved proposal that claimed it (P3 visibility)
+	blocked   []translationBlock
 	cats      map[string]bool
+}
+
+// translationBlock records why a deterministic translation did NOT become a
+// proposal (issue #31 P3): the cross-proposal collision guard and the
+// same-title dedup used to skip silently at Debug level, so rounds 2/3
+// produced zero proposals with no trace of WHY. The block list is returned
+// to the analyzer, which surfaces it on the training goal's feed so a human
+// learns "approve or reject the pending proposals to unblock the next
+// round" instead of seeing an empty proposal list.
+type translationBlock struct {
+	FindingCategory string `json:"category"`
+	ProposalTitle   string `json:"proposal_title"`
+	Reason          string `json:"reason"`               // "touched" | "same-title"
+	Key             string `json:"key,omitempty"`         // the claimed node/edge key (touched)
+	OwnerProposalID string `json:"owner_proposal_id,omitempty"` // the live proposal holding the key/title
 }
 
 type findingTranslator func(context.Context, *RSIService, *translateCtx, RsiFinding) (*proposalDraft, error)
@@ -98,21 +115,21 @@ var findingTranslators = map[string]findingTranslator{
 
 // draftAutoProposals runs every matching translator over this analysis'
 // findings, then drafts the resulting patches through CreateProposal.
-func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *WorkflowGraph, findings []RsiFinding) {
+func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *WorkflowGraph, findings []RsiFinding) []translationBlock {
 	var versionID string
 	err := s.st.DB().QueryRowContext(ctx,
 		`SELECT COALESCE(blueprint_version_id,'') FROM goal WHERE id=?`, goalID).Scan(&versionID)
 	if err != nil {
 		logging.Warnf("[rsi] auto-proposal: load blueprint pin for goal %s: %v", goalID, err)
-		return
+		return nil
 	}
 	if versionID == "" {
 		logging.Debugf("[rsi] auto-proposal skipped for goal %s: no pinned blueprint version (infer mode)", goalID)
-		return // infer goal — no spec to patch
+		return nil // infer goal — no spec to patch
 	}
 	if s.blueprintSvc == nil {
 		logging.Debugf("[rsi] auto-proposal skipped for goal %s: blueprint service not wired", goalID)
-		return // not wired in main — nothing to translate through
+		return nil // not wired in main — nothing to translate through
 	}
 	// Direct observable signal for BUG-3: a pinned goal whose spec graph was
 	// never compiled has an empty blueprint_node map, so the translator cannot
@@ -125,7 +142,7 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 		logging.Warnf("[rsi] auto-proposal: count blueprint_node for goal %s: %v", goalID, err)
 	} else if nodeCount == 0 {
 		logging.Warnf("[rsi] goal %s 绑定蓝本 %s 但未编译（blueprint_node=0）——自动提案跳过", goalID, versionID)
-		return
+		return nil
 	}
 	// Auto-iteration round cap (§14.2): analysis is never capped — only the
 	// automatic PRODUCTION of optimization artifacts is. Translator
@@ -143,7 +160,7 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 			// computed on '' (every blueprint shares it) — skip drafting rather
 			// than let one broken lookup silently disable the cap.
 			logging.Warnf("[rsi] auto-proposal cap: load blueprint for version %s: %v", versionID, err)
-			return
+			return nil
 		}
 		var n int
 		if err := s.st.DB().QueryRowContext(ctx,
@@ -153,10 +170,10 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 			// Same fail-closed rule as the blueprint lookup above: a broken
 			// counter must not turn into an uncapped drafting run.
 			logging.Warnf("[rsi] auto-proposal cap check failed for goal %s: %v", goalID, err)
-			return
+			return nil
 		} else if n >= cap {
 			logging.Infof("[rsi] auto-iteration cap %d reached — translator proposal skipped for goal %s (rsi.max_auto_rounds)", cap, goalID)
-			return
+			return nil
 		} else {
 			remaining = cap - n
 		}
@@ -164,22 +181,36 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 	t, err := s.buildTranslateCtx(ctx, goalID, versionID)
 	if err != nil {
 		logging.Warnf("[rsi] auto-proposal: load spec for goal %s: %v", goalID, err)
-		return
+		return nil
 	}
 	t.g = g
 	t.remaining = remaining
 	t.seen = map[string]bool{}
 	t.touched = map[string]bool{}
+	t.owners = map[string]string{}
+	t.blocked = nil
 	// Collision guard across runs: an existing pending/approved proposal owns
 	// its nodes/edges. Drafting a second proposal touching them would stack
 	// conflicting patches on the same base version (approving both loses the
 	// first one's edits when the second is published).
+	// P3 (two halves):
+	//  - the claiming proposal's id is recorded alongside each key so a
+	//    blocked translation can name its blocker in the feed;
+	//  - keys are RELEASED once the proposal's applied draft is published —
+	//    the edit is then in the blueprint's authority, so a later round
+	//    touching the same node is legitimate iteration, not a conflicting
+	//    stack. Without the release, R1's approved proposals would claim
+	//    their nodes FOREVER and every later round would silently draft
+	//    nothing (the 11-26 stall: R2/R3 produced zero proposals all day).
 	if prow, err := s.st.DB().QueryContext(ctx,
-		`SELECT p.patches_json FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
-		 WHERE v.blueprint_id=? AND p.status IN ('pending','approved')`, t.version.BlueprintID); err == nil {
+		`SELECT p.id, p.patches_json FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
+		 WHERE v.blueprint_id=? AND p.status IN ('pending','approved')
+		   AND NOT (p.status='approved' AND COALESCE(p.applied_version_id,'')!='' AND EXISTS (
+		     SELECT 1 FROM blueprint_version av WHERE av.id=p.applied_version_id AND av.status='published'))`,
+		t.version.BlueprintID); err == nil {
 		for prow.Next() {
-			var raw string
-			if err := prow.Scan(&raw); err != nil {
+			var pid, raw string
+			if err := prow.Scan(&pid, &raw); err != nil {
 				break
 			}
 			var patches []BlueprintPatch
@@ -188,6 +219,9 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 			}
 			for k := range patchKeys(patches) {
 				t.touched[k] = true
+				if t.owners[k] == "" {
+					t.owners[k] = pid
+				}
 			}
 		}
 		prow.Close()
@@ -231,8 +265,16 @@ func (s *RSIService) draftAutoProposals(ctx context.Context, goalID string, g *W
 		}
 	}
 	if drafted == 0 {
-		logging.Debugf("[rsi] auto-proposal: no deterministic transform matched for goal %s (categories=%s)", goalID, strings.Join(findingCategories(findings), ","))
+		if len(t.blocked) > 0 {
+			// P3: zero proposals because live pending/approved proposals own the
+			// touched nodes (or the exact title) — say so, don't pretend no
+			// transform matched.
+			logging.Warnf("[rsi] auto-proposal: %d translations blocked by live proposals for goal %s (categories=%s) — 审批或拒绝待审提案后下一轮分析可继续", len(t.blocked), goalID, strings.Join(findingCategories(findings), ","))
+		} else {
+			logging.Debugf("[rsi] auto-proposal: no deterministic transform matched for goal %s (categories=%s)", goalID, strings.Join(findingCategories(findings), ","))
+		}
 	}
+	return t.blocked
 }
 
 func findingCategories(findings []RsiFinding) []string {
@@ -303,18 +345,37 @@ func (s *RSIService) draftProposal(ctx context.Context, t *translateCtx, d *prop
 	keys := patchKeys(d.Patches)
 	for k := range keys {
 		if t.touched[k] {
-			logging.Debugf("[rsi] auto-proposal skipped for goal %s: %q touches %s already owned by another proposal", t.goalID, d.Title, k)
+			// P3: this skip used to be a Debug one-liner — rounds 2/3 after a
+			// pending round-1 proposal silently produced zero proposals and
+			// nobody learned why. Record the block for the goal feed and log
+			// at Warn so the daemon log names the blocker.
+			owner := t.owners[k]
+			t.blocked = append(t.blocked, translationBlock{
+				FindingCategory: f.Category,
+				ProposalTitle:   d.Title,
+				Reason:          "touched",
+				Key:             k,
+				OwnerProposalID: owner,
+			})
+			logging.Warnf("[rsi] auto-proposal skipped for goal %s: %q touches %s already owned by proposal %s — 批准或拒绝该提案以释放节点", t.goalID, d.Title, k, owner)
 			return false, nil
 		}
 	}
-	var existing int
-	if err := s.st.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
-		 WHERE v.blueprint_id=? AND p.title=?`, t.version.BlueprintID, d.Title).Scan(&existing); err != nil {
-		return false, err
+	var ownerID string
+	ownerErr := s.st.DB().QueryRowContext(ctx,
+		`SELECT p.id FROM blueprint_proposal p JOIN blueprint_version v ON v.id=p.base_version_id
+		 WHERE v.blueprint_id=? AND p.title=? ORDER BY p.created_at DESC LIMIT 1`, t.version.BlueprintID, d.Title).Scan(&ownerID)
+	if ownerErr != nil && !errors.Is(ownerErr, sql.ErrNoRows) {
+		return false, ownerErr
 	}
-	if existing > 0 {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: proposal %q already exists (dedup)", t.goalID, d.Title)
+	if ownerID != "" {
+		t.blocked = append(t.blocked, translationBlock{
+			FindingCategory: f.Category,
+			ProposalTitle:   d.Title,
+			Reason:          "same-title",
+			OwnerProposalID: ownerID,
+		})
+		logging.Warnf("[rsi] auto-proposal skipped for goal %s: proposal %q already exists (%s) — 批准或拒绝该提案以解除去重阻塞", t.goalID, d.Title, ownerID)
 		return false, nil
 	}
 	if _, err := s.blueprintSvc.CreateProposal(ctx, t.version.BlueprintID, t.versionID, d.Title, d.Hypothesis,
@@ -893,9 +954,16 @@ func translateMergeCandidate(ctx context.Context, s *RSIService, t *translateCtx
 // review (goal-level gate_decision), so the honest spec-side fix is to have
 // the machine assemble the evidence the reviewer would otherwise dig for.
 func translateHumanWait(ctx context.Context, s *RSIService, t *translateCtx, f RsiFinding) (*proposalDraft, error) {
+	// P5 (issue #31): mirror the analyzer's two trigger shapes — share ≥30%
+	// (with 10-min floor) OR absolute ≥1h. Before the absolute shape existed
+	// this translator re-tested the share alone and would skip a finding the
+	// analyzer had already fired on the absolute path.
 	share := mf(t.g.Metrics, "human_wait_share")
-	if share < ruleHumanWaitShare || mi(t.g.Metrics, "human_wait_ms") < ruleHumanWaitFloorMS {
-		logging.Debugf("[rsi] auto-proposal skipped for goal %s: human_wait_share=%.2f wait=%dms below share/floor", t.goalID, share, mi(t.g.Metrics, "human_wait_ms"))
+	waitMS := mi(t.g.Metrics, "human_wait_ms")
+	shareFired := share >= ruleHumanWaitShare && waitMS >= ruleHumanWaitFloorMS
+	absFired := waitMS >= ruleHumanWaitAbsoluteMS
+	if !shareFired && !absFired {
+		logging.Debugf("[rsi] auto-proposal skipped for goal %s: human_wait_share=%.2f wait=%dms below share/floor/absolute", t.goalID, share, waitMS)
 		return nil, nil
 	}
 	// Idempotence: once an evidence pack exists in the pinned spec, a later

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button, ConfirmDialog, Dialog, Field, PageBody, Skeleton, inputCls } from "@/components/ui";
@@ -86,6 +87,22 @@ export default function WorkflowDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<string | null>(null);
   const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
+
+  // 批准 RSI 提案时后端会自动创建下一轮训练 goal（backlog，未启动）——批准后
+  // 会切去「规范」页签、提案组件卸载，所以这条引导 toast 由页面层持有（样式与
+  // goal-board 的自研 toast 同款：项目没有 toast 库）。tone="warn" 用于后端
+  // 建下一轮 goal 失败但批准本身已成功的降级提示。
+  const [approveToast, setApproveToast] = useState<{
+    tone: "ok" | "warn";
+    text: string;
+    goalId?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!approveToast) return;
+    const t = setTimeout(() => setApproveToast(null), 4200);
+    return () => clearTimeout(t);
+  }, [approveToast]);
 
   function openPublish() {
     setPublishChangelog("");
@@ -225,6 +242,18 @@ export default function WorkflowDetailPage() {
                 setSelectedVersionId(versionId);
                 setTab("spec");
               }}
+              onNextRoundGoal={(goalId, createError) =>
+                createError
+                  ? setApproveToast({
+                      tone: "warn",
+                      text: `提案已批准，但自动创建下一轮训练 goal 失败：${createError}`,
+                    })
+                  : setApproveToast({
+                      tone: "ok",
+                      text: "提案已批准，并已自动创建下一轮训练 goal（未启动）",
+                      goalId,
+                    })
+              }
             />
           )}
 
@@ -324,6 +353,24 @@ export default function WorkflowDetailPage() {
           onConfirm={confirmDeleteVersion}
           onClose={() => setConfirmDeleteVersionId(null)}
         />
+      )}
+
+      {approveToast && (
+        <div
+          className={`fixed bottom-6 left-1/2 z-[70] max-w-[min(560px,90vw)] -translate-x-1/2 rounded-lg border bg-surface-1 px-3.5 py-2 text-[12px] shadow-xl shadow-black/30 page-enter ${
+            approveToast.tone === "warn" ? "border-amber-500/40 text-amber-300" : "border-accent/40 text-ink"
+          }`}
+        >
+          {approveToast.text}
+          {approveToast.goalId && (
+            <Link
+              href={`/goals/${approveToast.goalId}`}
+              className="ml-1 text-accent underline underline-offset-2 hover:text-accent-dim"
+            >
+              查看 goal
+            </Link>
+          )}
+        </div>
       )}
     </PageBody>
   );

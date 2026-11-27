@@ -41,9 +41,17 @@ function mutError(e: unknown): string {
 export function WorkflowProposals({
   blueprintId,
   onDraftCreated,
+  onNextRoundGoal,
 }: {
   blueprintId: string;
   onDraftCreated: (versionId: string) => void;
+  /**
+   * 批准时后端自动创建下一轮训练 goal 的结果回调（approve 响应）。
+   * goalId 非空 = 已创建/复用（backlog 未启动）；createError 非空 = 创建失败
+   * （批准本身仍成功，幂等按钮仍可手动再试）。批准后 onDraftCreated 会切去
+   * 「规范」页签、本组件随之卸载，引导 toast 必须由页面层持有才能活过页签切换。
+   */
+  onNextRoundGoal?: (goalId: string, createError?: string) => void;
 }) {
   const proposals = useBlueprintProposals(blueprintId);
   const [diffId, setDiffId] = useState<string | null>(null);
@@ -65,6 +73,12 @@ export function WorkflowProposals({
     try {
       const r = await approve.mutateAsync(approveId);
       setApproveId(null);
+      // RSI 提案批准时后端顺手建了下一轮训练 goal（backlog，未启动）——提示
+      // 用户去启动，别再出现批准后一整天没人开下一轮的情况（issue #31 P4）。
+      // 创建失败（next_round_error）不吞：批准已成功，只降级为警示。
+      if (r.next_round_goal_id || r.next_round_error) {
+        onNextRoundGoal?.(r.next_round_goal_id, r.next_round_error);
+      }
       onDraftCreated(r.draft.id);
     } catch (e) {
       setActionError(mutError(e));
@@ -87,7 +101,7 @@ export function WorkflowProposals({
     <SectionCard
       title="优化提案"
       count={list.length}
-      desc="复盘把“这张图哪里该改”算成结构化补丁：批准 = 落一份新草稿，拒绝 = 只留记录。批准不会自动发布。"
+      desc="复盘把“这张图哪里该改”算成结构化补丁：批准 = 落一份新草稿，并自动创建下一轮训练 goal（backlog，未启动，需人工启动）；拒绝 = 只留记录。草稿仍需手动发布。"
       bodyClassName="p-0"
     >
       {nextRoundResult && (
@@ -148,7 +162,7 @@ export function WorkflowProposals({
                   {p.status === "approved" && (
                     <Button className="h-7 px-2.5 text-[11px]" onClick={() => setNextRoundId(p.id)}>
                       <Play className="h-3.5 w-3.5" />
-                      开始下一轮
+                      查看/开始下一轮
                     </Button>
                   )}
                   {p.status === "pending" && (
@@ -222,7 +236,8 @@ export function WorkflowProposals({
         >
           <p className="text-sm leading-relaxed text-ink-2">
             批准会把补丁应用到基于版本 <code className="font-mono text-ink-3">{approveId.slice(0, 8)}</code>{" "}
-            的新草稿上。草稿需要手动发布才会被任务钉住。
+            的新草稿上；对训练复盘（RSI）提案，还会自动创建下一轮训练 goal（backlog，未启动，需人工启动）。
+            草稿需要手动发布才会被任务钉住。
           </p>
           {actionError && <WorkflowErrorBox title="批准失败" message={actionError} />}
         </Dialog>
@@ -249,7 +264,8 @@ export function WorkflowProposals({
         >
           <p className="text-sm leading-relaxed text-ink-2">
             “开始下一轮”会：发布提案应用版本 → 复制原训练目标 → 把新任务钉到新版本。
-            {` `}不想立刻占资源，就只落 backlog，之后手动启动。
+            {` `}批准时已自动创建的下一轮 goal 会被直接复用（幂等），不会重复建。
+            {` `}不想立刻占资源，就先留在 backlog，之后手动启动。
           </p>
           {actionError && <WorkflowErrorBox title="创建下一轮失败" message={actionError} />}
         </Dialog>
