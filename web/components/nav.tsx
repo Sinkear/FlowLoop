@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -21,6 +21,14 @@ import {
   X,
 } from "lucide-react";
 import { useDomains, useGoals, usePendingGates } from "@/lib/queries";
+import {
+  attentionKeyOfGate,
+  attentionKeyOfGoal,
+  attentionSeenVersion,
+  isAttentionGoal,
+  subscribeAttentionSeen,
+  unseenAttentionCount,
+} from "@/lib/attention-seen";
 import { useCreateDialog } from "@/components/create/create-dialog";
 import { cn } from "@/lib/utils";
 
@@ -62,14 +70,30 @@ export function Nav() {
   const { data: goals } = useGoals();
   const { data: pendingGates } = usePendingGates();
   const { openMenu } = useCreateDialog();
-  // 与工作台「待我处理」同一口径：人工门 + 待审批 + 失败 + 明确需要你介入。
-  // 人工门不改变 goal.status，只数 review 会把「流程停着等人拍板」漏掉；
-  // 两处数字不一致会让红点看起来像漏报。
-  const pendingAttentionCount =
-    (pendingGates?.gates.length ?? 0) +
-    (goals ?? []).filter(
-      (g) => g.status === "review" || g.status === "failed" || g.attention
-    ).length;
+  // 红点语义（app 式通知）：徽标 = 「新出现且还没看过」的待办数，不是总量。
+  // 与工作台「待我处理」同一口径（人工门 + 待审批 + 失败 + 明确需要你介入），
+  // 但会经过已读账本（lib/attention-seen.ts）过滤：打开工作台即标记已读、
+  // 红点消失；之后同一任务状态翻转 / 新人工门会生成新 key，红点再亮。
+  // 人工门不改变 goal.status，只数 review 会把「流程停着等人拍板」漏掉。
+  const attentionKeys = useMemo(
+    () => [
+      ...(pendingGates?.gates ?? []).map(attentionKeyOfGate),
+      ...(goals ?? []).filter(isAttentionGoal).map(attentionKeyOfGoal),
+    ],
+    [pendingGates, goals]
+  );
+  useSyncExternalStore(subscribeAttentionSeen, attentionSeenVersion, attentionSeenVersion);
+  const unseenCount = unseenAttentionCount(attentionKeys);
+  // 「对话」正在回复时的呼吸点：ChatWorkbench（全局保活层）广播 busy 事件。
+  const [chatBusy, setChatBusy] = useState(false);
+  useEffect(() => {
+    const onBusy = (e: Event) => {
+      const detail = (e as CustomEvent<{ count?: number }>).detail;
+      setChatBusy((detail.count ?? 0) > 0);
+    };
+    window.addEventListener("flowloop-chat-busy", onBusy);
+    return () => window.removeEventListener("flowloop-chat-busy", onBusy);
+  }, []);
   const onCreatePage = pathname === "/goals/new";
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -129,7 +153,7 @@ export function Nav() {
           <MobileGroup
             title="常用"
             items={[
-              { href: "/", label: "工作台", badge: pendingAttentionCount },
+              { href: "/", label: "工作台", badge: unseenCount },
               { href: "/projects", label: "项目" },
               { href: "/squads", label: "小队" },
               { href: "/agents", label: "智能体" },
@@ -153,7 +177,11 @@ export function Nav() {
           />
           <MobileGroup
             title="其他"
-            items={SYSTEM_ITEMS.map((item) => ({ href: item.href, label: item.label }))}
+            items={SYSTEM_ITEMS.map((item) => ({
+              href: item.href,
+              label: item.label,
+              busy: item.href === "/chat" && chatBusy,
+            }))}
             onNavigate={() => setMobileOpen(false)}
           />
         </div>
@@ -195,7 +223,7 @@ export function Nav() {
               <NavLink
                 item={item}
                 active={isActive(item)}
-                badge={item.href === "/" ? pendingAttentionCount : undefined}
+                badge={item.href === "/" ? unseenCount : undefined}
               />
               {item.href === "/projects" && recentProjects.length > 0 && (
                 <div className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2">
@@ -240,18 +268,25 @@ export function Nav() {
           {SYSTEM_ITEMS.map((item) => {
             const active = isActive(item);
             const Icon = item.icon;
+            const busy = item.href === "/chat" && chatBusy;
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 title={item.label}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-md py-2 text-[11px] transition-colors duration-150",
+                  "relative flex flex-col items-center gap-1 rounded-md py-2 text-[11px] transition-colors duration-150",
                   active ? "bg-surface-3 text-ink" : "text-ink-3 hover:bg-surface-2 hover:text-ink-2"
                 )}
               >
                 <Icon className={cn("h-4 w-4", active && "text-accent")} />
                 {item.label}
+                {busy && (
+                  <span
+                    title="正在回复"
+                    className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent animate-pulse"
+                  />
+                )}
               </Link>
             );
           })}
@@ -268,7 +303,7 @@ function MobileGroup({
   onNavigate,
 }: {
   title: string;
-  items: { href: string; label: string; badge?: number }[];
+  items: { href: string; label: string; badge?: number; busy?: boolean }[];
   onNavigate: () => void;
 }) {
   return (
@@ -282,7 +317,15 @@ function MobileGroup({
             onClick={onNavigate}
             className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           >
-            <span>{item.label}</span>
+            <span className="flex items-center gap-1.5">
+              {item.label}
+              {item.busy && (
+                <span
+                  title="正在回复"
+                  className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse"
+                />
+              )}
+            </span>
             {item.badge ? <AttentionBadge n={item.badge} /> : null}
           </Link>
         ))}
@@ -311,13 +354,15 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
 }
 
 // 「待我处理」计数徽标：桌面侧栏与移动菜单共用同一颗。
+// 徽标显示的是「新出现且还没看过」的数量（见 lib/attention-seen.ts）：
+// 点开工作台即清零；tooltip 直接把消费路径说清楚，不让人猜。
 // 上一版是 16px 高的红色药丸 + 10px 等宽字，在侧栏里显得大而糊；这里压到
 // 14px 高、9px 半粗数字（tabular-nums 保证位数变化时宽度不跳动），单数字
-// 保持正圆，并直接在 tooltip 里告诉用户红点在哪消费——不让他们点进来猜。
+// 保持正圆。
 function AttentionBadge({ n }: { n: number }) {
   return (
     <span
-      title={`${n} 项待你处理 —— 点开工作台，在「待我处理」清单里逐条处理即清零`}
+      title={`${n} 项新的待你处理 —— 点开工作台即清除红点，处理进度在「待我处理」清单里`}
       className="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-semibold leading-none text-white tabular-nums"
     >
       {n > 99 ? "99+" : n}

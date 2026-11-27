@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import {
   ArrowRight,
   Clock3,
@@ -17,6 +17,14 @@ import { useCreateDialog } from "@/components/create/create-dialog";
 import { Badge, Empty, PageBody, PageHeader, SectionCard, StatStrip } from "@/components/ui";
 import { STATUS_LABEL } from "@/components/ui";
 import { relTime } from "@/lib/utils";
+import {
+  attentionKeyOfGate,
+  attentionKeyOfGoal,
+  attentionSeenVersion,
+  markAttentionSeen,
+  subscribeAttentionSeen,
+  unseenAttentionCount,
+} from "@/lib/attention-seen";
 import type { Goal, PendingGate, RsiSession } from "@/lib/types";
 
 function until(iso: string): string {
@@ -61,6 +69,18 @@ export default function WorkbenchPage() {
   // 「流程停在 gate 上等人」完全隐形。人工门与待审批合并成「待我处理」。
   const heldGates = pendingGates?.gates ?? [];
   const attentionCount = attention.length + heldGates.length;
+  // 红点走 app 式通知语义：徽标 = 新出现且还没看过的条数，点开（或点清单）
+  // 即视为已读、红点消失；清单本身一直保留到处理完成。账本见 lib/attention-seen.ts。
+  const attentionKeys = useMemo(
+    () => [
+      ...heldGates.map(attentionKeyOfGate),
+      ...attention.map(attentionKeyOfGoal),
+    ],
+    [heldGates, attention]
+  );
+  useSyncExternalStore(subscribeAttentionSeen, attentionSeenVersion, attentionSeenVersion);
+  const unseenCount = unseenAttentionCount(attentionKeys);
+  const clearAttentionAlert = () => markAttentionSeen(attentionKeys);
   const active = allGoals.filter((g) => g.status === "active");
   const done = allGoals
     .filter((g) => g.status === "done")
@@ -126,7 +146,9 @@ export default function WorkbenchPage() {
             value: attentionCount,
             tone: attentionCount ? "info" : "muted",
             hint: attentionCount
-              ? "左侧「工作台」上的红点就是这个数：在下面清单里逐条处理，清零后红点消失"
+              ? unseenCount
+                ? `其中 ${unseenCount} 项是新提醒 —— 红点已在下方清单标题上，点击即清除`
+                : "清单已看过：红点不亮，条目保留到处理完成"
               : "没有卡点",
           },
           {
@@ -156,6 +178,19 @@ export default function WorkbenchPage() {
             title="待我处理"
             count={attentionCount}
             desc="工作流人工门、审批、失败和 attention 卡点集中在这里。"
+            titleExtra={
+              unseenCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearAttentionAlert}
+                  title={`${unseenCount} 项新提醒 —— 点击清除红点（清单保留，逐条处理即可）`}
+                  className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center gap-1 rounded-full border border-red-400/40 bg-red-500/15 px-1.5 font-mono text-[10px] font-semibold leading-none text-red-300 tabular-nums transition-colors hover:bg-red-500/25"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                  {unseenCount > 99 ? "99+" : unseenCount}
+                </button>
+              ) : null
+            }
             action={
               <Link href="/goals" className="text-xs text-ink-3 hover:text-accent">
                 全部任务 →
@@ -164,11 +199,12 @@ export default function WorkbenchPage() {
             bodyClassName="p-0"
           >
             {attentionCount > 0 && (
-              <div className="flex items-start gap-2 border-b border-line bg-red-500/[0.06] px-4 py-2 text-[11px] leading-relaxed text-red-200/90">
-                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+              <div className="flex items-start gap-2 border-b border-line px-4 py-2 text-[11px] leading-relaxed text-ink-3">
+                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-red-500/70" />
                 <span>
-                  左侧「工作台」的红点就是这里的 {attentionCount} 项：
-                  拍板人工门、审批或处理失败任务，逐条处理完后红点自动清零。
+                  {unseenCount > 0
+                    ? `这批红点是“新提醒”计数：点标题上的红点或任意一条即清除；同一任务状态变化会再亮。清单保留到处理完成。`
+                    : `下面 ${attentionCount} 项待处理：红点已清除，处理完一项少一项。`}
                 </span>
               </div>
             )}
@@ -179,7 +215,12 @@ export default function WorkbenchPage() {
             ) : (
               <div className="divide-y divide-line">
                 {heldGates.slice(0, 4).map((gate) => (
-                  <ApprovalGateRow key={`${gate.goal_id}:${gate.node_key}`} gate={gate} project={projectName.get(gate.domain_id)} />
+                  <ApprovalGateRow
+                    key={`${gate.goal_id}:${gate.node_key}`}
+                    gate={gate}
+                    project={projectName.get(gate.domain_id)}
+                    onConsume={() => markAttentionSeen([attentionKeyOfGate(gate)])}
+                  />
                 ))}
                 {attention.length > 0 && heldGates.length > 0 && (
                   <div className="px-4 py-1.5 text-[10px] uppercase tracking-[0.12em] text-ink-3">任务审批</div>
@@ -191,6 +232,7 @@ export default function WorkbenchPage() {
                     project={projectName.get(goal.domain_id)}
                     owner={ownerOf(goal)}
                     session={sessionByGoal.get(goal.id)}
+                    onConsume={() => markAttentionSeen([attentionKeyOfGoal(goal)])}
                   />
                 ))}
               </div>
@@ -416,9 +458,25 @@ function Step({
   );
 }
 
-function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: string; owner: string; session?: RsiSession }) {
+function GoalRow({
+  goal,
+  project,
+  owner,
+  session,
+  onConsume,
+}: {
+  goal: Goal;
+  project?: string;
+  owner: string;
+  session?: RsiSession;
+  onConsume?: () => void;
+}) {
   return (
-    <Link href={`/goals/${goal.id}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50">
+    <Link
+      href={`/goals/${goal.id}`}
+      onClick={onConsume}
+      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50"
+    >
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-ink">{goal.title}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-3">
@@ -444,11 +502,20 @@ function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: stri
   );
 }
 
-function ApprovalGateRow({ gate, project }: { gate: PendingGate; project?: string }) {
+function ApprovalGateRow({
+  gate,
+  project,
+  onConsume,
+}: {
+  gate: PendingGate;
+  project?: string;
+  onConsume?: () => void;
+}) {
   const waited = gate.held_since ? relTime(gate.held_since) : "";
   return (
     <Link
       href={`/goals/${gate.goal_id}#held-gates`}
+      onClick={onConsume}
       className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50"
     >
       <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />

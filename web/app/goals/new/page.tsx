@@ -23,11 +23,10 @@ import {
   Loader2,
   Send,
   Sparkles,
-  Square,
   Trash2,
   Users,
 } from "lucide-react";
-import { PageBody, PageHeader, SectionCard, Button, inputCls } from "@/components/ui";
+import { PageBody, PageHeader, SectionCard, Button, inputCls, StopButton } from "@/components/ui";
 import { CreateTree } from "@/components/create/create-tree";
 import { CreateSteps, type CreateStep } from "@/components/create/create-steps";
 import { NewGoalForm } from "@/components/new-goal-form";
@@ -687,9 +686,7 @@ export default function NewGoalPage() {
                     disabled={busy || st.phase === "failed"}
                   />
                   {busy ? (
-                    <Button variant="danger" onClick={stop} className="gap-1.5" title="中断当前这轮（连接保留，可以继续补充）">
-                      <Square className="h-3.5 w-3.5 fill-current" /> 停止
-                    </Button>
+                    <StopButton onClick={stop} title="中断当前这轮（连接保留，可以继续补充）" />
                   ) : (
                     <Button
                       onClick={() => {
