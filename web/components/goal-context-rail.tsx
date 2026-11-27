@@ -16,13 +16,11 @@ import type { Goal, WorkflowGraph } from "@/lib/types";
 
 // ── 任务上下文右栏 ────────────────────────────────────────────────
 //
-// 任务页从「一列卡片」改成一屏式对话工作台后，执行/计划/详情这些结构化
-// 信息搬进这列：对话占主体，上下文按需切换。这里只做「搬家 + 装进 tab」，
-// 信息一条都不删——子任务、runs、两张图、计划对账、变更、env、hooks、
-// 终态复盘都在。
+// 执行图已经上移到页面顶部全宽区（见 goals/[id]/page.tsx），这里不再
+// 放图；这列只留「执行 / 计划 / 详情」的结构化上下文：子任务、runs、
+// 计划态规范图与逐节点对账、变更、env、hooks、终态复盘。
 //
-// 高度约定（与 chat-workbench.tsx 一致）：根节点是 flex 面板，自己给
-// overflow；父级只负责给高度（桌面端由 grid 拉伸，移动端自然展开）。
+// 高度：文档流页面里这一列随内容自然长高（页面整体滚动）。
 export type GoalContextTab = "exec" | "plan" | "details";
 
 const TABS: { value: GoalContextTab; label: string }[] = [
@@ -35,9 +33,6 @@ export function GoalContextRail({
   goal,
   goalId,
   acceptanceSource,
-  workflow,
-  workflowLoading,
-  workflowError,
   blueprintGraph,
   blueprintLoading,
   blueprintError,
@@ -49,10 +44,6 @@ export function GoalContextRail({
   goalId: string;
   /** 验收级别来源（任务级覆盖 / 与项目一致 / 平台默认…），由页面按 domain 算出。 */
   acceptanceSource: string;
-  workflow: WorkflowGraph | undefined;
-  workflowLoading: boolean;
-  /** 已格式化的错误文案（null = 没取到图）。 */
-  workflowError: string | null;
   blueprintGraph: WorkflowGraph | undefined;
   blueprintLoading: boolean;
   blueprintError: string | null;
@@ -84,26 +75,8 @@ export function GoalContextRail({
             {/* 子任务（v2：goal 内部拆出的工作项，不是 child goal） */}
             <GoalSubGoals goalId={goalId} />
 
-            {/* Runs：谁在跑、跑了什么 */}
+            {/* Runs：谁在跑、跑了什么。执行图（编排）在页面上方的全宽区。 */}
             <GoalRuns goalId={goalId} />
-
-            {/* 编排：live DAG（终态复盘冻结的是同一张图的终态版本）。
-                窄栏里图先自动适应宽度给整图概览，细节读图点工具条「全屏」。 */}
-            <SectionCard
-              title="编排"
-              count={workflow?.nodes?.length}
-              desc="只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后复盘会冻结同一张图"
-              descInBody
-              bodyClassName="p-0"
-            >
-              <WorkflowGraphView
-                graph={workflow}
-                loading={workflowLoading}
-                error={workflowError}
-                heightClass="min-h-[220px]"
-                autoFit
-              />
-            </SectionCard>
           </>
         )}
 

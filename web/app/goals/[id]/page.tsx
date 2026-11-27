@@ -8,27 +8,25 @@ import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkfl
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalContextRail, type GoalContextTab } from "@/components/goal-context-rail";
+import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
 import { Badge, AttentionChip, SectionCard, PageBody } from "@/components/ui";
 import type { Goal, HeldGate } from "@/lib/types";
 
-// ── 任务页 = 一屏式对话工作台 ─────────────────────────────────────
+// ── 任务页 = 文档流：编排图全宽在前，对话面板固定高 ─────────────
 //
-// 用户目标：goal 详情页的主界面像 teamily.ai/chat 一样，以「对话」为主体，
-// 周边结构化信息不再一条条往下堆。
+// 一屏式「左对话 + 右上下文」工作台实践下来，编排图挤在 400px 窄栏里
+// 没法读。这版把图从右栏拿出来、全宽放在对话上方，页面恢复普通滚动
+// 文档（不再是定高一屏）；对话面板保留固定高度、内部自己滚，行内容
+// 宽度回到消息列自己的 max-w。
 //
-// 版面（桌面端一屏，移动端整页可滚）：
+// 版面（整页可滚）：
 //   顶栏          返回 / 标题 + badges + 持有者状态 / 元信息 / 操作 + 执行 flow
 //   警示区        持门决策卡、handoff、计划偏差（有才渲染）
-//   主体 grid     左：GoalComments（占满高度，自己滚）
-//                 右：GoalContextRail（执行 / 计划 / 详情，自己滚）
-//
-// 高度约定与 chat-workbench.tsx 一致：页面用 PageBody full 撑满，主体 grid
-// 是 flex-1 + min-h-0，两列各自 min-h-0 并把滚动交给子组件。移动端
-// （<lg）取消整页定高、对话给 68vh，右栏在下方自然展开。
-// 宽度：对话工作台是“驾驶舱”型页面，不用全站统一的 1360 上限——
-// 大屏上放开设给对话和右栏，正文行宽由消息列自己的 max-w 控制。
+//   编排图        全宽 SectionCard：1:1 读图，超宽图用「适应宽度 / 全屏」
+//   主体 grid     左：GoalComments（固定高度，内部自滚）
+//                 右：GoalContextRail（执行 / 计划 / 详情，子任务+运行+对账）
 
 export default function GoalDetailPage() {
   // useSearchParams 要求 Suspense 边界。
@@ -197,7 +195,7 @@ function GoalDetailPageInner() {
     !!goal.blueprint_version_id && !!alignment?.pinned && (!alignment.materialized || deviations.length > 0);
 
   return (
-    <PageBody full className="h-full min-h-0 max-xl:h-auto space-y-2.5 px-4 py-3.5 sm:px-6 xl:max-w-[1600px] 2xl:max-w-[1760px]">
+    <PageBody className="space-y-2.5 px-4 py-4 sm:px-6">
       {/* ── 顶栏（shrink-0）：返回 / 标题 + 状态 / 元信息 / 操作 ── */}
       <header className="shrink-0 space-y-1.5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -325,28 +323,45 @@ function GoalDetailPageInner() {
         </div>
       )}
 
-      {/* ── 主体：左对话（主体）+ 右上下文栏，各自滚动 ──
-          1280 以下右栏会挤压对话到 300px 出头（读不了气泡），所以并排
-          只在 xl 生效；以下纵向堆叠，对话给足 68vh 且至少 480px 高。 */}
-      <div className="grid min-h-[520px] flex-none grid-cols-1 gap-3 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
-        {/* 移动端给对话 68vh + 最小可用高度（整页可滚），桌面端由 grid 行高撑满 */}
-        <div className="flex h-[68vh] min-h-[480px] flex-col xl:h-full">
+      {/* ── 编排图（全宽）：从右栏上移，读图不再挤在 400px 窄栏里。
+          全宽下 1:1 渲染（不 autoFit：小图会被 fit-width 顶到 200% 上限
+          放大成巨块），横向超宽的图用工具条「适应宽度 / 全屏」。 */}
+      {(workflowLoading || workflowError || workflow) && (
+        <SectionCard
+          title="编排"
+          count={workflow?.nodes?.length}
+          desc="只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后复盘会冻结同一张图"
+          descInBody
+          bodyClassName="p-0"
+        >
+          <WorkflowGraphView
+            graph={workflow}
+            loading={workflowLoading}
+            error={
+              workflowError
+                ? workflowErr instanceof Error
+                  ? workflowErr.message
+                : String(workflowErr)
+                : null
+            }
+            heightClass="min-h-[300px]"
+          />
+        </SectionCard>
+      )}
+
+      {/* ── 主体：左对话（固定高度、内部自滚）+ 右上下文栏。
+          1280 以下右栏会挤压对话列，所以并排只在 xl 生效；对话行内容
+          宽度由 goal-comments 内部 max-w 控制，不受页面宽度影响。 */}
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+        {/* 固定尺寸的对话面板：整页滚动时它不跟着变高，比原来一屏式的
+            68vh 再收一点，读长对话靠面板内部滚。 */}
+        <div className="flex h-[440px] flex-col">
           <GoalComments goalId={id} className="min-h-0" />
         </div>
         <GoalContextRail
-          className="min-h-0 max-xl:h-auto"
           goal={goal}
           goalId={id}
           acceptanceSource={acceptanceSource}
-          workflow={workflow}
-          workflowLoading={workflowLoading}
-          workflowError={
-            workflowError
-              ? workflowErr instanceof Error
-                ? workflowErr.message
-                : String(workflowErr)
-              : null
-          }
           blueprintGraph={blueprintGraph}
           blueprintLoading={bpGraphLoading}
           blueprintError={

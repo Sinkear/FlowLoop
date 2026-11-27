@@ -353,19 +353,16 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
   );
 }
 
-// 「待我处理」计数徽标：桌面侧栏与移动菜单共用同一颗。
-// 徽标显示的是「新出现且还没看过」的数量（见 lib/attention-seen.ts）：
-// 点开工作台即清零；tooltip 直接把消费路径说清楚，不让人猜。
-// 上一版是 16px 高的红色药丸 + 10px 等宽字，在侧栏里显得大而糊；这里压到
-// 14px 高、9px 半粗数字（tabular-nums 保证位数变化时宽度不跳动），单数字
-// 保持正圆。
+// 「待我处理」提醒点：桌面侧栏与移动菜单共用同一颗。
+// 只报「有新的没看过」这件事，不报数字——数字在工作台页内看；
+// 已读账本见 lib/attention-seen.ts，点开工作台即清零。
+// 8px 红点 + 一圈 15% 透明度的柔光环：小而边缘清晰，在深色侧栏里
+// 不糊成一团，也不跟文字抢视觉重量。
 function AttentionBadge({ n }: { n: number }) {
   return (
     <span
       title={`${n} 项新的待你处理 —— 点开工作台即清除红点，处理进度在「待我处理」清单里`}
-      className="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-semibold leading-none text-white tabular-nums"
-    >
-      {n > 99 ? "99+" : n}
-    </span>
+      className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.15)]"
+    />
   );
 }

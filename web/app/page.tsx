@@ -198,16 +198,6 @@ export default function WorkbenchPage() {
             }
             bodyClassName="p-0"
           >
-            {attentionCount > 0 && (
-              <div className="flex items-start gap-2 border-b border-line px-4 py-2 text-[11px] leading-relaxed text-ink-3">
-                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-red-500/70" />
-                <span>
-                  {unseenCount > 0
-                    ? `这批红点是“新提醒”计数：点标题上的红点或任意一条即清除；同一任务状态变化会再亮。清单保留到处理完成。`
-                    : `下面 ${attentionCount} 项待处理：红点已清除，处理完一项少一项。`}
-                </span>
-              </div>
-            )}
             {attentionCount === 0 ? (
               <Empty icon={<Sparkles className="h-5 w-5" />}>
                 没有需要你处理的卡点。去项目里看看，或者给小队派一条新任务。

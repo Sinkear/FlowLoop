@@ -987,6 +987,9 @@ export function WorkflowGraphView({
         analyzing={analyzing}
         autoFit={autoFit}
         toolbarExtra={expandButton}
+        // 成功路径也吃 heightClass：作为画布的 min-height（与默认类无冲突，
+        // tailwind-merge 直接叠加），避免 1-2 个节点的小图缩成一条窄带。
+        scrollAreaClass={heightClass}
       />
       {fullscreen &&
         // Portal 到 body：页面级 page-enter 动画等祖先若带 transform，

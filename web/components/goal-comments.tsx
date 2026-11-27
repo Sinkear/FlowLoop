@@ -341,11 +341,11 @@ export function GoalComments({
           className="h-full overflow-y-auto overscroll-contain"
         >
           {isLoading ? (
-            <div className="mx-auto w-full max-w-3xl sm:max-w-4xl px-3 sm:px-5">
+            <div className="mx-auto w-full max-w-3xl px-3 sm:px-5">
               <ChatSkeleton />
             </div>
           ) : allComments.length === 0 ? (
-            <div className="mx-auto flex h-full w-full max-w-3xl sm:max-w-4xl flex-col items-center justify-center px-6 py-8 text-center">
+            <div className="mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 py-8 text-center">
               <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-surface-2 text-ink-3">
                 <MessagesSquare className="h-5 w-5" />
               </span>
@@ -364,7 +364,7 @@ export function GoalComments({
               )}
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-3xl sm:max-w-4xl px-3 py-2 sm:px-5">
+            <div className="mx-auto w-full max-w-3xl px-3 py-2 sm:px-5">
               {isError && (
                 <p className="mb-3 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-1.5 text-[11px] text-red-400">
                   对话加载失败，稍后会自动重试；已到达的实时消息仍会显示。
@@ -415,7 +415,7 @@ export function GoalComments({
 
       {/* ── 固定输入区 ── */}
       <div className="shrink-0 border-t border-line bg-surface-1 px-3 pb-3 pt-2.5 sm:px-4">
-        <div className="mx-auto w-full max-w-3xl sm:max-w-4xl">
+        <div className="mx-auto w-full max-w-3xl">
           {replyTo && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/5 px-2 py-1.5">
               <span className="shrink-0 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
