@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, RotateCcw, X } from "lucide-react";
 import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment } from "@/lib/queries";
 import { parseHandoffNote } from "@/lib/utils";
 import { GoalActions } from "@/components/goal-actions";
@@ -159,6 +160,48 @@ function GoalDetailPageInner() {
   // 编排卡双视图：实时执行图 / 计划图（钉了工作流才有计划 tab）。
   const [graphTab, setGraphTab] = useState<"exec" | "plan">("exec");
 
+  // 重开提示 = 一次性 toast，页面上不常驻（用户反馈）。handoff_note 是
+  // "Reopened"/"Reopened: X" 时弹一下告诉人，6 秒自己走；同一会话对同一条
+  // 备注只弹一次。真交接备注（有人留下的内容）不弹，留在右栏「详情」里。
+  //
+  // 盖戳时机很关键：必须在 toast 真正展示完成后（自动消失/手动关闭）才写
+  // sessionStorage「已看过」。如果在弹之前就写，StrictMode/Suspense 的
+  // 卸载重挂会让第二挂载周期看到标记直接 return——提示被整个吞掉
+  // （实测复现）。重挂载场景里两次 setReopenToast 只有存活周期的那次会
+  // 渲染出来，用户始终只看到一条。
+  const [reopenToast, setReopenToast] = useState<string | null>(null);
+  const reopenSeenKeyRef = useRef<string | null>(null);
+  const consumeReopenToast = () => {
+    const key = reopenSeenKeyRef.current;
+    if (!key) return;
+    try {
+      sessionStorage.setItem(key, "1");
+    } catch {
+      // 隐私模式禁写 sessionStorage：下次进页会再弹一次，可接受
+    }
+  };
+  useEffect(() => {
+    if (!goal?.handoff_note) return;
+    const note = parseHandoffNote(goal.handoff_note);
+    if (note.kind !== "reopen") return;
+    const key = `flowloop-reopen-toast:${id}:${goal.handoff_note}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+    } catch {
+      // 读失败按未看过处理
+    }
+    reopenSeenKeyRef.current = key;
+    setReopenToast(note.reason || "任务重新回到进行中，智能体会继续跟进。");
+  }, [goal?.handoff_note, id]);
+  useEffect(() => {
+    if (!reopenToast) return;
+    const t = setTimeout(() => {
+      setReopenToast(null);
+      consumeReopenToast();
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [reopenToast]);
+
   // 终态任务的首屏重点是「这一轮到底做成了什么」——迭代卡在「详情」tab 里，
   // 默认停在「执行」会把它藏起来。只在任务首次进入终态时切一次，之后人手动
   // 切回「执行」不再被顶走。
@@ -293,51 +336,27 @@ function GoalDetailPageInner() {
         </div>
       </header>
 
-      {/* ── 警示区（有才渲染）：持门决策 > handoff / 计划偏差 ── */}
+      {/* ── 警示区（有才渲染）：持门决策 > 计划偏差 ──
+          重开不再放这里：handoff_note=Reopened 是一次性状态翻转，改为
+          进页/出现时弹 toast（见页面末尾 reopenToast）。 */}
       <GateDecisionCard goalId={id} />
 
-      {(goal.handoff_note || hasPlanWarning) && (
-        <div className="flex shrink-0 flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-stretch">
-          {goal.handoff_note && (() => {
-            const note = parseHandoffNote(goal.handoff_note);
-            return (
-              <div
-                className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 lg:max-w-[62%]"
-                title={
-                  note.kind === "reopen"
-                    ? "任务从终态（完成/失败/取消）重新打开，回到进行中并安排继续执行"
-                    : "换负责人时留下的交接说明"
-                }
-              >
-                <span className="mt-0.5 shrink-0 text-[11px] font-medium text-amber-200">
-                  {note.kind === "reopen" ? "重新打开" : "交接备注"}
-                </span>
-                <p className="line-clamp-2 min-w-0 flex-1 text-xs leading-relaxed text-amber-100">
-                  {note.kind === "reopen"
-                    ? note.reason || "任务重新回到进行中，智能体会继续跟进。"
-                    : note.text}
-                </p>
-              </div>
-            );
-          })()}
-          {hasPlanWarning && (
-            <button
-              type="button"
-              onClick={() => setRailTab("plan")}
-              className="flex min-w-0 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-left text-xs text-amber-200 transition-colors hover:border-amber-500/50 hover:bg-amber-500/[0.12]"
-            >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-              <span className="shrink-0 font-medium">
-                {alignment?.materialized
-                  ? `计划偏差 ${deviations.length} 处`
-                  : "计划未物化"}
-              </span>
-              <span className="min-w-0 truncate text-amber-300/80">
-                计划与实际不一致，点「计划」查看逐节点对账
-              </span>
-            </button>
-          )}
-        </div>
+      {hasPlanWarning && (
+        <button
+          type="button"
+          onClick={() => setRailTab("plan")}
+          className="flex shrink-0 min-w-0 items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.12] px-3 py-2 text-left text-xs text-amber-200 transition-colors hover:border-amber-500/60 hover:bg-amber-500/[0.18]"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium">
+            {alignment?.materialized
+              ? `计划偏差 ${deviations.length} 处`
+              : "计划未物化"}
+          </span>
+          <span className="min-w-0 truncate text-amber-300/80">
+            计划与实际不一致，点「计划」查看逐节点对账
+          </span>
+        </button>
       )}
 
       {/* ── 编排图（全宽，实时执行 + 计划放在一起）：从右栏上移，读图不再
@@ -427,6 +446,39 @@ function GoalDetailPageInner() {
           className="lg:h-[930px]"
         />
       </div>
+
+      {/* 重开 toast：portal 到 body——页面级 page-enter 等祖先若带 transform，
+          fixed 会被劫持成 containing block（全屏浮层踩过同一坑）。 */}
+      {reopenToast &&
+        createPortal(
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed bottom-4 right-4 z-[60] w-[min(92vw,360px)] rounded-lg border border-emerald-500/40 bg-surface-1 p-3 shadow-2xl"
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+                <RotateCcw className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-ink">任务已重新打开</div>
+                <p className="mt-1 text-[12px] leading-5 text-ink-3">{reopenToast}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭提醒"
+                onClick={() => {
+                  consumeReopenToast();
+                  setReopenToast(null);
+                }}
+                className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </PageBody>
   );
 }

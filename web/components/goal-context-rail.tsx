@@ -153,15 +153,16 @@ export function GoalContextRail({
 
                 {goal.handoff_note && (() => {
                   const note = parseHandoffNote(goal.handoff_note);
+                  // 重开备注没有实际内容（后端只写 "Reopened"），是一次性
+                  // 状态翻转——页面顶部弹过 toast 就不在详情里常驻了。
+                  if (note.kind === "reopen") return null;
                   return (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2">
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.12] px-3 py-2">
                       <div className="text-[11px] font-medium text-amber-200">
-                        {note.kind === "reopen" ? "重新打开" : "交接备注"}
+                        交接备注
                       </div>
                       <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-amber-100">
-                        {note.kind === "reopen"
-                          ? note.reason || "任务重新回到进行中，智能体会继续跟进。"
-                          : note.text}
+                        {note.text}
                       </p>
                     </div>
                   );
