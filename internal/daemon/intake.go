@@ -39,17 +39,20 @@ func (d *Daemon) runIntakeTask(ctx context.Context, q *service.ClaimedRow, promp
 	// full path so the write_file path argument is unambiguous.
 	prompt += fmt.Sprintf("\n\nArtifact file ABSOLUTE path: %s\n(Write it there with your file tools; do NOT guess the working directory, do NOT use shell redirection)\n",
 		filepath.Join(workdir, "intake.json"))
-	var argsJSON, rtEnvJSON, intakeMachineID, agentModel string
+	var argsJSON, rtEnvJSON, rtModelsJSON, intakeMachineID, agentModel string
 	var maxConcurrent int
 	err := d.st.DB().QueryRowContext(ctx,
-		`SELECT r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent, a.model
+		`SELECT r.args, r.env, COALESCE(r.models,'[]'), COALESCE(r.machine_id,''), a.max_concurrent, a.model
 		 FROM agent a JOIN runtime r ON r.id = a.runtime_id WHERE a.id=?`, agentID).
-		Scan(&argsJSON, &rtEnvJSON, &intakeMachineID, &maxConcurrent, &agentModel)
+		Scan(&argsJSON, &rtEnvJSON, &rtModelsJSON, &intakeMachineID, &maxConcurrent, &agentModel)
 	if err != nil {
 		d.failIntakeRun(ctx, q, "load agent runtime: "+err.Error(), runType)
 		return
 	}
 	d.ensureWorker(agentID, maxConcurrent)
+	// Qualify a BARE agent.model against the runtime probe's model ids —
+	// same rules as the run dispatch path (see resolveModel).
+	agentModel = resolveModel(agentModel, parseRuntimeModels(rtModelsJSON))
 
 	var args []string
 	_ = json.Unmarshal([]byte(argsJSON), &args)
