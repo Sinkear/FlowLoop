@@ -59,8 +59,9 @@ func main() {
 
 	switch os.Args[1] {
 	case "connect":
-		connectCmd(os.Args[2:])
-		return
+		// connect owns its exit proof (in cli.log) and its exit code: clean
+		// stop after a signal, bad invocation, or a recovered panic.
+		os.Exit(connectCmd(os.Args[2:]))
 	case "status":
 		statusCmd(os.Args[2:])
 		return

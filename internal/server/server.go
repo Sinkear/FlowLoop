@@ -88,6 +88,59 @@ func (s *Server) SetHooks(hookSvc *service.HookService) {
 }
 
 // ListenAndServe mounts routes and serves until ctx is cancelled.
+// heartbeatLog throttles the "heartbeat could not be recorded" warning (the
+// machine beats every 5s; the DB error persists, the warning must not):
+// first failure in a streak is logged immediately, later ones at most once a
+// minute, and recovery is reported with the streak's length. Package-level
+// because every machine link in this process shares one log.
+var (
+	heartbeatLogMu   sync.Mutex
+	heartbeatFailing = map[string]heartbeatStreak{}
+)
+
+type heartbeatStreak struct {
+	since  time.Time
+	fails  int
+	lastAt time.Time
+}
+
+const heartbeatLogInterval = time.Minute
+
+func noteHeartbeatFailure(machineID string, err error) {
+	now := time.Now()
+	heartbeatLogMu.Lock()
+	st, ok := heartbeatFailing[machineID]
+	if !ok {
+		st.since = now
+	}
+	st.fails++
+	log := st.fails == 1 || now.Sub(st.lastAt) >= heartbeatLogInterval
+	if log {
+		st.lastAt = now
+	}
+	heartbeatFailing[machineID] = st
+	heartbeatLogMu.Unlock()
+	if !log {
+		return
+	}
+	logging.Warnf("connect: heartbeat from machine %s could not be recorded (%d failure(s) since %s): %v — no last_seen update; the 90s stale sweep will flip it offline",
+		machineID, st.fails, now.Sub(st.since).Round(time.Second), err)
+}
+
+func noteHeartbeatRecorded(machineID string) {
+	now := time.Now()
+	heartbeatLogMu.Lock()
+	st, ok := heartbeatFailing[machineID]
+	if ok {
+		delete(heartbeatFailing, machineID)
+	}
+	heartbeatLogMu.Unlock()
+	if ok && st.fails > 1 {
+		logging.Infof("connect: heartbeat recording recovered for machine %s after %d failure(s) over %s",
+			machineID, st.fails, now.Sub(st.since).Round(time.Second))
+	}
+}
+
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	// Remote skill sync needs the issue providers' pull-request surface.
 	// service.PullProvider is a local structural interface with exactly
@@ -284,6 +337,11 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		// a machine's first register frame could race handler registration
 		// and be answered "method not found" (live flake under load).
 		peer := link.NewPeerUnserved(conn)
+		// Link-level diagnostics (connection died, write timeout, handler
+		// panic, unknown method, dropped notification errors) were computed
+		// inside the peer and thrown away. Route them into the daemon log:
+		// on a machine link this is the ONLY record of WHY the link died.
+		peer.SetLogger(logging.Infof)
 		// The peer binds to its machine on register; on link death the
 		// daemon drops it (dispatches then fail-fast with "machine offline").
 		// The registered id is written by the register handler and read by
@@ -297,6 +355,10 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		}
 		defer func() {
 			if id := machineID(); id != "" {
+				// Before this the eviction was silent: the machine simply
+				// stopped being reachable with nothing in the log tying the
+				// two together.
+				logging.Infof("connect: machine %s link handler exiting — evicting its peer", id)
 				s.d.UnregisterMachinePeer(id, peer)
 			}
 		}()
@@ -389,8 +451,16 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 				return nil, &link.RPCError{Code: link.CodeInvalidParams, Message: "machine_id is required"}
 			}
 			if err := machineSvc.Heartbeat(ctx, p.MachineID); err != nil {
+				// machine.heartbeat is a NOTIFICATION: the error reply has no
+				// waiter and is discarded by the peer, so an unrecorded
+				// heartbeat used to be invisible on BOTH ends right up to the
+				// moment the stale sweep flipped the machine offline.
+				// Throttled: heartbeats arrive every 5s, and an append-only log
+				// must not gain ~720 identical lines/hour per machine.
+				noteHeartbeatFailure(p.MachineID, err)
 				return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
 			}
+			noteHeartbeatRecorded(p.MachineID)
 			return nil, nil // notification — no reply
 		})
 		peer.Handle(link.MethodMachineOffline, func(ctx context.Context, params json.RawMessage) (any, *link.RPCError) {
@@ -430,7 +500,15 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		})
 		// Every handler is registered — start consuming frames now.
 		peer.StartReadLoop()
-		peer.Wait()
+		// The close reason is the single most valuable fact when the machine
+		// dies unexpectedly, and it was being discarded here.
+		if err := peer.Wait(); err != nil {
+			if id := machineID(); id != "" {
+				logging.Warnf("connect: machine %s link closed: %v", id, err)
+			} else {
+				logging.Warnf("connect: unregistered machine link closed: %v", err)
+			}
+		}
 	})
 	// Chat keepalive: the ACP relay has no inherent traffic during an agent's
 	// turn (all chats are pure pass-through — 决策7-5). A reverse proxy's
@@ -577,6 +655,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		// and calls immediately, so an already-running reader could dispatch
 		// the first frame before its handler exists.
 		peer := link.NewPeerUnserved(conn)
+		peer.SetLogger(logging.Infof) // see /connect: link deaths were previously invisible
 		agentSvc := service.NewAgentService(s.st, s.bus)
 
 		resolve := func(raw json.RawMessage) (*service.RunIdentity, *link.RPCError) {
@@ -943,7 +1022,9 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		})
 
 		peer.StartReadLoop() // every handler registered — consume frames now
-		peer.Wait()
+		if err := peer.Wait(); err != nil {
+			logging.Infof("ws: agent link closed: %v", err)
+		}
 	})
 
 	// Stale sweep: machines that stopped heartbeating flip offline.
@@ -960,10 +1041,24 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 					logging.Infof("connect: machine stale sweep: %v", err)
 				} else {
 					for _, id := range ids {
+						// An aggregate count alone ("1 machine(s) offline")
+						// never said WHICH machine or how long it had been
+						// silent — both are needed to reconstruct an incident.
+						var name, hostname, lastSeen string
+						if qerr := s.st.DB().QueryRowContext(ctx,
+							`SELECT COALESCE(name,''), COALESCE(hostname,''), COALESCE(last_seen_at,'') FROM machine WHERE id=?`, id).
+							Scan(&name, &hostname, &lastSeen); qerr != nil {
+							logging.Warnf("connect: machine %s went offline (stale >90s; name lookup failed: %v)", id, qerr)
+						} else {
+							silent := "unknown"
+							if ts, perr := time.Parse(time.RFC3339, lastSeen); perr == nil {
+								silent = time.Since(ts).Round(time.Second).String()
+							} else if ts, perr := time.Parse("2006-01-02 15:04:05", lastSeen); perr == nil {
+								silent = time.Since(ts).Round(time.Second).String()
+							}
+							logging.Warnf("connect: machine %q (%s, %s) went OFFLINE — last heartbeat %s ago (stale >90s sweep); runs dispatched to it will now fail or stall", name, id, hostname, silent)
+						}
 						s.bus.Publish(ctx, events.Event{Topic: "machine:offline", Payload: map[string]string{"machine_id": id}})
-					}
-					if len(ids) > 0 {
-						logging.Infof("connect: %d machine(s) offline", len(ids))
 					}
 				}
 			}

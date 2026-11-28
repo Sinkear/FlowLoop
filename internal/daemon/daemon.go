@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -152,16 +153,20 @@ type Daemon struct {
 	schedSvc   *service.ScheduleService
 	im         *notify.Connector // M3: daily digest + intake replies (the notifier
 	// is born when the long connection connects; fetch it live)
-	qs            notify.QueryStore          // M3: digest aggregation (may be nil)
-	issuePoll     *issue.Poller              // M4-B: open issues → goals
-	issueCloser   *issue.Closer              // M4-B: delivered goal → close its issue
-	intakeSvc     *notify.IntakeService      // M4-B: multi-domain clarification draft store
-	lastIssuePoll time.Time                  // last poll time (the interval is configurable)
-	teamImportSvc *service.TeamImportService // team-import processor run lifecycle
-	domainSvc     *service.DomainService     // intake: domain CRUD (NL-driven)
-	skillSvc      *service.SkillService      // intake: skill CRUD (NL-driven)
-	blueprintSvc  *service.BlueprintService  // intake: blueprint creation (NL-driven)
-	rsi           *service.RSIService        // trace collection + training analysis (optional)
+	qs            notify.QueryStore     // M3: digest aggregation (may be nil)
+	issuePoll     *issue.Poller         // M4-B: open issues → goals
+	issueCloser   *issue.Closer         // M4-B: delivered goal → close its issue
+	intakeSvc     *notify.IntakeService // M4-B: multi-domain clarification draft store
+	lastIssuePoll time.Time             // last poll time (the interval is configurable)
+	// lastFrictionAt rate-limits the claim-friction log: an idle queue is a
+	// steady state (every tick re-evaluates), but a STALL is the event worth
+	// recording — 30s between reports keeps a 4h stall readable.
+	lastFrictionAt time.Time
+	teamImportSvc  *service.TeamImportService // team-import processor run lifecycle
+	domainSvc      *service.DomainService     // intake: domain CRUD (NL-driven)
+	skillSvc       *service.SkillService      // intake: skill CRUD (NL-driven)
+	blueprintSvc   *service.BlueprintService  // intake: blueprint creation (NL-driven)
+	rsi            *service.RSIService        // trace collection + training analysis (optional)
 
 	mu          sync.Mutex
 	workers     map[string]*agentRunner // agentID → per-agent scheduler
@@ -225,6 +230,10 @@ type Daemon struct {
 	// chat is the ACP chat relay (Phase 6): web sockets ↔ machine chat
 	// channels, frames unparsed.
 	chat chatRelay
+	// chatDrops counts frames dropped for chats that no longer exist
+	// (rate-limiting the log line — see noteDroppedChatFrame).
+	chatDropsMu sync.Mutex
+	chatDrops   map[string]int
 }
 
 // agentRunner schedules one agent's runs with a concurrency semaphore.
@@ -433,10 +442,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.recoverWorkers(ctx)
 	d.sweepDeliverWorktrees(ctx)
 	d.sweepRunWorktrees(ctx)
-	if n, err := d.runSvc.RecoverStuckRunning(ctx); err != nil {
+	// Startup recovery now names every run it touches: a bare count made a
+	// restart's side effects (compute resurrected on cancelled goals, or a
+	// run silently requeued onto an offline machine) untraceable.
+	if rec, err := d.runSvc.RecoverStuckRunningDetailed(ctx); err != nil {
 		logging.Errorf("daemon: recover stuck running: %v", err)
-	} else if n > 0 {
-		logging.Infof("daemon: recovered %d stuck running run(s)", n)
+	} else {
+		for _, r := range rec {
+			logging.Warnf("daemon: startup recovery — run %s (agent %s, goal %s) was left 'running' by the previous daemon: %s", r.RunID, r.AgentID, r.GoalID, r.Outcome)
+		}
+		if len(rec) > 0 {
+			logging.Warnf("daemon: startup recovery reclaimed %d run(s) left 'running' (was only a count before — no ids)", len(rec))
+		}
 	}
 	// P0-1 (决策 6-11): terminal runs whose reconcile never happened (a crash
 	// between the terminal UPDATE and the reconcile transaction) replay their
@@ -828,6 +845,53 @@ func (d *Daemon) onMachineOffline(_ context.Context, e events.Event) {
 	if machineID != "" && d.MachinePeer(machineID) == nil {
 		d.closeChatsForMachine(machineID)
 	}
+	if machineID == "" {
+		return
+	}
+	// Which runs are now stranded? The single most important post-mortem
+	// question ("what was on the machine when it died") had no answer
+	// anywhere: the offline event carried only a machine id, and the runs
+	// sat 'running' with no executor and no terminal report.
+	rows, err := d.st.DB().QueryContext(context.Background(),
+		`SELECT r.id, r.agent_id, COALESCE(r.goal_id,''), COALESCE(r.role,''), COALESCE(r.started_at,'')
+		   FROM run r
+		   JOIN agent a ON a.id = r.agent_id
+		   JOIN runtime rt ON rt.id = a.runtime_id
+		  WHERE r.status = 'running' AND rt.machine_id = ?`, machineID)
+	if err != nil {
+		logging.Warnf("daemon: machine %s offline — could not list its running runs: %v", machineID, err)
+		return
+	}
+	defer rows.Close()
+	stranded, scanErrs := 0, 0
+	for rows.Next() {
+		var runID, agentID, goalID, role, startedAt string
+		if err := rows.Scan(&runID, &agentID, &goalID, &role, &startedAt); err != nil {
+			// A scan failure must not silently shrink the stranded list: the
+			// count is the answer to "what was on the machine when it died".
+			scanErrs++
+			logging.Warnf("daemon: machine %s offline — could not read a stranded run row: %v", machineID, err)
+			continue
+		}
+		stranded++
+		age := "unknown"
+		if ts, perr := time.Parse(time.RFC3339, startedAt); perr == nil {
+			age = time.Since(ts).Round(time.Second).String()
+		} else if ts, perr := time.Parse("2006-01-02 15:04:05", startedAt); perr == nil {
+			age = time.Since(ts).Round(time.Second).String()
+		}
+		logging.Warnf("daemon: machine %s offline — run %s (agent %s, role %s, goal %s) is stranded in 'running' (started %s ago); its process is on the dead machine and no terminal report will arrive. It stays until the machine returns or a human stops it.", machineID, runID, agentID, role, goalID, age)
+	}
+	// A step-time failure surfaces only here (as in the startup recovery): the
+	// list is the incident's core fact, so an incomplete read must say so.
+	if ierr := rows.Err(); ierr != nil {
+		logging.Warnf("daemon: machine %s offline — stranded-run list INCOMPLETE after %d row(s): %v", machineID, stranded, ierr)
+	} else if scanErrs > 0 {
+		logging.Warnf("daemon: machine %s offline — %d stranded run row(s) could not be decoded; the count below is a lower bound", machineID, scanErrs)
+	}
+	if stranded > 0 {
+		logging.Warnf("daemon: machine %s offline — %d run(s) now stranded (no executor, no terminal report); the idle watchdog only NOTIFIES, it does not cancel", machineID, stranded)
+	}
 }
 
 func (d *Daemon) onGoalDeleted(_ context.Context, e events.Event) {
@@ -1182,6 +1246,42 @@ func (d *Daemon) stopAll() {
 // concurrency slots, then routes each to its agent's worker. This is the fix
 // for the old global head-of-line blocking: a saturated agent can no longer
 // stall other agents' dispatch (DESIGN.md).
+// frictionInterval throttles the claim-friction report.
+const frictionInterval = 30 * time.Second
+
+// logClaimFriction explains why queued runs sat unclaimed. It is the daemon-
+// side half of the incident: a run could be permanently queued (machine
+// offline, runtime absent, goal state, single-flight, backoff) while every
+// existing log line said nothing at all. Rate-limited — a stall reports once
+// per frictionInterval, not once per tick.
+func (d *Daemon) logClaimFriction(ctx context.Context, ready []string, workers string) {
+	now := time.Now()
+	if !d.lastFrictionAt.IsZero() && now.Sub(d.lastFrictionAt) < frictionInterval {
+		return
+	}
+	total, oldest, blocks, err := d.runSvc.ClaimFriction(ctx, ready)
+	if err != nil {
+		logging.Infof("daemon: claim friction probe: %v", err)
+		return
+	}
+	if total == 0 {
+		return
+	}
+	d.lastFrictionAt = now
+	age := "unknown"
+	if oldest != "" {
+		if ts, perr := time.Parse(time.RFC3339, oldest); perr == nil {
+			age = now.Sub(ts).Round(time.Second).String()
+		} else if ts, perr := time.Parse("2006-01-02 15:04:05", oldest); perr == nil {
+			age = now.Sub(ts).Round(time.Second).String()
+		}
+	}
+	logging.Warnf("daemon: %d run(s) QUEUED and unclaimable (oldest %s ago) — %d ready agent(s)%s", total, age, len(ready), workers)
+	for _, b := range blocks {
+		logging.Warnf("daemon: queued run %s (agent %s, role %s, queued %s) blocked: %s", b.RunID, b.AgentID, b.Role, b.QueuedAt, b.Reason)
+	}
+}
+
 func (d *Daemon) dispatchOnce(ctx context.Context) {
 	d.mu.Lock()
 	if d.stopped {
@@ -1191,8 +1291,8 @@ func (d *Daemon) dispatchOnce(ctx context.Context) {
 	// ready = agents with at least one free slot right now.
 	var ready []string
 	type wc struct {
-		id           string
-		free, queued int
+		id                  string
+		free, queued, total int
 	}
 	var dump []wc
 	for id, w := range d.workers {
@@ -1201,12 +1301,25 @@ func (d *Daemon) dispatchOnce(ctx context.Context) {
 		if free > 0 && queued < workerQueueDepth {
 			ready = append(ready, id)
 		}
-		dump = append(dump, wc{id, free, queued})
+		dump = append(dump, wc{id: id, free: free, queued: queued, total: cap(w.sem)})
 	}
 	d.mu.Unlock()
-	_ = dump
+	// The per-agent capacity table was computed and thrown away every tick —
+	// the one number that says "there is capacity but nothing was claimed".
+	sort.Slice(dump, func(i, j int) bool { return dump[i].id < dump[j].id })
+	var wb strings.Builder
+	for i, w := range dump {
+		if i > 0 {
+			wb.WriteByte(' ')
+		}
+		fmt.Fprintf(&wb, "%s=%d/%d(q=%d)", w.id, w.free, w.total, w.queued)
+	}
+	workers := " workers: " + wb.String()
 
 	if len(ready) == 0 {
+		// Every agent is saturated (or has no worker at all): queued runs are
+		// NOT claimable this tick. Distinguish saturation from a stall.
+		d.logClaimFriction(ctx, nil, workers)
 		return
 	}
 	// Claim as many runs as we have free slots in total, capped per tick.
@@ -1231,15 +1344,22 @@ func (d *Daemon) dispatchOnce(ctx context.Context) {
 			return
 		}
 		if q == nil {
+			d.logClaimFriction(ctx, ready, workers)
 			return // nothing left to claim
 		}
 		d.mu.Lock()
 		w, ok := d.workers[q.AgentID]
 		d.mu.Unlock()
 		if !ok {
-			// Agent lost its worker mid-dispatch; requeue by finishing as
-			// failed+retry is wrong here — just leave queued for next tick.
-			logging.Infof("daemon: no worker for agent %s (run %s)", q.AgentID, q.RunID)
+			// Agent lost its worker mid-dispatch. Claim already stamped the
+			// run 'running', so returning here (as this branch used to) parked
+			// the run in 'running' with no worker and no terminal report —
+			// stuck until the next daemon restart. Hand it back to the queue.
+			logging.Warnf("daemon: no worker for agent %s — returning run %s to queued (it was already stamped running by the claim)", q.AgentID, q.RunID)
+			if _, err := d.st.DB().ExecContext(ctx,
+				`UPDATE run SET status='queued', started_at='' WHERE id=?`, q.RunID); err != nil {
+				logging.Errorf("daemon: requeue workerless run %s: %v — it stays 'running' with no worker", q.RunID, err)
+			}
 			return
 		}
 		select {
@@ -1841,8 +1961,10 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &agentModel, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
 	// Claim visibility: which run, which agent, which role — the panel's
 	// answer to "who is doing what right now". The TITLE travels with the
-	// id: ids are for the system, humans read titles.
-	logging.Infof("run %s claimed: agent=%s role=%s goal=%q (%s)", q.RunID, q.AgentID, runRole, title, q.GoalID)
+	// id: ids are for the system, humans read titles. Emitted AFTER the Scan
+	// check (below): logging it first printed "claimed: goal=..." for rows
+	// whose config load failed, which reads as a started run in any
+	// post-mortem — the exact opposite of what happened.
 	// Run role (决策 5-4/6-x, stamped at enqueue): review runs are the
 	// platform's review requests (SYSTEM trigger comment — "请审查本次改动…
 	// 只提意见"); consult runs are pulled in by an agent/human mention comment
@@ -1859,9 +1981,11 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 	// the acceptance authority (决策 5-3/6-5). Declared early: the scratch
 	// workdir branch below needs it.
 	if err != nil {
+		logging.Warnf("run %s: config load FAILED — nothing was dispatched: %v", q.RunID, err)
 		d.failRun(ctx, q, fmt.Sprintf("load config: %v", err))
 		return
 	}
+	logging.Infof("run %s claimed: agent=%s role=%s goal=%q (%s)", q.RunID, q.AgentID, runRole, title, q.GoalID)
 	// The GOAL title/description survive the sub-goal override below — the
 	// fixed context block always names the goal; the wake line names the work
 	// item.

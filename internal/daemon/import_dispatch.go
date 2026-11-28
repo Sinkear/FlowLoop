@@ -128,6 +128,10 @@ func (d *Daemon) sweepStuckImportGoals(ctx context.Context) {
 		_ = d.st.DB().QueryRowContext(ctx,
 			`SELECT id FROM run WHERE goal_id=? ORDER BY queued_at DESC LIMIT 1`, id).Scan(&runID)
 		if runID == "" {
+			// A stuck goal with no run at all: nothing to resolve the review
+			// against. It used to be skipped in complete silence, which is
+			// indistinguishable from "swept successfully".
+			logging.Warnf("team-import: stuck review goal %s has NO run row — cannot auto-approve it; it stays parked in review", id)
 			continue
 		}
 		d.approveImportGoal(ctx, id, runID)

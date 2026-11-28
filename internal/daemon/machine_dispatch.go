@@ -33,6 +33,11 @@ func (d *Daemon) RegisterMachinePeer(machineID string, p *link.Peer) {
 		d.machinePeers = map[string]*link.Peer{}
 	}
 	if old, ok := d.machinePeers[machineID]; ok && old != p {
+		// Displacement is an incident-relevant event: the machine RECONNECTED
+		// (its old link was still registered). Silent before. Wait() must not
+		// be used here — it blocks until the old link dies, and this one is
+		// still alive; the peer's own logger records the close reason.
+		logging.Infof("machine: %s reconnected — displacing the previous live link", machineID)
 		old.Close() // stale link — its unregister will no-op (peer identity)
 	}
 	d.machinePeers[machineID] = p
@@ -56,15 +61,20 @@ func (d *Daemon) RegisterMachinePeer(machineID string, p *link.Peer) {
 // MachineChatClosed/CloseChat).
 func (d *Daemon) closeChatsForMachine(machineID string) {
 	var toClose []*chatEntry
+	var toCloseIDs []string
 	d.chat.mu.Lock()
 	for id, e := range d.chat.chats {
 		if e.machineID == machineID {
 			delete(d.chat.chats, id)
 			e.closeOnce.Do(func() { close(e.done) })
 			toClose = append(toClose, e)
+			toCloseIDs = append(toCloseIDs, id)
 		}
 	}
 	d.chat.mu.Unlock()
+	if len(toClose) > 0 {
+		logging.Infof("chat: tearing down %d chat(s) bound to machine %s — the machine-side bridge is gone: %s", len(toClose), machineID, strings.Join(toCloseIDs, ", "))
+	}
 	for _, e := range toClose {
 		if e.close != nil {
 			e.close()
@@ -87,7 +97,12 @@ func (d *Daemon) UnregisterMachinePeer(machineID string, p *link.Peer) {
 	d.machineMu.Unlock()
 	if ok && cur == p {
 		// This IS the live peer dropping — tear down its chats.
+		logging.Warnf("machine: %s went OFFLINE — its link was dropped (runs it was executing will not report back; queued dispatch for it now fails fast)", machineID)
 		d.closeChatsForMachine(machineID)
+	} else {
+		// A stale drain: the machine already reconnected. Worth one line —
+		// otherwise a link flap looks like nothing happened.
+		logging.Infof("machine: stale link for %s drained (a newer link is registered) — nothing evicted", machineID)
 	}
 	// else: stale drain (a reconnect already replaced this peer) — the new
 	// peer's chats were cleaned by RegisterMachinePeer; do nothing here.
@@ -205,8 +220,21 @@ func (d *Daemon) dispatchToMachine(ctx context.Context, q *service.ClaimedRow, p
 		// ack was lost — cancel it so the orphan exec stops (a killed
 		// turn otherwise leaves poisoned history in the CLI's session
 		// store, and the NEXT run's resume dies on it).
+		// Was there ANY sign the machine started? A claimed ack that was lost
+		// on the wire leaves the same evidence as a machine that never polled
+		// — except the run may actually be executing on the machine right
+		// now, so the reason string must not claim "did not pick up".
+		d.machineLastEventMu.Lock()
+		_, started := d.machineLastEvent[q.RunID]
+		d.machineLastEventMu.Unlock()
 		d.enqueueMachineCancel(machineID, link.RunCancelParams{RunID: q.RunID, Reason: "dispatch_timeout"})
-		d.failRun(context.Background(), q, "the machine did not pick up the dispatch (60s poll timeout)")
+		if started {
+			logging.Warnf("dispatch: run %s was picked up by machine %s but no claimed ack arrived within %s — cancelling the orphan execution", q.RunID, machineID, pickupTimeout)
+			d.failRun(context.Background(), q, fmt.Sprintf("the machine started the run but its claimed acknowledgement was lost within %s — the execution was cancelled on the machine", pickupTimeout))
+		} else {
+			logging.Warnf("dispatch: run %s was never picked up by machine %s within %s — failing the run", q.RunID, machineID, pickupTimeout)
+			d.failRun(context.Background(), q, "the machine did not pick up the dispatch (60s poll timeout)")
+		}
 	}()
 }
 

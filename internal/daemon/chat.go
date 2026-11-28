@@ -360,6 +360,30 @@ func logChatFrame(dir string, frame []byte) {
 	}
 }
 
+// maxDroppedChatTracking bounds the dead-chat-id counter map (the daemon's
+// lifetime is long and every chat id is unique).
+const maxDroppedChatTracking = 512
+
+// noteDroppedChatFrame counts frames dropped for a chat id that no longer
+// exists, logging the first frame and then every 100th: a torn chat whose
+// machine bridge keeps streaming must not become one log line per frame.
+func (d *Daemon) noteDroppedChatFrame(chatID string, seq int64) {
+	d.chatDropsMu.Lock()
+	if d.chatDrops == nil {
+		d.chatDrops = map[string]int{}
+	}
+	if _, tracked := d.chatDrops[chatID]; !tracked && len(d.chatDrops) >= maxDroppedChatTracking {
+		d.chatDropsMu.Unlock()
+		return
+	}
+	d.chatDrops[chatID]++
+	n := d.chatDrops[chatID]
+	d.chatDropsMu.Unlock()
+	if n == 1 || n%100 == 0 {
+		logging.Infof("chat: %s frame dropped (seq %d) — no live chat for this id (bridge gone or closed); %d frame(s) dropped so far", chatID, seq, n)
+	}
+}
+
 // MachineChatFrame queues a chat.frame notification (machine → daemon) for
 // the chat's writer pump. The frame bytes are COPIED: they slice into the
 // peer's read buffer, which is reused once this dispatch returns.
@@ -368,6 +392,12 @@ func (d *Daemon) MachineChatFrame(p link.ChatFrameParams) {
 	e := d.chat.chats[p.ChatID]
 	d.chat.mu.Unlock()
 	if e == nil {
+		// The bridge behind this chat id is already gone (machine reconnected
+		// or the web closed it). The frame is dropped — previously in total
+		// silence, so a half-torn chat lost its tail with no trace on either
+		// side. Reported at bounded volume: the machine-side bridge can keep
+		// streaming for a while after teardown.
+		d.noteDroppedChatFrame(p.ChatID, p.Seq)
 		return
 	}
 	logChatFrame("machine→web", p.Frame)

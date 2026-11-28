@@ -272,6 +272,7 @@ func (b *chatBridge) handleChatOpen(ctx context.Context, raw json.RawMessage, pe
 		Cwd:        p.Cwd,
 	}, base)
 	if err != nil {
+		cliLogf("chat: spawn for agent %s FAILED: %s (cwd=%s): %v", p.AgentID, p.ACPSpawn[0], p.Cwd, err)
 		return nil, &link.RPCError{Code: link.CodeInternal, Message: "runtime: " + err.Error()}
 	}
 	chatID := fmt.Sprintf("chat-%d", b.nextID())
@@ -299,6 +300,11 @@ func (b *chatBridge) handleChatOpen(ctx context.Context, raw json.RawMessage, pe
 		scanner := bufio.NewScanner(conn.R)
 		scanner.Buffer(make([]byte, 64*1024), 4<<20)
 		seq := int64(0)
+		// Frame delivery accounting: a chat.frame Notify that fails is
+		// DROPPED (the relay has no stash) — the web client's conversation
+		// silently loses a frame. Previously `_ =` discarded it entirely.
+		dropped := 0
+		dropErrLogged := false
 		for scanner.Scan() {
 			line := bytes.TrimSpace(scanner.Bytes())
 			if len(line) == 0 {
@@ -308,19 +314,30 @@ func (b *chatBridge) handleChatOpen(ctx context.Context, raw json.RawMessage, pe
 				continue
 			}
 			seq++
-			_ = peer.Notify(ctx, link.MethodChatFrame, link.ChatFrameParams{
+			if err := peer.Notify(ctx, link.MethodChatFrame, link.ChatFrameParams{
 				ChatID: chatID,
 				Seq:    seq,
 				Frame:  append(json.RawMessage(nil), line...),
-			})
+			}); err != nil {
+				dropped++
+				if !dropErrLogged {
+					cliLogf("chat: %s frame %d could not be relayed (%v) — %d frame(s) dropped so far", chatID, seq, err, dropped)
+					dropErrLogged = true
+				}
+			}
+		}
+		scanErr := scanner.Err()
+		if dropped > 0 {
+			cliLogf("chat: %s ended with %d of %d frame(s) never relayed to the web", chatID, dropped, seq)
 		}
 		_ = peer.Notify(ctx, link.MethodChatClosed, link.ChatClosedParams{
 			ChatID: chatID,
-			Reason: fmt.Sprintf("cli exited: %v", scanner.Err()),
+			Reason: fmt.Sprintf("cli exited: %v", scanErr),
 		})
+		cliLogf("chat: %s CLI stdout closed (seq=%d, scan error=%v) — tearing the chat down", chatID, seq, scanErr)
 		b.cleanup(chatID)
 	}()
-	cliLogf("chat: %s opened for agent %s (cwd=%s)", chatID, p.AgentID, p.Cwd)
+	cliLogf("chat: %s opened for agent %s (cwd=%s, cli=%s)", chatID, p.AgentID, p.Cwd, p.ACPSpawn[0])
 	return link.ChatOpenResult{ChatID: chatID, Cwd: p.Cwd}, nil
 }
 
@@ -356,6 +373,7 @@ func (b *chatBridge) handleChatFrame(ctx context.Context, raw json.RawMessage) (
 	_, err := w.Write(append(frame, '\n'))
 	wmu.Unlock()
 	if err != nil {
+		cliLogf("chat: %s frame write to the CLI failed: %v", p.ChatID, err)
 		return nil, &link.RPCError{Code: link.CodeInternal, Message: err.Error()}
 	}
 	return map[string]bool{"ok": true}, nil
@@ -441,14 +459,27 @@ func (b *chatBridge) cleanup(chatID string) {
 	delete(b.sessions, chatID)
 	b.mu.Unlock()
 	if closeFn == nil {
+		// A cleanup for an id that never existed (or was already torn down)
+		// is a no-op — logged at low volume so a phantom chat.close is
+		// attributable instead of invisible.
+		cliLogf("chat: cleanup %s — no such live chat (already closed?)", chatID)
 		return
 	}
 	if wc, ok := writer.(io.Closer); ok {
-		_ = wc.Close()
+		if err := wc.Close(); err != nil {
+			cliLogf("chat: %s stdin close failed: %v", chatID, err)
+		}
 	}
+	cliLogf("chat: %s tearing down — stdin closed, force-kill in %s", chatID, gracefulExitWait)
 	go func() {
 		time.Sleep(gracefulExitWait)
-		_ = closeFn()
+		// The force-kill outcome was invisible: a process that survived it
+		// orphaned on the machine with no trace.
+		if err := closeFn(); err != nil {
+			cliLogf("chat: %s teardown reported: %v", chatID, err)
+		} else {
+			cliLogf("chat: %s torn down", chatID)
+		}
 	}()
 }
 
