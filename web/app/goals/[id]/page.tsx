@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment } from "@/lib/queries";
+import { parseHandoffNote } from "@/lib/utils";
 import { GoalActions } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalContextRail, type GoalContextTab } from "@/components/goal-context-rail";
@@ -295,14 +296,28 @@ function GoalDetailPageInner() {
 
       {(goal.handoff_note || hasPlanWarning) && (
         <div className="flex shrink-0 flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-stretch">
-          {goal.handoff_note && (
-            <div className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 lg:max-w-[62%]">
-              <span className="mt-0.5 shrink-0 text-[11px] font-medium text-amber-200">Handoff note</span>
-              <p className="line-clamp-2 min-w-0 flex-1 text-xs leading-relaxed text-amber-100" title={goal.handoff_note}>
-                {goal.handoff_note}
-              </p>
-            </div>
-          )}
+          {goal.handoff_note && (() => {
+            const note = parseHandoffNote(goal.handoff_note);
+            return (
+              <div
+                className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 lg:max-w-[62%]"
+                title={
+                  note.kind === "reopen"
+                    ? "任务从终态（完成/失败/取消）重新打开，回到进行中并安排继续执行"
+                    : "换负责人时留下的交接说明"
+                }
+              >
+                <span className="mt-0.5 shrink-0 text-[11px] font-medium text-amber-200">
+                  {note.kind === "reopen" ? "重新打开" : "交接备注"}
+                </span>
+                <p className="line-clamp-2 min-w-0 flex-1 text-xs leading-relaxed text-amber-100">
+                  {note.kind === "reopen"
+                    ? note.reason || "任务重新回到进行中，智能体会继续跟进。"
+                    : note.text}
+                </p>
+              </div>
+            );
+          })()}
           {hasPlanWarning && (
             <button
               type="button"

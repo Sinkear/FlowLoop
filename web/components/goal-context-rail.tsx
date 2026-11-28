@@ -11,7 +11,7 @@ import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { fmtInt, nodeKindMeta } from "@/components/training/format";
 import { Badge, SectionCard, Segmented, StatStrip } from "@/components/ui";
 import { useEnvChanges, usePlanAlignment, useRsiSessions } from "@/lib/queries";
-import { cn } from "@/lib/utils";
+import { cn, parseHandoffNote } from "@/lib/utils";
 import type { Goal, WorkflowGraph } from "@/lib/types";
 
 // ── 任务上下文右栏 ────────────────────────────────────────────────
@@ -174,14 +174,21 @@ export function GoalContextRail({
                   </div>
                 </div>
 
-                {goal.handoff_note && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2">
-                    <div className="text-[11px] font-medium text-amber-200">Handoff note</div>
-                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-amber-100">
-                      {goal.handoff_note}
-                    </p>
-                  </div>
-                )}
+                {goal.handoff_note && (() => {
+                  const note = parseHandoffNote(goal.handoff_note);
+                  return (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2">
+                      <div className="text-[11px] font-medium text-amber-200">
+                        {note.kind === "reopen" ? "重新打开" : "交接备注"}
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-amber-100">
+                        {note.kind === "reopen"
+                          ? note.reason || "任务重新回到进行中，智能体会继续跟进。"
+                          : note.text}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             </SectionCard>
 
