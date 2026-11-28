@@ -72,13 +72,18 @@ export const configureSkillSource = (
 ) => api<import("./types").Skill>(`/skills/${id}/source`, { method: "PUT", body: JSON.stringify(body) });
 export const clearSkillSource = (id: string) =>
   api<import("./types").Skill>(`/skills/${id}/source`, { method: "DELETE" });
-// Read-only compare of the local skill dir vs the remote repo; also probes the
-// configured token's push/PR permission (can_push).
-export const compareSkillSync = (id: string) =>
-  api<import("./types").SyncResult>(`/skills/${id}/sync`);
-// pull replaces local files with the remote ones; push commits local files to
-// the configured branch. Both verify push permission server-side (403).
-export const runSkillSync = (id: string, direction: "pull" | "push") =>
+// Lightweight update probe: `git ls-remote` branch head vs the last-sync SHA.
+// One round trip, no clone, no file diff — the "check for updates" button.
+export const checkSkillSync = (id: string) =>
+  api<import("./types").SkillSyncCheck>(`/skills/${id}/check`);
+// Install a NEW skill by pulling it from a remote repository (clone +
+// register + bind + baseline in one call). The "upload via repository" flow.
+export const installSkillFromRepo = (
+  body: { repo_url: string; provider?: string; branch?: string; path?: string; token?: string }
+) => api<import("./types").Skill>("/skills/install-from-repo", { method: "POST", body: JSON.stringify(body) });
+// pull replaces local files with the remote ones. Direct push is REMOVED:
+// local changes go upstream via createSkillPullRequest (review + approval).
+export const runSkillSync = (id: string, direction: "pull") =>
   api<import("./types").SyncResult>(`/skills/${id}/sync`, {
     method: "POST",
     body: JSON.stringify({ direction }),

@@ -15,7 +15,7 @@ import (
 // under the repository's skills/ directory for local use, and a test keeps the
 // two byte-identical.
 //
-//go:embed assets/flowloop-chat-create assets/flowloop-vod
+//go:embed assets/flowloop-chat-create assets/flowloop-vod assets/flowloop-skill-sync
 var builtinSkillsFS embed.FS
 
 // builtinSkill is one shipped skill: its stable identity (the constants in
@@ -41,6 +41,12 @@ var builtinSkills = []builtinSkill{
 		Name:  BuiltinVODName,
 		Title: BuiltinVODTitle,
 		Asset: "assets/flowloop-vod",
+	},
+	{
+		ID:    BuiltinSkillSyncID,
+		Name:  BuiltinSkillSyncName,
+		Title: BuiltinSkillSyncTitle,
+		Asset: "assets/flowloop-skill-sync",
 	},
 }
 

@@ -205,6 +205,15 @@ Subcommands:
   domain delete <name>                       delete a domain (comma-separated batch)
   skill list                                 list all skills (JSON)
   skill delete <name>                        delete a skill (comma-separated batch)
+  skill install --repo <url> [--path p] [--branch b] [--provider github|gitcode] [--token t]
+                                             install a NEW skill from a git repository
+  skill source set <name> --repo <url> [--path p] [--branch b] [--provider github|gitcode] [--token t]
+                                             bind a skill to a repository
+  skill source clear <name>                  remove the repository binding
+  skill check <name>                         lightweight update probe (sha-level, no clone)
+  skill sync <name>                          file-level sync state + next-step hint (JSON)
+  skill pull <name>                          replace local files with the repository's
+  skill pr <name> [--title T] [--body B]     submit local edits as a pull request
   subgoal list|get <id>|create --title T --assignee A [--description D] [--verifier V]
                                              list/create/read work items (the owner splits)
   subgoal cancel <id>                        cancel a work item
@@ -823,7 +832,7 @@ func domainDelete(args []string) {
 
 func skillCmd(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: flowloop-cli skill <list|delete>")
+		fmt.Fprintln(os.Stderr, "usage: flowloop-cli skill <list|delete|install|source|check|sync|pull|pr>")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -831,6 +840,18 @@ func skillCmd(args []string) {
 		get(serverURL() + "/skills")
 	case "delete":
 		skillDelete(args[1:])
+	case "install":
+		skillInstallCmd(args[1:])
+	case "source":
+		skillSourceCmd(args[1:])
+	case "check":
+		skillCheckCmd(args[1:])
+	case "sync":
+		skillFileSyncCmd(args[1:])
+	case "pull":
+		skillFilePullCmd(args[1:])
+	case "pr":
+		skillFilePrCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown skill subcommand %q\n", args[0])
 		os.Exit(2)

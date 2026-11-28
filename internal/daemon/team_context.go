@@ -175,6 +175,16 @@ func (d *Daemon) buildFixedBlock(ctx context.Context, goalID, agentID, agentName
 	b.WriteString("  lack background; pass the last comment id you saw as --after for\n")
 	b.WriteString("  incremental reads; if you do NOT remember what you have seen,\n")
 	b.WriteString("  pull WITHOUT --after (full feed) — never guess an --after.\n")
+	b.WriteString("- Skill ↔ repository sync: the `flowloop skill` subcommands manage\n")
+	b.WriteString("  the platform skill library against git repositories —\n")
+	b.WriteString("  `flowloop skill list` (what exists), `flowloop skill install\n")
+	b.WriteString("  --repo <url> [--path <subdir>] [--branch <b>] [--token <t>]` (install\n")
+	b.WriteString("  a new skill from a repo), `flowloop skill check <name>` (lightweight\n")
+	b.WriteString("  update probe), `flowloop skill pull <name>` (replace local files\n")
+	b.WriteString("  with the repo's), `flowloop skill pr <name>` (submit local edits as a\n")
+	b.WriteString("  pull request — the only upstream path; direct push is not\n")
+	b.WriteString("  supported), `flowloop skill source set|clear <name>` (bind/unbind a\n")
+	b.WriteString("  repo). Private repos need --token; never echo the token.\n")
 	return b.String()
 }
 

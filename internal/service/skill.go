@@ -231,6 +231,14 @@ const (
 	BuiltinVODID    = "a02b5e7cefb1ae197f199ae919523b33"
 	BuiltinVODName  = "flowloop-vod"
 	BuiltinVODTitle = "开发者声音"
+
+	// BuiltinSkillSyncID is the stable skill id of the repository-sync skill:
+	// it teaches the agent the skill↔repository flow (install / check /
+	// pull / pr / source set|clear) through the flowloop CLI. Auto-attached
+	// to the steward so every conversation can drive skill sync.
+	BuiltinSkillSyncID    = "6f3a8e2d91c4b7f0a5e1d3c8b9a2f647"
+	BuiltinSkillSyncName  = "flowloop-skill-sync"
+	BuiltinSkillSyncTitle = "Skill 同步仓库"
 )
 
 // EnsureBuiltin installs or refreshes one platform-shipped skill: the row is
