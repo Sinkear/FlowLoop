@@ -1623,13 +1623,48 @@ func (s *GoalService) RetrySubGoal(ctx context.Context, subGoalID string) (*SubG
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, NewValidationError("the sub-goal is not failed — nothing to retry")
 	}
+	// G6-R3 (2026-11-28): RetrySubGoal used to leave the blueprint_node row
+	// 'failed' while the sub_goal re-ran. markBlueprintNodeTx is monotonic
+	// (settled/skipped/failed never regress), so the node stayed failed
+	// forever and the later verify's settle mirror was silently dropped —
+	// the 11-26 openviking run left four nodes (t_repair/t_reverify/
+	// t_package/gate_pack) stuck failed under verified sub_goals. Flip the
+	// mirror with the same guarded shape reviveFailedDependentsTx uses.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blueprint_node SET state='running' WHERE sub_goal_id=? AND state='failed'`, subGoalID); err != nil {
+		return nil, fmt.Errorf("retry blueprint node %s: %w", subGoalID, err)
+	}
 
 	if s.runSvc == nil {
 		return nil, errors.New("runSvc not wired")
 	}
-	_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, subGoalID, "")
-	if err != nil {
-		return nil, fmt.Errorf("enqueue retry run: %w", err)
+	// G5 (2026-11-28): a GATE holder never runs — the human decision is the
+	// only thing that settles it (the compile invariant, blueprint.go beat
+	// 2). The 11-26 openviking run: a cascade-failed gate was human-retried
+	// into a worker run and a machine verdict settled it, skipping the
+	// human checkpoint entirely. A retried gate whose deps are all verified
+	// (the guard above) re-HOLDS instead: resolve the prompt, stamp
+	// held_since, and wait for ResolveBlueprintGate / SweepBlueprintGates.
+	var runEv *events.Event
+	if gateNode, _ := isBlueprintNodeTypeTx(ctx, tx, subGoalID, "gate"); gateNode {
+		if err := s.resolveReleasedBriefTx(ctx, tx, goalID, subGoalID); err != nil {
+			return nil, fmt.Errorf("resolve gate prompt %s: %w", subGoalID, err)
+		}
+		if err := markGateHeldTx(ctx, tx, subGoalID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
+			newID(), goalID,
+			fmt.Sprintf("门禁工作项 %s 已人工复位：依赖已满足，重新等待人工决策（不产生执行 run）。", subGoalID), now()); err != nil {
+			return nil, fmt.Errorf("insert gate re-hold comment: %w", err)
+		}
+		logging.Infof("sub-goal: retried gate %s re-held for human decision — no run enqueued", subGoalID)
+	} else {
+		_, runEv, err = s.runSvc.enqueueSubGoalRunTx(ctx, tx, subGoalID, "")
+		if err != nil {
+			return nil, fmt.Errorf("enqueue retry run: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1874,6 +1909,28 @@ func (s *GoalService) reviveFailedDependentsTx(ctx context.Context, tx *sql.Tx, 
 		// {{node.*}} refs — run the same resolution the release path does.
 		if err := s.resolveReleasedBriefTx(ctx, tx, goalID, g.id); err != nil {
 			return nil, fmt.Errorf("resolve revived brief %s: %w", g.id, err)
+		}
+		// G5 (2026-11-28): a revived GATE holder must not enqueue a run —
+		// the human decision is the only thing that settles it (same
+		// invariant as wakeDependentsTx / RetrySubGoal). Its deps are all
+		// verified here (the ready guard above), so re-hold it instead and
+		// let ResolveBlueprintGate / SweepBlueprintGates finish it.
+		if gateNode, _ := isBlueprintNodeTypeTx(ctx, tx, g.id, "gate"); gateNode {
+			if err := markGateHeldTx(ctx, tx, g.id); err != nil {
+				return nil, err
+			}
+			logging.Infof("sub-goal: revived gate %s re-held for human decision (trigger %s)", g.id, trigger)
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO comment (id,goal_id,author_type,author_id,parent_id,content,created_at) VALUES (?,?,'system','',NULL,?,?)`,
+				newID(), goalID,
+				fmt.Sprintf("门禁工作项 %s 之前的依赖级联失败已解除（触发：%s），已复位并重新等待人工决策。", g.id, trigger), now()); err != nil {
+				return nil, fmt.Errorf("insert revive comment: %w", err)
+			}
+			evs = append(evs, events.Event{Topic: "sub_goal.retrying", Payload: map[string]any{
+				"goal_id": goalID, "sub_goal_id": g.id, "execution_attempt": 0,
+				"revived": true, "trigger_sub_goal_id": trigger, "gate_reheld": true,
+			}})
+			continue
 		}
 		_, runEv, err := s.runSvc.enqueueSubGoalRunTx(ctx, tx, g.id, g.dispatchID)
 		if err != nil {

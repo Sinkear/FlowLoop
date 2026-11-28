@@ -986,6 +986,10 @@ export interface WorkflowEdge {
   to: string;
   kind: WorkflowEdgeKind;
   source: "explicit" | "inferred";
+  // 仅 spec 边携带（G4）：分支选择编码在 source_handle 端口上（task
+  // done|failed、gate approve|reject|timeout…）。画布渲染该标签，让
+  // 「失败走复检、成功打包」的条件边在图上一眼可读，而不是无条件箭头。
+  handle?: string;
 }
 
 export interface WorkflowGraph {

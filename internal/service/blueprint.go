@@ -1419,6 +1419,7 @@ func specGraphToWorkflow(scopeID string, g *SpecGraph) *WorkflowGraph {
 	for _, e := range g.Edges {
 		wf.Edges = append(wf.Edges, WorkflowEdge{
 			From: e.Source, To: e.Target, Kind: "spec", Source: "explicit",
+			Handle: e.SourceHandle, // G4: keep the branch port visible on the canvas
 		})
 	}
 	// Metric keys the metrics row can render without special cases.
@@ -2075,6 +2076,11 @@ func markBlueprintNodeRunningTx(ctx context.Context, tx *sql.Tx, subGoalID strin
 // guard counts the running gate as open work — the goal cannot finalize
 // past an undecided human gate. Idempotent: a gate already held (compile
 // stamped held_since, or a re-released ledger) just refreshes nothing.
+// G5 (2026-11-28): the state guard also accepts 'running' — the retry /
+// revive re-hold path flips the node failed → running BEFORE calling this,
+// and a gate in that state still needs the stamp (and SweepBlueprintGates /
+// ResolveBlueprintGate's held guard both key on it). settled/skipped/failed
+// rows stay untouched.
 func markGateHeldTx(ctx context.Context, tx *sql.Tx, subGoalID string) error {
 	var cfg string
 	if err := tx.QueryRowContext(ctx,
@@ -2094,7 +2100,7 @@ func markGateHeldTx(ctx context.Context, tx *sql.Tx, subGoalID string) error {
 	}
 	merged, _ := mergeResolved(cfg, map[string]string{"held_since": now()})
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blueprint_node SET state='running', resolved_config=? WHERE sub_goal_id=? AND state='pending'`,
+		`UPDATE blueprint_node SET state='running', resolved_config=? WHERE sub_goal_id=? AND state IN ('pending','running')`,
 		merged, subGoalID); err != nil {
 		return fmt.Errorf("hold gate node: %w", err)
 	}
@@ -2843,6 +2849,19 @@ func (s *GoalService) ResolveBlueprintGate(ctx context.Context, goalID, nodeKey,
 	}
 	if state != "running" && state != "pending" {
 		return NewConflictError(fmt.Sprintf("gate %q is already %s — a decision cannot be re-issued", nodeKey, state))
+	}
+	// G5 (2026-11-28, pre-hold decision): held_since is the ledger's proof
+	// the upstream is complete — stamped at compile for an ungated gate, at
+	// release once ALL deps verified for a gated one. A running/pending gate
+	// WITHOUT it is still waiting on unverified upstream work: accepting a
+	// decision now would settle the holder, prune branches, and release
+	// downstream past work that may yet fail (the 11-26 runs show humans
+	// approve mid-pipeline — the engine must not honor that here). The
+	// sweeper only picks held gates, so auto/timeout paths pass this guard.
+	heldCfg := map[string]any{}
+	_ = json.Unmarshal([]byte(resolvedCfg), &heldCfg) // empty/unparsable ledger = never held
+	if _, held := heldCfg["held_since"]; !held {
+		return NewConflictError(fmt.Sprintf("gate %q is not held yet — upstream dependencies have not all verified; a decision now would bypass them", nodeKey))
 	}
 	// The action must be one the gate declared (registered port).
 	var content string

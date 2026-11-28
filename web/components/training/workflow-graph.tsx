@@ -246,6 +246,23 @@ function edgePath(from: LaidOut, to: LaidOut): string {
   return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
 }
 
+// G4（2026-11-28）：spec 边的分支端口标签。三次贝塞尔中点 =
+// ((sx+tx)/2, (sy+ty)/2)（控制点 dx 项抵消）。done/approve 走 ok 色、
+// failed/reject 走 err 色、timeout 走 warn 色、其余中性 —— 语义色令牌
+// 两主题都有定义，避免在 SVG 里写死 hex。标签与 workflow-spec-editor
+// 的 HANDLE_LABELS 同一套中文口径（spec 编辑器 :72）。
+const EDGE_HANDLE_META: Record<string, { label: string; color: string }> = {
+  done: { label: "完成", color: "var(--color-ok)" },
+  approve: { label: "批准", color: "var(--color-ok)" },
+  failed: { label: "失败", color: "var(--color-err)" },
+  reject: { label: "驳回", color: "var(--color-err)" },
+  timeout: { label: "超时", color: "var(--color-warn)" },
+  human: { label: "人工", color: "var(--color-ink-3)" },
+  auto: { label: "自动", color: "var(--color-ink-3)" },
+  else: { label: "其他", color: "var(--color-ink-3)" },
+  fallback: { label: "兜底", color: "var(--color-ink-3)" },
+};
+
 function NodeCard({
   laid,
   critical,
@@ -369,6 +386,11 @@ function EdgeLine({
 }) {
   const inferredSeq = edge.kind === "seq" && edge.source === "inferred";
   const isSpec = edge.kind === "spec";
+  // G4：条件边读起来是条件边 —— handle 标签 + 按端口语义着色的标签。
+  const handleMeta =
+    isSpec && edge.handle
+      ? (EDGE_HANDLE_META[edge.handle] ?? { label: edge.handle, color: "var(--color-ink-3)" })
+      : null;
   // 颜色走主题令牌（m04217）：旧版写死 #71717a / #22c55e，浅色主题下灰线在
   // 纸面上偏脏、绿线和 accent 也不同源。现在依赖/创建/规范三类边各有强度。
   const stroke = critical
@@ -378,17 +400,40 @@ function EdgeLine({
       : "var(--color-ink-3)";
   const strokeOpacity = critical ? 0.95 : isSpec ? 0.65 : edge.kind === "created" ? 0.32 : 0.5;
   const strokeWidth = critical ? 2.1 : isSpec ? 1.4 : 1.1;
+  const midX = (from.x + NODE_W + to.x) / 2;
+  const midY = (from.top + to.top + NODE_H) / 2;
   return (
-    <path
-      d={edgePath(from, to)}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={strokeWidth}
-      strokeOpacity={strokeOpacity}
-      strokeLinecap="round"
-      strokeDasharray={inferredSeq ? "4 4" : edge.source === "inferred" ? "2 3" : undefined}
-      markerEnd={`url(#${critical ? markerCritical : isSpec ? markerSpec : markerBase})`}
-    />
+    <>
+      <path
+        d={edgePath(from, to)}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeOpacity={strokeOpacity}
+        strokeLinecap="round"
+        strokeDasharray={inferredSeq ? "4 4" : edge.source === "inferred" ? "2 3" : undefined}
+        markerEnd={`url(#${critical ? markerCritical : isSpec ? markerSpec : markerBase})`}
+      />
+      {handleMeta && (
+        <text
+          x={midX}
+          y={midY - 5}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          className="pointer-events-none select-none font-mono"
+          style={{
+            fill: handleMeta.color,
+            fontSize: 9,
+            // 描边光晕把标签从底色/交叉边里撑出来，两主题都用面板色。
+            paintOrder: "stroke",
+            stroke: "var(--color-surface-1)",
+            strokeWidth: 3,
+          }}
+        >
+          {handleMeta.label}
+        </text>
+      )}
+    </>
   );
 }
 

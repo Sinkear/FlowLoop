@@ -45,12 +45,16 @@ type WorkflowNode struct {
 // WorkflowEdge is one directed edge. kind:
 // created|depends_on|seq|verified_by|consult|integrated. source:
 // explicit (declared or structural by construction) | inferred (time-order
-// heuristic).
+// heuristic). handle: spec edges only — the source port the branch choice
+// is encoded on (task done|failed, gate approve|reject|timeout, …). The
+// canvas renders it so a conditional edge reads as conditional, not as an
+// unconditional arrow (G4, 2026-11-28).
 type WorkflowEdge struct {
 	From   string `json:"from"`
 	To     string `json:"to"`
 	Kind   string `json:"kind"`
 	Source string `json:"source"`
+	Handle string `json:"handle,omitempty"`
 }
 
 // WorkflowGraph is the full assembled graph for one goal. Frozen snapshots
