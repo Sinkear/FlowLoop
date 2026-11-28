@@ -40,6 +40,23 @@ type Peer struct {
 	startOnce sync.Once
 	ctx       context.Context
 	cancel    context.CancelFunc
+	// logf is the link layer's optional log sink (nil = silent). Both ends
+	// install one at startup: the link is where a connection's DEATH is
+	// known (read-loop error, write failure, handler panic, unknown method),
+	// and that knowledge was previously discarded — both sides logged a
+	// generic "link closed" with no cause.
+	logf func(format string, args ...any)
+}
+
+// SetLogger installs the link's log sink (nil disables link logging). Called
+// once per peer, before StartReadLoop.
+func (p *Peer) SetLogger(fn func(format string, args ...any)) { p.logf = fn }
+
+// logf emits one link-layer line when a sink is installed.
+func (p *Peer) logfMsg(format string, args ...any) {
+	if p.logf != nil {
+		p.logf(format, args...)
+	}
 }
 
 // wireRequest / wireResponse are the raw message shapes on the frame.
@@ -164,11 +181,41 @@ func (p *Peer) write(msg any) error {
 		// stream — gorilla's contract: the connection must die. A
 		// half-dead link that still carries the other direction is the
 		// worst failure mode (live: daemon→machine responses died while
-		// heartbeats kept flowing and nothing ever detected it).
+		// heartbeats kept flowing and nothing ever detected it). Say WHICH
+		// frame died — a write timeout on a response is the half-dead link.
+		p.logfMsg("link: write %s failed: %v — closing the connection", describeMsg(msg), err)
 		p.Close()
 		return err
 	}
 	return nil
+}
+
+// describeMsg names the frame for log lines (method when present).
+func describeMsg(msg any) string {
+	switch m := msg.(type) {
+	case wireRequest:
+		if m.ID != nil {
+			return "request " + m.Method
+		}
+		return "notification " + m.Method
+	case *wireRequest:
+		if m.ID != nil {
+			return "request " + m.Method
+		}
+		return "notification " + m.Method
+	case wireResponse:
+		if m.Error != nil {
+			return fmt.Sprintf("error response (code %d)", m.Error.Code)
+		}
+		return "response"
+	case *wireResponse:
+		if m.Error != nil {
+			return fmt.Sprintf("error response (code %d)", m.Error.Code)
+		}
+		return "response"
+	default:
+		return "frame"
+	}
 }
 
 // Wait blocks until the link dies or Close is called, returning the exit
@@ -184,6 +231,12 @@ func (p *Peer) Wait() error {
 // dispatched to handlers; responses are routed to their pending Call.
 func (p *Peer) readLoop() {
 	err := p.readLoopErr()
+	// The read-loop error IS the connection's cause of death (websocket close
+	// frame, TCP reset, decode failure). It was previously stored only in
+	// exitErr and read by nobody, so every link death looked identical.
+	if err != nil {
+		p.logfMsg("link: connection died: %v", err)
+	}
 	p.closeOne.Do(func() {
 		p.exitErr = err
 		p.cancel()
@@ -240,7 +293,11 @@ func (p *Peer) routeResponse(resp *wireResponse) {
 	ch := p.pending[*resp.ID]
 	p.mu.Unlock()
 	if ch == nil {
-		return // no waiter (late response after ctx cancel) — drop
+		// No waiter (late response after ctx cancel, or an id this side never
+		// sent). Dropped silently before — an unmatched response is evidence
+		// of a lost/duplicated request and worth one line.
+		p.logfMsg("link: dropped response for unknown request id %s", *resp.ID)
+		return
 	}
 	ch <- resp
 }
@@ -252,6 +309,10 @@ func (p *Peer) routeResponse(resp *wireResponse) {
 func (p *Peer) dispatchRequest(method string, id *string, raw json.RawMessage) {
 	defer func() {
 		if r := recover(); r != nil {
+			// A handler panic was answered as an RPC error but never recorded
+			// locally — the caller saw "handler panic: ..." while this side's
+			// log stayed silent about its own crash.
+			p.logfMsg("link: handler panic in %s: %v", method, r)
 			if id != nil {
 				p.writeMu.Lock()
 				_ = p.conn.WriteJSON(wireResponse{JSONRPC: "2.0", ID: id,
@@ -271,17 +332,34 @@ func (p *Peer) dispatchRequest(method string, id *string, raw json.RawMessage) {
 	var result any
 	var rpcErr *RPCError
 	if h == nil {
+		// The peer answered "method not found" to the OTHER side and logged
+		// nothing locally — a handler-registration bug looked like the remote
+		// end misbehaving.
+		if id == nil {
+			p.logfMsg("link: notification %s has no handler — ignored", method)
+		} else {
+			p.logfMsg("link: request %s has no handler — replying method-not-found", method)
+		}
 		rpcErr = &RPCError{Code: CodeMethodNotFnd, Message: "method not found", Data: method}
 	} else {
 		result, rpcErr = h(p.ctx, params)
 	}
 	if id == nil {
+		if rpcErr != nil {
+			// A notification's error reply has no waiter, so the peer drops
+			// it silently — this line is the ONLY trace that the daemon
+			// rejected a machine notification (e.g. a failed heartbeat DB
+			// write).
+			p.logfMsg("link: notification %s returned error %d (%s) — no reply", method, rpcErr.Code, rpcErr.Message)
+		}
 		return // notification — no reply
 	}
 	// Route the response through write() — the deadline + the
 	// close-on-failure contract apply to responses too (a swallowed
 	// response-write error left the link half-dead and invisible).
-	_ = p.write(wireResponse{JSONRPC: "2.0", ID: id, Result: rpcMarshal(result), Error: rpcErr})
+	if err := p.write(wireResponse{JSONRPC: "2.0", ID: id, Result: rpcMarshal(result), Error: rpcErr}); err != nil {
+		p.logfMsg("link: response to %s could not be written: %v", method, err)
+	}
 }
 
 // Close tears the connection down; Wait returns afterwards.

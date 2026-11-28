@@ -735,6 +735,82 @@ func (s *RunService) Claim(ctx context.Context, readyAgents []string) (*ClaimedR
 	return &r, nil
 }
 
+// ClaimBlock is one queued run that the claim query refused, with the
+// predicate that rejected it. Diagnostics only: it never changes state, and
+// the claim query stays the single authority on what is claimable.
+type ClaimBlock struct {
+	RunID    string
+	AgentID  string
+	Role     string
+	QueuedAt string
+	Reason   string
+}
+
+// ClaimFriction explains a stalled queue: the oldest queued runs among the
+// READY agents (the ones the scheduler has a slot for) plus the predicate
+// that rejected each, and the total queued count. A queued run the daemon
+// cannot claim is the signature of the incident's stall — before this,
+// Claim's skip reasons were invisible (machine offline, runtime absent, goal
+// state, single-flight, backoff all looked identical from the outside).
+func (s *RunService) ClaimFriction(ctx context.Context, readyAgents []string) (int, string, []ClaimBlock, error) {
+	var total int
+	var oldest string
+	if err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MIN(NULLIF(queued_at,'')),'') FROM run WHERE status='queued'`).
+		Scan(&total, &oldest); err != nil {
+		return 0, "", nil, err
+	}
+	if len(readyAgents) == 0 || total == 0 {
+		return total, oldest, nil, nil
+	}
+	placeholders, args := inPlaceholders(readyAgents)
+	q := `SELECT r.id, r.agent_id, COALESCE(r.role,''), COALESCE(r.queued_at,''),
+	        CASE
+	          WHEN rt.status = 'absent' THEN 'runtime absent (the machine''s probe no longer sees the CLI)'
+	          WHEN rt.machine_id != '' AND NOT EXISTS (
+	               SELECT 1 FROM machine m WHERE m.id = rt.machine_id AND m.status='connected')
+	            THEN 'machine offline: ' || rt.machine_id
+	          WHEN r.queued_at > ? THEN 'retry backoff until ' || r.queued_at
+	          WHEN g.id IS NOT NULL AND g.status NOT IN ('active','review')
+	            THEN 'goal is ' || g.status
+	          WHEN g.id IS NOT NULL AND g.status = 'review' AND COALESCE(r.role,'') != 'review'
+	            THEN 'goal in review (only review runs pass the freeze)'
+	          WHEN EXISTS (
+	               SELECT 1 FROM run r2 WHERE r2.status='running'
+	                 AND r2.role='owner' AND r.role='owner' AND r2.goal_id != '' AND r2.goal_id = r.goal_id)
+	            THEN 'another owner run is in flight on this goal'
+	          WHEN r.sub_goal_id != '' AND EXISTS (
+	               SELECT 1 FROM run r2 WHERE r2.status='running' AND r2.sub_goal_id = r.sub_goal_id)
+	            THEN 'another run is in flight on this sub-goal'
+	          WHEN EXISTS (
+	               SELECT 1 FROM run r2 WHERE r2.status='running' AND r2.id != r.id
+	                 AND r2.goal_id = r.goal_id AND r2.agent_id = r.agent_id
+	                 AND r2.role IN ('owner','subgoal','consult'))
+	            THEN 'executor single-flight (same agent already running a mutating run on this goal)'
+	          ELSE 'unknown predicate'
+	        END
+	      FROM run r
+	      JOIN agent a ON a.id = r.agent_id
+	      JOIN runtime rt ON rt.id = a.runtime_id
+	      LEFT JOIN goal g ON g.id = r.goal_id
+	      WHERE r.status='queued' AND r.agent_id IN (` + placeholders + `)
+	      ORDER BY r.queued_at LIMIT 20`
+	rows, err := s.st.DB().QueryContext(ctx, q, append([]any{now()}, args...)...)
+	if err != nil {
+		return total, oldest, nil, err
+	}
+	defer rows.Close()
+	var out []ClaimBlock
+	for rows.Next() {
+		var b ClaimBlock
+		if err := rows.Scan(&b.RunID, &b.AgentID, &b.Role, &b.QueuedAt, &b.Reason); err != nil {
+			return total, oldest, out, err
+		}
+		out = append(out, b)
+	}
+	return total, oldest, out, rows.Err()
+}
+
 // RecoverStuckRunning reclaims runs left 'running' by a previous daemon that
 // died without finishing them. Reset to queued so dispatch re-claims them.
 // Note: attempt is preserved — a run on its last attempt that the daemon lost
@@ -748,20 +824,81 @@ func (s *RunService) Claim(ctx context.Context, readyAgents []string) (*ClaimedR
 // cancelled smoke goal's leftover run was re-claimed and re-ran after the
 // restart). Terminal-goal leftovers are stamped cancelled instead.
 func (s *RunService) RecoverStuckRunning(ctx context.Context) (int, error) {
-	res, err := s.st.DB().ExecContext(ctx,
-		`UPDATE run SET status='cancelled', cancel_reason='goal_terminal', finished_at=?
-		 WHERE status='running'
-		   AND goal_id IN (SELECT id FROM goal WHERE status IN ('done','failed','cancelled'))`, now())
-	if err != nil {
-		return 0, fmt.Errorf("cancel terminal-goal runs: %w", err)
-	}
-	res, err = s.st.DB().ExecContext(ctx,
-		`UPDATE run SET status='queued', started_at='' WHERE status='running'`)
+	rec, err := s.RecoverStuckRunningDetailed(ctx)
 	if err != nil {
 		return 0, err
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	// Callers' contract: the count is REQUECIED runs only — terminal-goal
+	// leftovers are stamped cancelled and were never part of this number.
+	n := 0
+	for _, r := range rec {
+		if r.Outcome == "requeued" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// RecoveredRun is one run touched by startup recovery, with the goal it
+// belonged to and what happened to it. The recovery used to report a bare
+// count: after a restart nobody could tell WHICH runs were resurrected
+// (compute on cancelled work) or dropped.
+type RecoveredRun struct {
+	RunID   string
+	GoalID  string
+	AgentID string
+	Outcome string // "cancelled (goal terminal)" | "requeued"
+}
+
+// RecoverStuckRunningDetailed is RecoverStuckRunning with per-run detail.
+func (s *RunService) RecoverStuckRunningDetailed(ctx context.Context) ([]RecoveredRun, error) {
+	var out []RecoveredRun
+	rows, err := s.st.DB().QueryContext(ctx,
+		`UPDATE run SET status='cancelled', cancel_reason='goal_terminal', finished_at=?
+		 WHERE status='running'
+		   AND goal_id IN (SELECT id FROM goal WHERE status IN ('done','failed','cancelled'))
+		 RETURNING id, COALESCE(goal_id,''), COALESCE(agent_id,'')`, now())
+	if err != nil {
+		return nil, fmt.Errorf("cancel terminal-goal runs: %w", err)
+	}
+	for rows.Next() {
+		var r RecoveredRun
+		if err := rows.Scan(&r.RunID, &r.GoalID, &r.AgentID); err != nil {
+			rows.Close()
+			return out, err
+		}
+		r.Outcome = "cancelled (goal terminal)"
+		out = append(out, r)
+	}
+	// A step-time failure surfaces HERE, not from QueryContext: without this
+	// check a cancelled context or a busy database would report success with
+	// zero recovered runs and leave the runs 'running' forever.
+	iterErr := rows.Err()
+	rows.Close()
+	if iterErr != nil {
+		return out, fmt.Errorf("cancel terminal-goal runs: %w", iterErr)
+	}
+	rows, err = s.st.DB().QueryContext(ctx,
+		`UPDATE run SET status='queued', started_at='' WHERE status='running'
+		 RETURNING id, COALESCE(goal_id,''), COALESCE(agent_id,'')`)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var r RecoveredRun
+		if err := rows.Scan(&r.RunID, &r.GoalID, &r.AgentID); err != nil {
+			rows.Close()
+			return out, err
+		}
+		r.Outcome = "requeued"
+		out = append(out, r)
+	}
+	iterErr = rows.Err()
+	rows.Close()
+	if iterErr != nil {
+		return out, fmt.Errorf("requeue stuck runs: %w", iterErr)
+	}
+	return out, nil
 }
 
 // ExpireStaleScheduledRuns closes schedule-fired runs that sat queued past

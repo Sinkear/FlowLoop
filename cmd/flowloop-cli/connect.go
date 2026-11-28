@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -83,15 +84,52 @@ func (s *scanDirsFlag) Set(v string) error {
 // connectCmd runs `flowloop connect`: dial the daemon's /connect link,
 // register this machine (probing its agent CLIs), then heartbeat until
 // interrupted. Reconnects with exponential backoff.
-func connectCmd(args []string) {
-	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+func connectCmd(args []string) (exitCode int) {
+	// EXIT PROOF: a sidecar that dies must leave a line in cli.log — whether it
+	// panicked or returned normally. The incident's connect process vanished
+	// without a single machine-side line (the panic went to a stderr nobody
+	// kept, and the normal exit printed only to stdout). Both paths now land
+	// in the authoritative log, with the log subsystem's own health attached
+	// so "no lines" can be told apart from "no events".
+	// Fatal crash traces (a panic in ANY goroutine, an OOM-style abort) go to
+	// the runtime's crash pipe, not to this package's logger. Tee them into
+	// cli.log — see cliLogAttachCrashOutput.
+	if err := cliLogAttachCrashOutput(); err != nil {
+		cliLogf("connect: fatal-crash trace will NOT reach cli.log: %v", err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic AND its stack, then return non-zero: swallowing it
+			// would make a crashed supervisor look like a clean stop. os.Exit
+			// is NOT used so the code still flows through main (and the caller
+			// sees a real status).
+			cliLogf("FATAL: connect panicked: %v\n%s", r, debug.Stack())
+			exitCode = 1
+		}
+		// EXIT PROOF: every return path — clean stop, bad invocation, panic —
+		// leaves exactly one line with the code and the log's own health, so a
+		// missing line means the PROCESS was killed, not that nothing happened.
+		cliLogf("connect: process exiting (code %d) — %s", exitCode, cliLogHealth())
+	}()
+
+	// ContinueOnError (not ExitOnError): flag.ExitOnError calls os.Exit(2)
+	// directly on a bad invocation, which bypasses the exit-proof defer above
+	// — the one case where a dead connect would still leave no cli.log line.
+	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	server := fs.String("server", defaultServerURL, "flowloop-daemon address")
 	token := fs.String("token", "", "register token (daemon-side platform.worker_token; empty = none)")
 	name := fs.String("name", "", "machine display name (default: hostname)")
 	agentsCfg := fs.String("agents", "", "path to agents YAML config (default: ~/.flowloop/agents.yaml — adds/overrides probed agent CLIs)")
 	var scanDirs scanDirsFlag
 	fs.Var(&scanDirs, "scan", "extra directory (or glob, e.g. /opt/*/ or /opt/**/) to scan for agent CLIs not on PATH (repeatable; ~ expanded)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		// Prints the usage to stderr by itself; the error goes to cli.log too.
+		cliLogf("connect: bad arguments: %v", err)
+		if err == flag.ErrHelp {
+			return 0 // -h: clean stop, keeping flag's exit code 0
+		}
+		return 2
+	}
 
 	// Load the agents config (adds new CLIs or overrides builtins by name)
 	// BEFORE the first probe. A missing file is normal (builtins only); a
@@ -123,7 +161,7 @@ func connectCmd(args []string) {
 	pruneStaleGoalWorkdirs()
 
 	wsURL := connectWSURL(*server, *token)
-	cliLogf("flowloop connect: server=%s machine=%q (%s)", *server, st.Name, st.MachineID)
+	cliLogf("flowloop connect: server=%s machine=%q (%s) cli=%s host=%q", *server, st.Name, st.MachineID, cliVersion, hostname)
 
 	// One cancellable ctx for the whole session: Ctrl+C / SIGTERM aborts
 	// dialing, in-flight calls, heartbeats AND the reconnect backoff —
@@ -151,8 +189,12 @@ func connectCmd(args []string) {
 		}
 		select {
 		case <-ctx.Done():
+			// EXIT PROOF for the clean path: a signal-triggered stop is the
+			// only way out of this loop (the incident's supervisor recorded
+			// nothing when the loop ended, so "died" and "was stopped" looked
+			// identical). stdout keeps the old line for live viewing.
 			fmt.Println("disconnected")
-			return
+			return exitCode // the exit-proof defer writes the closing line
 		case <-time.After(backoff):
 		}
 		if backoff < 30*time.Second {
@@ -175,6 +217,10 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 	// push a frame the instant the socket opens, and a live reader would
 	// dispatch it against a nil handler ("method not found").
 	peer := link.NewPeerUnserved(conn)
+	// The link layer knows the CONNECTION'S cause of death (read-loop error,
+	// write failure, handler panic, unknown method) — previously discarded on
+	// both ends, leaving only a generic "link closed". Route it into cli.log.
+	peer.SetLogger(cliLogf)
 	defer peer.Close()
 	// Phase 2, PULL model: the machine POLLS for work over THIS link
 	// (run.poll — the daemon never writes dispatches; the push direction
@@ -377,6 +423,14 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 	// tight retry loop against a failing daemon.
 	go func() {
 		pollErrLogged := false
+		// Poll health: consecutive failures, when they started, and whether
+		// the prolonged-degradation line was already emitted. The old code
+		// logged the FIRST failure and then went silent forever — a link that
+		// could still heartbeat but never carried a poll (the exact half-dead
+		// shape that stalls dispatch) produced no further evidence.
+		pollFailures := 0
+		var pollFirstFail time.Time
+		pollDegradedLogged := false
 		for {
 			select {
 			case <-peer.Done():
@@ -388,9 +442,19 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 			pollCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 			var res link.RunPollResult
 			if err := peer.Call(pollCtx, link.MethodRunPoll, link.RunPollParams{}, &res); err != nil {
+				pollFailures++
 				if !pollErrLogged {
-					cliLogf("link: poll: %v (further failures suppressed)", err)
+					pollFirstFail = time.Now()
+					cliLogf("link: poll: %v (retrying every 1s)", err)
 					pollErrLogged = true
+				}
+				// Prolonged degradation: heartbeats can still succeed while
+				// polls fail (a response-direction stall). Escalate once the
+				// failure window is long enough that work dispatch is stalling.
+				if !pollDegradedLogged && time.Since(pollFirstFail) > 60*time.Second {
+					pollDegradedLogged = true
+					cliLogf("link: poll DEGRADED — %d consecutive failure(s) over %s; work dispatch is stalled on this link",
+						pollFailures, time.Since(pollFirstFail).Round(time.Second))
 				}
 				cancel()
 				// Back off before retrying so a dead daemon doesn't get hammered.
@@ -404,6 +468,12 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 				continue
 			}
 			cancel()
+			if pollFailures > 0 {
+				cliLogf("link: poll recovered after %d failure(s) over %s", pollFailures, time.Since(pollFirstFail).Round(time.Second))
+			}
+			pollFailures = 0
+			pollFirstFail = time.Time{}
+			pollDegradedLogged = false
 			pollErrLogged = false
 			for _, c := range res.Cancels {
 				exec.cancelRun(c)
@@ -441,7 +511,14 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 			return
 		}
 		notifyCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		_ = peer.Notify(notifyCtx, link.MethodMachineOffline, link.HeartbeatParams{MachineID: st.MachineID})
+		// The result was discarded: a failed machine.offline notify leaves the
+		// daemon believing this machine is still connected until the 90s stale
+		// sweep, and the machine-side log had no record of the attempt.
+		if err := peer.Notify(notifyCtx, link.MethodMachineOffline, link.HeartbeatParams{MachineID: st.MachineID}); err != nil {
+			cliLogf("link: machine.offline notify failed (%v) — daemon will rely on the stale sweep", err)
+		} else {
+			cliLogf("link: notified daemon this machine is going offline")
+		}
 		cancel()
 	}()
 	for {
@@ -484,8 +561,15 @@ func runLink(ctx context.Context, wsURL string, st cliState, name, hostname stri
 				gracefulOffline = true
 			default:
 			}
-			cliLogf("link: closed")
-			return fmt.Errorf("link closed")
+			// The read loop knows WHY the socket died (close frame, reset,
+			// decode error); the old line said only "link: closed" and the
+			// cause was dropped with peer.Wait's return value.
+			cause := peer.Wait()
+			if cause == nil {
+				cause = fmt.Errorf("link closed")
+			}
+			cliLogf("link: closed (%v)", cause)
+			return fmt.Errorf("link closed: %w", cause)
 		case <-ctx.Done():
 			gracefulOffline = true
 			return nil

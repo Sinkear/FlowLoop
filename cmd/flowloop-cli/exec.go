@@ -225,8 +225,15 @@ func (e *executor) execute(p link.RunDispatchParams) {
 	}
 
 	// openSession spawns the CLI and opens its ACP session (used for the
-	// initial open AND the post-resume fallback).
-	openSession := func() (proto.Session, error) {
+	// initial open AND the post-resume fallback). The spawn itself was a
+	// BLACK BOX: no start line, no elapsed time, no executable path, no
+	// memory context — an incident where the process vanished mid-spawn had
+	// nothing to correlate. Every phase is now timed and logged.
+	openSession := func(stage string) (proto.Session, error) {
+		spawnStart := time.Now()
+		rssBefore := selfRSS()
+		cliLogf("exec: run %s spawn[%s] starting: %s (%d arg(s), cwd=%s, rss=%s)",
+			p.RunID, stage, p.ACPSpawn[0], len(p.ACPSpawn)-1, workdir, rssBefore)
 		conn, err := runtime.Open(ctx, runtime.Spec{
 			Transport:  "stdio",
 			Executable: p.ACPSpawn[0],
@@ -235,8 +242,11 @@ func (e *executor) execute(p link.RunDispatchParams) {
 			Cwd:        workdir,
 		}, e.buildEnv(p, workdir))
 		if err != nil {
+			cliLogf("exec: run %s spawn[%s] FAILED after %s (rss=%s): %v",
+				p.RunID, stage, time.Since(spawnStart).Round(time.Millisecond), selfRSS(), err)
 			return nil, fmt.Errorf("runtime: %w", err)
 		}
+		spawnDur := time.Since(spawnStart)
 		backend := &acpbackend.Backend{}
 		// autopermit answers the CLI's permission requests (allow the
 		// strongest option) and implements the delegated fs/terminal RPCs
@@ -244,15 +254,22 @@ func (e *executor) execute(p link.RunDispatchParams) {
 		// platform judges the OUTCOME, not individual tool calls (live:
 		// an unhandled permission request came back as "The user rejected
 		// permission" and killed the agent's work).
+		sessStart := time.Now()
 		sess, err := backend.OpenSession(ctx, execSessionSpec(p, conn, workdir))
 		if err != nil {
 			_ = conn.Close()
+			cliLogf("exec: run %s ACP session[%s] open FAILED after spawn+%s: %v",
+				p.RunID, stage, time.Since(sessStart).Round(time.Millisecond), err)
 			return nil, fmt.Errorf("session: %w", err)
 		}
+		cliLogf("exec: run %s spawn[%s] ready in %s (spawn %s + session %s, rss=%s, session=%s)",
+			p.RunID, stage, time.Since(spawnStart).Round(time.Millisecond),
+			spawnDur.Round(time.Millisecond), time.Since(sessStart).Round(time.Millisecond),
+			selfRSS(), shortSHA(sess.SessionID()))
 		return sess, nil
 	}
 
-	sess, err := openSession()
+	sess, err := openSession("initial")
 	if err != nil {
 		// The spawn failed — likely an uninstalled CLI. Re-probe and push
 		// a fresh report so the platform marks the runtime absent and
@@ -311,9 +328,11 @@ func (e *executor) execute(p link.RunDispatchParams) {
 	}()
 
 	// Ack the daemon: execution really started (run.claimed — the review
-	// window's "审查中" flip hangs on it).
+	// window's "审查中" flip hangs on it). A lost ack is NOT a lost run: the
+	// daemon's 60s pickup timeout cannot tell the two apart, so name the
+	// consequence here (the daemon side logs the same ambiguity).
 	if err := callRPC(e.peer, link.MethodRunClaimed, link.RunClaimedParams{RunID: p.RunID}, nil, 15*time.Second); err != nil {
-		cliLogf("exec: run %s claimed ack failed: %v", p.RunID, err)
+		cliLogf("exec: run %s claimed ack failed: %v — the run IS executing here; the daemon may time the dispatch out at 60s or re-serve it (deduped)", p.RunID, err)
 	}
 
 	run, err := sess.Prompt(ctx, p.Prompt)
@@ -326,7 +345,7 @@ func (e *executor) execute(p link.RunDispatchParams) {
 		// survives, only the conversation memory is lost.
 		cliLogf("exec: run %s prompt failed on resumed session (%v) — reopening fresh", p.RunID, err)
 		sess.Close()
-		sess, err = openSession()
+		sess, err = openSession("fresh-after-resume")
 		if err != nil {
 			e.finish(p, workdir, "", "failed", "fresh session after resume: "+err.Error())
 			return
@@ -341,26 +360,55 @@ func (e *executor) execute(p link.RunDispatchParams) {
 
 	// Event pump: per-run monotonic seq, batched every ~100ms (or 64
 	// events) — the per-token stream must not become per-token frames.
+	// LOSS ACCOUNTING: a batch that fails to send is LOST (events have no
+	// stash — only the terminal report does), so count the dropped events and
+	// say so on recovery and at run end. The old code logged the first failure
+	// and suppressed everything after, making a transcript-shaped hole
+	// indistinguishable from a quiet run.
 	seq := int64(0)
 	buf := []link.RunEvent{}
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	flushErrLogged := false
+	lossEvents, lossBatches := 0, 0 // since the last recovery
+	var lossFirstAt time.Time
+	var lossTotal int // cumulative for the run (survives recoveries)
 	flush := func() {
 		if len(buf) == 0 {
 			return
 		}
-		if err := e.peer.Notify(ctx, link.MethodRunEventBatch, link.RunEventBatchParams{
+		err := e.peer.Notify(ctx, link.MethodRunEventBatch, link.RunEventBatchParams{
 			RunID: p.RunID, SeqStart: buf[0].Seq, Events: buf,
-		}); err != nil && !flushErrLogged {
-			// First failure only — a dead link would otherwise flood the
-			// log every 100ms.
-			cliLogf("exec: run %s event batch failed (seq %d..%d, %d events): %v", p.RunID, buf[0].Seq, buf[len(buf)-1].Seq, len(buf), err)
-			flushErrLogged = true
+		})
+		if err != nil {
+			lossEvents += len(buf)
+			lossBatches++
+			lossTotal += len(buf)
+			if lossFirstAt.IsZero() {
+				lossFirstAt = time.Now()
+			}
+			if !flushErrLogged {
+				// First failure only — a dead link would otherwise flood the
+				// log every 100ms.
+				cliLogf("exec: run %s event batch failed (seq %d..%d, %d events): %v — %d event(s) LOST so far",
+					p.RunID, buf[0].Seq, buf[len(buf)-1].Seq, len(buf), err, lossTotal)
+				flushErrLogged = true
+			}
+		} else if lossEvents > 0 {
+			cliLogf("exec: run %s event stream recovered after %s — %d event(s) in %d batch(es) lost and never delivered (run total %d)",
+				p.RunID, time.Since(lossFirstAt).Round(time.Second), lossEvents, lossBatches, lossTotal)
+			lossEvents, lossBatches = 0, 0
+			lossFirstAt = time.Time{}
+			flushErrLogged = false
 		}
 		buf = nil
 	}
-	defer flush()
+	defer func() {
+		flush()
+		if lossTotal > 0 {
+			cliLogf("exec: run %s ended with %d event(s) NEVER delivered to the daemon (transcript gap on the platform)", p.RunID, lossTotal)
+		}
+	}()
 loop:
 	for {
 		select {
@@ -431,7 +479,7 @@ loop:
 	if err := callRPC(e.peer, link.MethodRunFinished, finishParams, nil, 30*time.Second); err != nil {
 		// A lost terminal report would leave the run 'running' until the
 		// daemon restarts — stash it for the next register.
-		cliLogf("exec: run %s → %s (report stashed — link down: %v)", p.RunID, status, err)
+		cliLogf("exec: run %s → %s report undeliverable (%v) — stashing for the next register", p.RunID, status, err)
 		stashPendingReport(finishParams)
 		return
 	}
@@ -452,7 +500,7 @@ func (e *executor) finish(p link.RunDispatchParams, workdir, sessionID, status, 
 		cliLogf("exec: run %s → %s", p.RunID, status)
 		return
 	}
-	cliLogf("exec: run %s → %s (report stashed — link down: %v)", p.RunID, status, err)
+	cliLogf("exec: run %s → %s report undeliverable (%v) — stashing for the next register", p.RunID, status, err)
 	stashPendingReport(report)
 }
 
@@ -464,17 +512,67 @@ func shortSHA(s string) string {
 	return s
 }
 
+// selfRSS reports this process's resident set size (Linux /proc; "" where the
+// file does not exist). Spawn-time memory pressure was invisible in the
+// incident — a sidecar that dies while spawning a heavy CLI leaves no RSS
+// context, so sample it around every spawn and stamp it into the log line.
+func selfRSS() string {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return "n/a"
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "VmRSS:"))
+		}
+	}
+	return "n/a"
+}
+
 // pendingReportFile is where unreported terminal states wait for the next
 // connection.
 func pendingReportFile() string {
 	return paths.PendingReports()
 }
 
+// pendingReportsMu serializes every read-modify-write of the stash file.
+// Two writers share it: stashPendingReport runs on each run's exec goroutine,
+// flushPendingReports on the link goroutine. Without the lock a report stashed
+// while a flush was mid-cycle was overwritten and never delivered (the run
+// then stayed 'running' with no error anywhere), and two concurrent saves
+// wrote the same temp path.
+var pendingReportsMu sync.Mutex
+
 // stashPendingReport appends a terminal report that could not be delivered.
+// EVERY failure is logged: a stash that silently fails to write means the run
+// stays 'running' on the platform forever (the exact incident symptom — the
+// platform had no terminal report and no machine-side error).
 func stashPendingReport(p link.RunFinishedParams) {
-	reports, _ := loadPendingReports()
+	pendingReportsMu.Lock()
+	defer pendingReportsMu.Unlock()
+	reports, err := loadPendingReports()
+	if err != nil && !os.IsNotExist(err) {
+		// A corrupt stash must NOT be silently replaced: preserve it aside so
+		// the reports it holds (runs already stuck 'running') stay recoverable,
+		// and say so.
+		bad := pendingReportFile() + ".corrupt-" + time.Now().Format("20060102-150405")
+		if rerr := os.Rename(pendingReportFile(), bad); rerr != nil {
+			cliLogf("exec: run %s pending-report stash UNREADABLE (%v) and could not be moved aside (%v) — new report will overwrite it",
+				p.RunID, err, rerr)
+		} else {
+			cliLogf("exec: run %s pending-report stash UNREADABLE (%v) — preserved as %s", p.RunID, err, bad)
+		}
+		reports = nil
+	}
 	reports = append(reports, p)
-	savePendingReports(reports)
+	if err := savePendingReports(reports); err != nil {
+		// The terminal report is GONE: the run will sit 'running' until the
+		// daemon restarts. This is the loudest failure in the sidecar.
+		cliLogf("exec: run %s TERMINAL REPORT LOST (%s=%s) — stash write failed: %v; the run will stay 'running' on the platform",
+			p.RunID, p.Status, p.Summary, err)
+		return
+	}
+	cliLogf("exec: run %s → %s stashed (%d report(s) pending)", p.RunID, p.Status, len(reports))
 }
 
 func loadPendingReports() ([]link.RunFinishedParams, error) {
@@ -484,37 +582,114 @@ func loadPendingReports() ([]link.RunFinishedParams, error) {
 	}
 	var out []link.RunFinishedParams
 	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse %s: %w", pendingReportFile(), err)
 	}
 	return out, nil
 }
 
-func savePendingReports(reports []link.RunFinishedParams) {
-	_ = os.MkdirAll(filepath.Dir(pendingReportFile()), 0o755)
-	if len(reports) == 0 {
-		_ = os.Remove(pendingReportFile())
-		return
+// savePendingReports persists the stash (atomically: write-then-rename, so a
+// crash mid-write cannot shred the previous stash). Returns the error — every
+// caller either reports it or propagates it.
+func savePendingReports(reports []link.RunFinishedParams) error {
+	dir := filepath.Dir(pendingReportFile())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	b, _ := json.MarshalIndent(reports, "", "  ")
-	_ = os.WriteFile(pendingReportFile(), b, 0o644)
+	if len(reports) == 0 {
+		if err := os.Remove(pendingReportFile()); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", pendingReportFile(), err)
+		}
+		return nil
+	}
+	b, err := json.MarshalIndent(reports, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %d report(s): %w", len(reports), err)
+	}
+	// A UNIQUE temp path: a shared ".tmp" made two concurrent savers clobber
+	// each other's bytes and race on the rename.
+	f, err := os.CreateTemp(dir, "pending-report-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp in %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	// 0644 on the final file: CreateTemp creates 0600.
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("chmod %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, pendingReportFile()); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename %s: %w", tmp, err)
+	}
+	return nil
 }
 
 // flushPendingReports re-sends stashed terminal reports over a fresh link
-// (called after a successful register). Leftovers stay stashed.
+// (called after a successful register). Leftovers stay stashed. Successes now
+// go to cli.log (they were stdout-only, i.e. invisible under nohup) and
+// failures name the run instead of being counted silently.
 func flushPendingReports(peer *link.Peer) {
+	pendingReportsMu.Lock()
 	reports, err := loadPendingReports()
-	if err != nil || len(reports) == 0 {
+	pendingReportsMu.Unlock()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			cliLogf("exec: pending-report stash unreadable — %d report(s) may be stuck: %v", len(reports), err)
+		}
 		return
 	}
-	var remaining []link.RunFinishedParams
+	if len(reports) == 0 {
+		return
+	}
+	cliLogf("exec: flushing %d stashed terminal report(s) after register", len(reports))
+	// Deliver WITHOUT the lock (each call can block 30s), remembering which
+	// runs were accepted. The stash is then re-read under the lock and only
+	// those entries removed — a report stashed meanwhile is preserved instead
+	// of being overwritten by a stale write-back.
+	delivered := map[string]bool{}
 	for _, r := range reports {
 		if err := callRPC(peer, link.MethodRunFinished, r, nil, 30*time.Second); err != nil {
-			remaining = append(remaining, r)
-		} else {
-			fmt.Printf("flushed pending report for run %s (%s)\n", r.RunID, r.Status)
+			cliLogf("exec: stashed report for run %s (%s) still undeliverable: %v", r.RunID, r.Status, err)
+			continue
+		}
+		delivered[r.RunID] = true
+		cliLogf("exec: flushed stashed report for run %s (%s)", r.RunID, r.Status)
+	}
+	if len(delivered) == 0 {
+		return // everything is still stashed; nothing to rewrite
+	}
+	pendingReportsMu.Lock()
+	cur, cerr := loadPendingReports()
+	if cerr != nil && !os.IsNotExist(cerr) {
+		pendingReportsMu.Unlock()
+		cliLogf("exec: pending-report stash UNREADABLE after flush — %d delivered report(s) stay queued: %v", len(delivered), cerr)
+		return
+	}
+	keep := cur[:0]
+	for _, r := range cur {
+		if !delivered[r.RunID] {
+			keep = append(keep, r)
 		}
 	}
-	savePendingReports(remaining)
+	serr := savePendingReports(keep)
+	pendingReportsMu.Unlock()
+	if serr != nil {
+		// Logged for BOTH outcomes: an empty rewrite that cannot remove the
+		// file leaves delivered reports to be re-sent forever.
+		cliLogf("exec: could not rewrite the pending-report stash (%d left): %v", len(keep), serr)
+	} else if len(keep) == 0 {
+		cliLogf("exec: pending-report stash drained — all %d delivered report(s) cleared", len(delivered))
+	}
 }
 
 // agentProfileDir is where config.push lands the agent's AGENTS.md
