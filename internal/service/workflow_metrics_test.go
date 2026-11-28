@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -191,8 +192,8 @@ func TestWorkflowIdleGapAliasSameValue(t *testing.T) {
 	if got := mi(g.Metrics, "serialization_loss_ms"); got != want {
 		t.Fatalf("serialization_loss_ms = %d, want %d (deprecated alias must keep the same value)", got, want)
 	}
-	if got := mi(g.Metrics, "metrics_schema_version"); got != 2 {
-		t.Fatalf("metrics_schema_version = %d, want 2", got)
+	if got := mi(g.Metrics, "metrics_schema_version"); got != 3 {
+		t.Fatalf("metrics_schema_version = %d, want 3", got)
 	}
 	// Pure linear chain → no gap at all (the alias must not fabricate one).
 	linear := wfGraph(
@@ -345,4 +346,69 @@ func TestLostParallelismRuleFires(t *testing.T) {
 		}
 	}
 	t.Fatalf("lost_parallelism did not fire; metrics=%v", g.Metrics)
+}
+
+// Issue #38: the dispatch_wait finding's ATTRIBUTION must follow the
+// workflow's shape. On a serial-through-gate graph (peak parallel width ≤ 1
+// with blueprint gates present) there is no queue or lane contention to
+// fix — advising "add lanes / pre-dispatch beats editing the graph" pointed
+// exactly away from the real bottleneck (serial chain + human gate). The
+// share is still reported; the advice switches.
+func TestDispatchWaitFindingAttributionIsShapeAware(t *testing.T) {
+	svc := &RSIService{}
+	g := wfGraph(nil, nil)
+	const dw, wall = int64(40 * time.Minute / time.Millisecond), int64(100 * time.Minute / time.Millisecond)
+
+	// Serial-through-gate shape: gate present, peak width 1 → the advice
+	// must point at the graph structure (serial chain + human gate), not
+	// at lanes or pre-dispatch.
+	serial := map[string]any{
+		"dispatch_wait_ms": dw, "wall_ms": wall, "lane_count": int64(5),
+		"gate_node_count": int64(1), "parallel_width_peak": int64(1),
+	}
+	var f *RsiFinding
+	fs := svc.nodeFindings(context.Background(), "goal-1", g, serial, nil)
+	for i := range fs {
+		if fs[i].Category == "dispatch_wait" {
+			f = &fs[i]
+		}
+	}
+	if f == nil {
+		t.Fatalf("dispatch_wait finding missing on serial shape; metrics=%v", serial)
+	}
+	if !strings.Contains(f.Suggestion, "图结构") {
+		t.Fatalf("serial-through-gate advice must point at graph structure, got: %s", f.Suggestion)
+	}
+	if strings.Contains(f.Suggestion, "比改图更有效") || strings.Contains(f.Suggestion, "提高并行认领") {
+		t.Fatalf("serial-through-gate advice must not recommend lanes/pre-dispatch as the fix, got: %s", f.Suggestion)
+	}
+	if !strings.Contains(f.Suggestion, "不会缩短这段等待") {
+		t.Fatalf("serial-through-gate advice must explicitly rule out lanes/pre-dispatch, got: %s", f.Suggestion)
+	}
+	if !strings.Contains(f.Explanation, "不是并发队列或 lane 争用") {
+		t.Fatalf("serial-through-gate explanation must name the real cause, got: %s", f.Explanation)
+	}
+
+	// Queue shape (no gates, real parallelism): the classic lane guidance
+	// is correct and must be preserved verbatim.
+	queue := map[string]any{
+		"dispatch_wait_ms": dw, "wall_ms": wall, "lane_count": int64(5),
+		"gate_node_count": int64(0), "parallel_width_peak": int64(3),
+	}
+	f = nil
+	fs = svc.nodeFindings(context.Background(), "goal-1", g, queue, nil)
+	for i := range fs {
+		if fs[i].Category == "dispatch_wait" {
+			f = &fs[i]
+		}
+	}
+	if f == nil {
+		t.Fatalf("dispatch_wait finding missing on queue shape; metrics=%v", queue)
+	}
+	if !strings.Contains(f.Suggestion, "预派发") {
+		t.Fatalf("queue-shape advice must keep lane/pre-dispatch guidance, got: %s", f.Suggestion)
+	}
+	if !strings.Contains(f.Explanation, "而不是图结构问题") {
+		t.Fatalf("queue-shape explanation must keep the classic attribution, got: %s", f.Explanation)
+	}
 }
