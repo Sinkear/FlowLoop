@@ -206,18 +206,45 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	// Blueprint gates are human decisions, not agent work: their holder
-	// sub-goals must not count as execution lanes or critical-path work. The
-	// holder run's window is exactly the wait, so it is accumulated here and
-	// added to the entity-level gate_decision wait below.
+	// sub-goals never get a run (the human/auto decision IS the run — see
+	// ResolveBlueprintGate), so a run-window lookup sees nothing for them.
+	// The observable lifecycle lives in blueprint_node.resolved_config:
+	// held_since (stamped by markGateHeldTx) and decided_at (stamped by
+	// ResolveBlueprintGate). Those two timestamps feed three things (#38):
+	//   1. gateDecidedMS — the latest observable completion event a
+	//      dependent's ready_at falls back to, so waiting for the gate
+	//      lands in dependency_wait_ms instead of being misread as
+	//      dispatch delay;
+	//   2. gateHoldMS — the human hold window (decided_at − held_since)
+	//      reported as gate_wait_ms (the holder-run fallback below is
+	//      legacy data only: by construction there is no holder run);
+	//   3. the gate NODE added to the graph in the loop below, so explicit
+	//      depends_on edges have both endpoints and the critical path can
+	//      chain through the gate with 0 work.
 	gateHolders := map[string]bool{}
+	gateDecidedMS := map[string]int64{}
+	gateHoldMS := map[string]int64{}
 	if grows, err := s.st.DB().QueryContext(ctx,
-		`SELECT sub_goal_id FROM blueprint_node WHERE goal_id=? AND node_type='gate' AND COALESCE(sub_goal_id,'')!=''`, goalID); err == nil {
+		`SELECT sub_goal_id, COALESCE(resolved_config,'') FROM blueprint_node WHERE goal_id=? AND node_type='gate' AND COALESCE(sub_goal_id,'')!=''`, goalID); err == nil {
 		for grows.Next() {
-			var sgid string
-			if err := grows.Scan(&sgid); err != nil {
+			var sgid, cfg string
+			if err := grows.Scan(&sgid, &cfg); err != nil {
 				break
 			}
 			gateHolders[sgid] = true
+			var m map[string]any
+			if json.Unmarshal([]byte(cfg), &m) == nil {
+				if dec, ok := m["decided_at"].(string); ok {
+					if decMS, ok2 := parseTimeMS(dec); ok2 {
+						gateDecidedMS[sgid] = decMS
+						if held, ok3 := m["held_since"].(string); ok3 {
+							if heldMS, ok4 := parseTimeMS(held); ok4 && decMS > heldMS {
+								gateHoldMS[sgid] = decMS - heldMS
+							}
+						}
+					}
+				}
+			}
 		}
 		grows.Close()
 	}
@@ -268,11 +295,58 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	var depWait, dispatchWait, gateWait, spanStart, spanEnd int64
 	nowMS, _ := parseTimeMS(now())
 	inFlight := false
+	// readyOf returns the latest OBSERVABLE completion event on a
+	// dependency's upstream chain (#38): the dependency's own run end, a
+	// gate's decided_at, or — when the dependency has neither (merged away,
+	// never ran) — the same quantity over ITS dependencies, recursively.
+	// Before this fallback, a dependency without a run made ready_at
+	// collapse back to the DEPENDENT's own created_at, so the whole "wait
+	// for the upstream serial chain + wait for the human gate" was billed
+	// to dispatch_wait_ms — 74% of wall on a goal whose real dispatch delay
+	// was minutes. 0 = nothing observable upstream.
+	var readyOf func(id string, seen map[string]bool) int64
+	readyOf = func(id string, seen map[string]bool) int64 {
+		if seen[id] {
+			return 0 // hand-edited depends_on cycle: stop, do not stack
+		}
+		if w := wins[id]; w != nil && w.end > 0 {
+			return w.end
+		}
+		if dec := gateDecidedMS[id]; dec > 0 {
+			return dec
+		}
+		seen[id] = true
+		defer delete(seen, id)
+		var latest int64
+		for _, up := range depsMap[id] {
+			if t := readyOf(up, seen); t > latest {
+				latest = t
+			}
+		}
+		return latest
+	}
 	for _, id := range sgOrder {
 		r := sgRows[id]
 		if gateHolders[id] {
-			if w := wins[id]; w != nil {
-				gateWait += w.busy
+			// The gate is a graph NODE (#38): Kind="gate", zero work. Its
+			// window is the decision instant — a zero-width marker, so it
+			// never inflates parallel width or wall, but the critical-path
+			// DP chains through it (zero-work chaining) and every explicit
+			// depends_on edge now has both endpoints. gate_wait_ms = Σ
+			// human hold windows (held→decided); the holder-run fallback
+			// is legacy data only — by construction a gate holder never
+			// gets a run.
+			gn := WorkflowNode{Key: "sg:" + id, Kind: "gate", Label: r.title, SubGoalID: id, Status: r.status}
+			if dec := gateDecidedMS[id]; dec > 0 {
+				gn.StartedAtMS, gn.EndedAtMS = dec, dec
+			}
+			graph.Nodes = append(graph.Nodes, gn)
+			graph.Edges = append(graph.Edges, WorkflowEdge{From: "goal", To: gn.Key, Kind: "created", Source: "explicit"})
+			gateWait += gateHoldMS[id]
+			if gateHoldMS[id] == 0 {
+				if w := wins[id]; w != nil {
+					gateWait += w.busy
+				}
 			}
 			continue
 		}
@@ -288,8 +362,11 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		if createdOK {
 			readyMS = createdMS
 			for _, dep := range depsMap[id] {
-				if wd := wins[dep]; wd != nil && wd.end > readyMS {
-					readyMS = wd.end
+				// ready_at is anchored to the latest OBSERVABLE completion
+				// event upstream: run end, gate decided_at, or the
+				// dependency's own upstream chain (#38).
+				if t := readyOf(dep, map[string]bool{}); t > readyMS {
+					readyMS = t
 				}
 			}
 			if spanStart == 0 || readyMS < spanStart {
@@ -329,15 +406,16 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 
 	// Declared dependencies (explicit DAG) — best-effort JSON decode.
+	// Gate holders ARE graph nodes now, so their edges keep both directions:
+	// upstream → gate (the old code emitted these against a nonexistent
+	// node — dangling), and gate → dependent (the old code dropped these,
+	// which severed the critical path at every human gate — #38).
 	for _, id := range sgOrder {
 		var deps []string
 		if err := json.Unmarshal([]byte(sgRows[id].dependsOn), &deps); err != nil || len(deps) == 0 {
 			continue
 		}
 		for _, d := range deps {
-			if gateHolders[d] {
-				continue
-			}
 			if _, ok := sgRows[d]; ok {
 				graph.Edges = append(graph.Edges, WorkflowEdge{From: "sg:" + d, To: "sg:" + id, Kind: "depends_on", Source: "explicit"})
 			}
@@ -404,9 +482,11 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 			vrows.Close()
 			return nil, err
 		}
-		if gateHolders[sgid] {
-			continue
-		}
+		// Gate verdicts count like any other verification round
+		// (ResolveBlueprintGate inserts one passed row per decision): the
+		// old skip here made verify_rounds undercount every gated goal
+		// (#38 — 6 reported, 7 actually passed). They land as UNMEASURED
+		// rounds: the human decision is not timed as a run window.
 		v, ok := vmap[sgid]
 		if !ok {
 			verifier := ""
@@ -559,10 +639,16 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 		graph.Metrics["queue_wait_capped"] = true
 		dispatchWait = span
 	}
+	// dependency_wait_ms is per-node accumulated wall clock (created→ready),
+	// so across N waiting nodes it sums node-minutes and can exceed the span:
+	// one minute of upstream work can be "waited on" by several downstream
+	// nodes at once (#38, comment B). It is a per-node attribution total —
+	// never compare it to wall_ms as if it were a span.
 	graph.Metrics["dependency_wait_ms"] = depWait
 	graph.Metrics["dispatch_wait_ms"] = dispatchWait
 	// queue_wait_ms is a compatibility alias for dispatch_wait_ms.
 	graph.Metrics["queue_wait_ms"] = dispatchWait
+	graph.Metrics["gate_node_count"] = int64(len(gateHolders))
 
 	// Sub-goals that never started executing: no run window at all and no
 	// settled outcome. A blueprint gate HOLDER is excluded even before its
@@ -581,10 +667,15 @@ func (s *RSIService) BuildGoalWorkflow(ctx context.Context, goalID string) (*Wor
 	}
 	graph.Metrics["unrun_sub_goals"] = unrun
 
-	// Human wait has two sources: final delivery reviews (gate_decision, outside
-	// the execution span) and blueprint gate decisions (holder run windows,
-	// inside the span). Both are human wall-clock, so they are summed; the
-	// share uses wall+wait so it can never exceed 100%.
+	// Human wait has two sources: final delivery reviews (gate_decision rows,
+	// outside the execution span) and blueprint gate hold windows
+	// (held_since→decided_at from blueprint_node.resolved_config, inside the
+	// span). Both are human wall-clock, so they are summed. The share
+	// denominator is wall+wait so it can never exceed 100% — a DIFFERENT
+	// question from idle_gap_share (idle/machine-wall, computed in
+	// computeWorkflowMetrics): "what fraction of total elapsed time did
+	// humans hold" vs "what fraction of machine wall was idle". The two
+	// shares are deliberately not on the same denominator (#38, G8).
 	wall := mi(graph.Metrics, "wall_ms")
 	var reviewWaitMS int64
 	_ = s.st.DB().QueryRowContext(ctx,
@@ -965,11 +1056,16 @@ func computeWorkflowMetrics(g *WorkflowGraph) {
 	}
 
 	m := g.Metrics
-	// metrics_schema_version = 2 (2026-11-24, issue #13): serialization_loss_ms
-	// renamed to idle_gap_ms (old key kept as an alias) and the critical path
-	// now chains through windowless nodes, so cp/depth/idle_gap are NOT
-	// comparable with version-1 reports. Trend comparisons must respect this.
-	m["metrics_schema_version"] = int64(2)
+	// metrics_schema_version = 3 (2026-11-28, issue #38): blueprint gate
+	// holders are graph NODES now (Kind="gate", zero work), so node_count
+	// includes them and explicit edges through gates have endpoints — the
+	// critical path chains through human gates instead of breaking there.
+	// ready_at falls back to the latest observable upstream event (gate
+	// decided_at / run end), re-attributing the old misread dispatch_wait
+	// into dependency_wait; gate_wait_ms now measures held→decided windows;
+	// verify_rounds counts gate verdicts. NONE of these are comparable with
+	// version-2 reports — baseline() filters samples on this version.
+	m["metrics_schema_version"] = int64(3)
 	m["node_count"] = len(g.Nodes)
 	m["edge_count"] = len(g.Edges)
 	m["depth"] = int64(len(g.Critical))

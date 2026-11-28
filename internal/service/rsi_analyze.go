@@ -817,16 +817,31 @@ func (s *RSIService) nodeFindings(ctx context.Context, goalID string, g *Workflo
 	// (dispatch_wait_ms) and fed into lost_parallelism evidence but had NO
 	// rule of its own, so a scheduler that just dispatched late produced
 	// findings about "too many dependencies" instead of "dispatch is slow".
+	//
+	// #38: the finding's ATTRIBUTION is data-driven. On a serial-through-gate
+	// graph (peak parallel width ≤ 1 with blueprint gates present) there is
+	// no queue or lane contention to fix — the wall is chain + human-gate
+	// structure — so the old "add lanes / pre-dispatch beats editing the
+	// graph" advice pointed exactly away from the real bottleneck. The
+	// share is still reported (it is real clock time); the advice must
+	// match the shape.
 	if dw := mi(metrics, "dispatch_wait_ms"); wall > 0 && dw >= ruleDispatchWaitFloorMS {
 		if dwShare := float64(dw) / float64(wall); dwShare >= ruleDispatchWaitShare {
+			structured := mi(metrics, "gate_node_count") > 0 && mi(metrics, "parallel_width_peak") <= 1
+			expl := "子任务就绪到开跑的派发延迟累计 %s，占墙钟 %.0f%%（墙钟 %s）。该指标不含依赖门控（dependency_wait_ms 单列）。派发慢通常来自并发队列、lane 争用或人工/系统派发节奏，而不是图结构问题。"
+			sugg := "检查并发派发上限与 lane 通道数：dispatch 慢而依赖不重时，提高并行认领的通道数或预派发（ready 即派发）比改图更有效。"
+			if structured {
+				expl = "子任务就绪到开跑的派发延迟累计 %s，占墙钟 %.0f%%（墙钟 %s）。但该图峰值并行宽度为 1 且含人工 gate：等待主要发生在串行依赖链与人工卡点的放行节奏上，不是并发队列或 lane 争用。"
+				sugg = "瓶颈在图结构：优先审视串行依赖链与人工 gate 的拆分/放行（对照 serial_chain 与 human_wait finding），加通道或预派发不会缩短这段等待。"
+			}
 			out = append(out, RsiFinding{
 				Category: "dispatch_wait", Severity: "info", Confidence: "L1",
 				Title:       fmt.Sprintf("派发等待占墙钟 %.0f%%（%s）", 100*dwShare, humanMS(dw)),
-				Explanation: fmt.Sprintf("子任务就绪到开跑的派发延迟累计 %s，占墙钟 %.0f%%（墙钟 %s）。该指标不含依赖门控（dependency_wait_ms 单列）。派发慢通常来自并发队列、lane 争用或人工/系统派发节奏，而不是图结构问题。",
-					humanMS(dw), 100*dwShare, humanMS(wall)),
-				Suggestion: "检查并发派发上限与 lane 通道数：dispatch 慢而依赖不重时，提高并行认领的通道数或预派发（ready 即派发）比改图更有效。",
+				Explanation: fmt.Sprintf(expl, humanMS(dw), 100*dwShare, humanMS(wall)),
+				Suggestion:  sugg,
 				Evidence: []string{
 					fmt.Sprintf("dispatch_wait_ms=%d wall_ms=%d share=%.2f lane_count=%d", dw, wall, dwShare, mi(metrics, "lane_count")),
+					fmt.Sprintf("gate_node_count=%d parallel_width_peak=%d", mi(metrics, "gate_node_count"), mi(metrics, "parallel_width_peak")),
 				},
 				Score: ruleScore(scoreBaseInfo, dwShare, ruleDispatchWaitShare),
 			})
@@ -886,7 +901,15 @@ func (s *RSIService) baseline(ctx context.Context, sessionID string) map[string]
 		if s.goalHadFaultRuns(ctx, smp.goalID) {
 			continue
 		}
-		samples = append(samples, decodeMap(smp.metrics))
+		m := decodeMap(smp.metrics)
+		// Schema gate (#38, v3): dispatch/dependency are re-attributed, gate
+		// nodes entered the graph (node/cp/depth), and gate_wait/verify_rounds
+		// changed meaning — v1/v2 medians are not comparable. Trend history
+		// restarts with v3 reports.
+		if v, ok := num(m["metrics_schema_version"]); !ok || v < 3 {
+			continue
+		}
+		samples = append(samples, m)
 	}
 	if len(samples) < 5 {
 		return map[string]any{}
