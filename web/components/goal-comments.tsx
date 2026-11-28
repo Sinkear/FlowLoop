@@ -338,12 +338,15 @@ export function GoalComments({
 
       {/* ── 消息区：唯一滚动容器；浮按钮相对它定位 ── */}
       <div className="relative min-h-0 flex-1">
+        {/* overscroll 不 contain：滚到顶/底后滚动链交给页面（2026-11-28
+            用户反馈：contain 把滚轮事件拦在面板里，鼠标悬停在对话/右栏上
+            时整页滚不动）。 */}
         <div
           ref={setListRef}
           onScroll={handleScroll}
           role="log"
           aria-label="任务对话消息"
-          className="h-full overflow-y-auto overscroll-contain"
+          className="h-full overflow-y-auto"
         >
           {isLoading ? (
             <div className="mx-auto w-full max-w-3xl px-3 sm:px-5">

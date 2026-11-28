@@ -63,7 +63,9 @@ export function GoalContextRail({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3">
+      {/* overscroll 不 contain：滚到顶/底后滚动链交给页面（同任务对话面板，
+          contain 会把滚轮事件拦在栏内，整页滚不动）。 */}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {tab === "exec" && (
           <>
             {/* 子任务（v2：goal 内部拆出的工作项，不是 child goal） */}
