@@ -141,6 +141,12 @@ var nonRetryableMarkers = []string{
 	"Model unavailable",
 	"额度已用完", "已用完", "quota exceeded", "insufficient quota", "配额不足",
 	"余额不足", "insufficient balance", "payment required",
+	// Auth failures are as deterministic as quota errors (goal.go's own
+	// comment on the failed branch names "model/config/auth errors") — a bad
+	// key never heals with time, so burning the retry budget on it only
+	// delays the terminal failure the human already needs to act on.
+	"invalid api key", "invalid_api_key", "Incorrect API key",
+	"unauthorized", "authentication", "认证失败", "鉴权失败", "无效的密钥",
 }
 
 // isNonRetryable reports whether a failed run's summary matches a
@@ -1994,6 +2000,26 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 					pendingEvents = append(pendingEvents, events.Event{Topic: "goal:retrying", Payload: map[string]any{
 						"goal_id": rc.GoalID, "attempt": attempt, "backoff_seconds": int(delay.Seconds()),
 					}})
+					// 决策 6-19 (user m00313): a failed attempt that will
+					// retry must leave a trace in the goal feed — otherwise
+					// the card sits on "active" with zero visible signal
+					// while the retry chain burns in the dark. Same
+					// system-comment pipeline node failures use; the
+					// comment:created event publishes only after the commit
+					// (invariant 13, via commitAndEmit).
+					if _, ev, err := insertNodeCommentTx(ctx, tx, Comment{
+						GoalID:     rc.GoalID,
+						RunID:      rc.RunID,
+						AuthorType: "system",
+						Content:    ownerRunRetryingFeedContent(rc, rc.Attempt, delay),
+					}); err != nil {
+						// The feed is observability: a comment-insert failure
+						// must not fail the reconcile that already fixed up
+						// the successor run.
+						logging.Warnf("goal: insert retrying-failure feed comment (goal %s run %s): %v", rc.GoalID, rc.RunID, err)
+					} else {
+						pendingEvents = append(pendingEvents, ev)
+					}
 				}
 			}
 		} else {
@@ -2007,11 +2033,40 @@ func (s *GoalService) reconcileOnRunEndOnce(ctx context.Context, rc goalRunConte
 				`UPDATE run SET status='cancelled', cancel_reason='goal_terminal' WHERE goal_id=? AND status='queued'`, rc.GoalID); err != nil {
 				return fmt.Errorf("cancel queued runs on fail: %w", err)
 			}
+			// 决策 6-19 (user m00313): the terminal failure must explain
+			// itself in the goal feed — every other terminal path (cancelled
+			// runs, node failures, guest failures) posts one, and the raw
+			// error used to live only in run.result_summary, which the web
+			// renders nowhere. terminalNote names HOW it got here so the
+			// comment is honest about the retry economics.
+			terminalNote := fmt.Sprintf("第 %d 次执行失败，重试次数已用尽（上限 %d 次），任务终止。", rc.Attempt, maxAttempts)
+			if nonRetryable {
+				terminalNote = "执行失败，属于环境/配置类错误（重试无效），任务直接终止。"
+			} else if isImportGoal {
+				terminalNote = "执行失败（导入类任务不自动重试），任务终止。"
+			}
+			if _, ev, err := insertNodeCommentTx(ctx, tx, Comment{
+				GoalID:     rc.GoalID,
+				RunID:      rc.RunID,
+				AuthorType: "system",
+				Content:    ownerRunTerminalFeedContent(rc, terminalNote),
+			}); err != nil {
+				// The feed is observability: never fail the goal-terminal
+				// reconcile over a comment insert.
+				logging.Warnf("goal: insert terminal-failure feed comment (goal %s run %s): %v", rc.GoalID, rc.RunID, err)
+			} else {
+				pendingEvents = append(pendingEvents, ev)
+			}
 			// The goal ACTUALLY failed here (attempts exhausted) — the failure
 			// card fires once, not once per failed attempt (决策 5-10).
+			// cause/advice (决策 6-19): the human-language explanation rides
+			// the event so the notify card can say WHY, not just quote
+			// 200 bytes of raw executor error.
+			cause, advice := classifyFailure(rc.Summary)
 			pendingEvents = append(pendingEvents, events.Event{Topic: "goal:finished", Payload: map[string]any{
 				"goal_id": rc.GoalID, "status": "failed", "summary": rc.Summary,
 				"agent_ran": rc.SessionID != "",
+				"cause":     cause, "advice": advice,
 			}})
 			if s.rsi != nil {
 				goalID := rc.GoalID
