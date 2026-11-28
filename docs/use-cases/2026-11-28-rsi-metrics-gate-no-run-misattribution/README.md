@@ -197,6 +197,7 @@
   - `internal/service/rsi_analyze.go`：dispatch_wait 规则 shape-aware（`gate_node_count>0 && parallel_width_peak<=1` → 归因切图结构，否则保留经典 lane 归因）；baseline() 按 `metrics_schema_version>=3` 过滤旧样本（v1/v2 中位数不可比，趋势史从 v3 重启）。
   - 反例测试（全部新增）：`TestQueueWaitGateDependencyAnchorsReadyToDecision`（workflow_queue_wait_test.go——gate 依赖下 40m 等待落 dependency_wait 而非 dispatch_wait、gate 持卡 30m 单列、gate 节点零宽窗口、gate→下游显式边存在、cp 穿链=work+pack、idle_gap=人等 30m、verify_rounds=1、gate_node_count=1、parallel_width_peak 仍为 1）；`TestDispatchWaitFindingAttributionIsShapeAware`（workflow_metrics_test.go——串行+gate 形状输出图结构归因并显式否定加通道/预派发，队列形状保留经典归因）；harness 新增 `gateSettled`/`gateVerdict` helper。
   - 断言更新：`TestWorkflowIdleGapAliasSameValue` 的 schema_version 2→3。全模块 `go test ./...` 通过。
+  - **PR**：[#45](https://github.com/Sinkear/FlowLoop/pull/45)（`fix/issue-38` → `main`，Fixes #38，合并后自动关闭 issue）。
 - **核实方式**：live 库（`rsi_report b6ed2cf7…`）本机不可达——本机 `~/.flowloop/flowloop.db` 为测试库（goal 4 条全是测试任务，rsi_report/rsi_round/gate_decision/blueprint_node/verification_result 全 0 行），`~/.ouroflow/flowloop.db` 无 goal 表，`~/.flowloop/ouroflow.db` 仅 1 条旧 goal。证据链 = issue 反算（自洽、误差 ≤1ms、恒等式成立）+ HEAD 源码逐行核实；与 [2026-11-28-blueprint-conditional-edge-semantics](../2026-11-28-blueprint-conditional-edge-semantics/README.md) 的「沙箱 DB 本机不可达」同格局，不做 DB 复算。实施后的行为验证以反例测试为准（fixture 复刻 issue 的时间结构）。
 
 ## 附录
