@@ -39,10 +39,12 @@ import {
 // 横向按拓扑层排列，纵向同层横排；坐标是固定的 CSS 像素，连线用 SVG 画。
 // 卡片尺寸（m04217 视觉统一）：比旧版高一档，为了装下「状态章 + 两行标题 +
 // 元数据脚注」，和工作流规范图的节点卡共用同一套版式。
-const NODE_W = 212;
-const NODE_H = 94;
-const GAP_X = 66;
-const GAP_Y = 18;
+// 2026-11-28（用户反馈）：任务页双图并排后节点显得过大，缩小一档——
+// NODE_W 212→184, NODE_H 94→84, GAP 同步收紧。详见 nodeBody。
+const NODE_W = 184;
+const NODE_H = 84;
+const GAP_X = 56;
+const GAP_Y = 16;
 const COL_W = NODE_W + GAP_X;
 const ROW_H = NODE_H + GAP_Y;
 
@@ -301,20 +303,20 @@ function NodeCard({
       title={tooltip}
     >
       <span className={cn("absolute inset-y-0 left-0 w-[3px]", st.bar)} aria-hidden="true" />
-      <div className="flex h-full flex-col px-2.5 py-2 pl-[13px]">
-        <div className="flex items-center gap-1.5">
+      <div className="flex h-full flex-col px-2 py-1.5 pl-[11px]">
+        <div className="flex items-center gap-1">
           <span
             className={cn(
-              "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
+              "inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-0.5 text-[9.5px] font-medium",
               meta.badge
             )}
           >
-            <Icon className="h-3 w-3" />
+            <Icon className="h-2.5 w-2.5" />
             {meta.label}
           </span>
           <span
             className={cn(
-              "ml-auto inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] font-medium",
+              "ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium",
               st.chip
             )}
           >
@@ -323,12 +325,12 @@ function NodeCard({
           </span>
         </div>
         <div
-          className="mt-1 line-clamp-2 text-[11.5px] font-medium leading-[1.35] text-ink"
+          className="mt-0.5 line-clamp-2 text-[10.5px] font-medium leading-[1.3] text-ink"
           title={node.label}
         >
           {node.label || node.key}
         </div>
-        <div className="mt-auto flex items-center gap-2 overflow-hidden text-[10px] text-ink-3">
+        <div className="mt-auto flex items-center gap-2 overflow-hidden text-[9.5px] text-ink-3">
           {!isSpecNode && (unmeasured || duration !== DASH) && (
             <span className="shrink-0 font-mono tabular-nums">{unmeasured ? "未度量" : duration}</span>
           )}
@@ -589,6 +591,7 @@ function GraphPane({
   spec,
   analyzing,
   autoFit = false,
+  initialZoom,
   rootClassName,
   scrollAreaClass,
   toolbarExtra,
@@ -602,6 +605,9 @@ function GraphPane({
   analyzing: boolean;
   /** 挂载时自动缩放到容器宽度：右栏这类窄容器先给整图概览，细节交给全屏。 */
   autoFit?: boolean;
+  /** 初始缩放（0.15–2 clamp）：autoFit 的静态替代，任务页双图上下并排时
+   *  两张图用同一档缩放，视觉上可直接对比（2026-11-28 用户反馈）。 */
+  initialZoom?: number;
   /** 根节点附加样式：全屏浮层用 flex 撑满，内嵌保持块级流。 */
   rootClassName?: string;
   /** 滚动画布的尺寸类：内嵌 max-h-[72vh]，全屏 flex-1。 */
@@ -614,7 +620,11 @@ function GraphPane({
   const markerCritical = `wf-arrow-c-${uid}`;
   const markerSpec = `wf-arrow-s-${uid}`;
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() =>
+    typeof initialZoom === "number" && Number.isFinite(initialZoom)
+      ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, initialZoom))
+      : 1
+  );
   // autoFit 只在「本次挂载后布局首次就绪」时执行一次：右栏窄容器先给整图
   // 概览、全屏浮层打开即铺满；之后布局因执行进度变宽也不再打扰手动缩放。
   const didFitRef = useRef(false);
@@ -881,6 +891,7 @@ export function WorkflowGraphView({
   showMetrics = true,
   variant = "execution",
   autoFit = false,
+  initialZoom,
 }: {
   graph: WorkflowGraph | null | undefined;
   loading?: boolean;
@@ -899,6 +910,8 @@ export function WorkflowGraphView({
   variant?: "execution" | "spec";
   /** 内嵌窗格挂载后自动适应容器宽度：任务详情右栏这类窄容器用；宽页面默认 1×。 */
   autoFit?: boolean;
+  /** 初始缩放（0.15–2 clamp）：不随布局变化重算，用户手动缩放优先。 */
+  initialZoom?: number;
 }) {
   const spec = variant === "spec";
   const [fullscreen, setFullscreen] = useState(false);
@@ -986,6 +999,7 @@ export function WorkflowGraphView({
         spec={spec}
         analyzing={analyzing}
         autoFit={autoFit}
+        initialZoom={initialZoom}
         toolbarExtra={expandButton}
         // 成功路径也吃 heightClass：作为画布的 min-height（与默认类无冲突，
         // tailwind-merge 直接叠加），避免 1-2 个节点的小图缩成一条窄带。

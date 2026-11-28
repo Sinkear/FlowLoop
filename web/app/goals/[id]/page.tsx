@@ -7,10 +7,11 @@ import Link from "next/link";
 import { AlertTriangle, RotateCcw, X } from "lucide-react";
 import { useGoal, useAgents, useSquads, useDomains, useGoalEvents, useGoalWorkflow, useBlueprintGraph, useHeldGates, useResolveHeldGate, usePlanAlignment } from "@/lib/queries";
 import { parseHandoffNote } from "@/lib/utils";
-import { GoalActions } from "@/components/goal-actions";
+import { GoalActions, ReviewPanel } from "@/components/goal-actions";
 import { GoalComments } from "@/components/goal-comments";
 import { GoalContextRail, type GoalContextTab } from "@/components/goal-context-rail";
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
+import { PlanAlignmentCard } from "@/components/plan-alignment-card";
 import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
 import { Badge, AttentionChip, SectionCard, PageBody, Segmented } from "@/components/ui";
@@ -157,8 +158,10 @@ function GoalDetailPageInner() {
   // 计划偏差提示（警示区）与右栏「计划」tab 共用同一份对账数据（同一 query）。
   const { data: alignment } = usePlanAlignment(id);
   const [railTab, setRailTab] = useState<GoalContextTab>("exec");
-  // 编排卡双视图：实时执行图 / 计划图（钉了工作流才有计划 tab）。
-  const [graphTab, setGraphTab] = useState<"exec" | "plan">("exec");
+  // 计划与执行卡视图（2026-11-28 用户反馈重构）：
+  //   graphs   = 执行图与规范图（计划）上下同框，1:1 同缩放直接对比；
+  //   align    = 计划 vs 实际逐节点对账表（从右栏移上来）。
+  const [planView, setPlanView] = useState<"graphs" | "align">("graphs");
 
   // 重开提示 = 一次性 toast，页面上不常驻（用户反馈）。handoff_note 是
   // "Reopened"/"Reopened: X" 时弹一下告诉人，6 秒自己走；同一会话对同一条
@@ -344,7 +347,7 @@ function GoalDetailPageInner() {
       {hasPlanWarning && (
         <button
           type="button"
-          onClick={() => setRailTab("plan")}
+          onClick={() => setPlanView("align")}
           className="flex shrink-0 min-w-0 items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.12] px-3 py-2 text-left text-xs text-amber-200 transition-colors hover:border-amber-500/60 hover:bg-amber-500/[0.18]"
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
@@ -354,85 +357,104 @@ function GoalDetailPageInner() {
               : "计划未物化"}
           </span>
           <span className="min-w-0 truncate text-amber-300/80">
-            计划与实际不一致，点「计划」查看逐节点对账
+            计划与实际不一致，点「计划 vs 实际」查看逐节点对账
           </span>
         </button>
       )}
 
-      {/* ── 编排图（全宽，实时执行 + 计划放在一起）：从右栏上移，读图不再
-          挤在 400px 窄栏里。实时执行 / 计划 两个 tab 切换；没钉工作流的
-          自动拆解任务只有实时图。全宽下 1:1 渲染（不 autoFit：小图会被
-          fit-width 顶到 200% 上限放大成巨块），横向超宽的图用工具条
-          「适应宽度 / 全屏」。 */}
+      {/* ── 计划与执行（全宽，2026-11-28 用户反馈重构）──
+          原名「编排」。用户的版式期望：
+          ① 规范图（计划）和执行图上下排版，方便逐节点对比；
+          ② 计划 vs 实际（逐节点对账）不再藏在右栏 tab 里，和两图同级
+             tab 可见；
+          ③ 节点缩小一档（NODE_W/H 已调小），框整体更高（执行图窗格
+             min-h 300→380px）。
+          没钉工作流的自动拆解任务没有规范图与对账表，只剩执行图单窗格，
+          tab 也随之隐藏。 */}
       {(workflowLoading || workflowError || workflow ||
         (goal.blueprint_version_id && (bpGraphLoading || blueprintGraph))) && (
         <SectionCard
-          title="编排"
+          title="计划与执行"
           count={
-            graphTab === "plan"
-              ? blueprintGraph?.nodes?.length
+            planView === "align"
+              ? alignment?.planned
               : workflow?.nodes?.length
           }
           desc={
-            graphTab === "plan"
-              ? "计划图：激活时钉住的工作流规范（应然结构）；与实时执行对照看计划 vs 实际"
-              : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
+            planView === "align"
+              ? "逐节点对账：计划节点是否有对应的执行子任务与 run；计划外子任务/咨询化执行都会列出来"
+              : goal.blueprint_version_id
+                ? "上：实时执行图（实际怎么跑）；下：计划图（钉住的工作流规范，应然结构）——上下对照看计划 vs 实际"
+                : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
           }
           descInBody
           bodyClassName="p-0"
           titleExtra={
             goal.blueprint_version_id ? (
               <Segmented
-                value={graphTab}
-                onChange={setGraphTab}
+                value={planView}
+                onChange={setPlanView}
                 options={[
-                  { value: "exec", label: "实时执行" },
-                  { value: "plan", label: "计划" },
+                  { value: "graphs", label: "执行图 · 计划图" },
+                  { value: "align", label: "计划 vs 实际" },
                 ]}
               />
             ) : undefined
           }
         >
-          {graphTab === "plan" ? (
-            <WorkflowGraphView
-              graph={blueprintGraph ?? null}
-              loading={bpGraphLoading}
-              error={
-                bpGraphError
-                  ? bpGraphErr instanceof Error
-                    ? bpGraphErr.message
-                  : String(bpGraphErr)
-                  : null
-              }
-              variant="spec"
-              showMetrics={false}
-              heightClass="min-h-[300px]"
-            />
+          {planView === "align" ? (
+            <PlanAlignmentCard goalId={id} framed={false} />
           ) : (
-            <WorkflowGraphView
-              graph={workflow}
-              loading={workflowLoading}
-              error={
-                workflowError
-                  ? workflowErr instanceof Error
-                    ? workflowErr.message
-                  : String(workflowErr)
-                  : null
-              }
-              heightClass="min-h-[300px]"
-            />
+            <div className="divide-y divide-line">
+              <WorkflowGraphView
+                graph={workflow}
+                loading={workflowLoading}
+                error={
+                  workflowError
+                    ? workflowErr instanceof Error
+                      ? workflowErr.message
+                    : String(workflowErr)
+                    : null
+                }
+                heightClass="min-h-[380px]"
+              />
+              {goal.blueprint_version_id && (
+                <WorkflowGraphView
+                  graph={blueprintGraph ?? null}
+                  loading={bpGraphLoading}
+                  error={
+                    bpGraphError
+                      ? bpGraphErr instanceof Error
+                        ? bpGraphErr.message
+                      : String(bpGraphErr)
+                      : null
+                  }
+                  variant="spec"
+                  showMetrics={false}
+                  heightClass="min-h-[320px]"
+                />
+              )}
+            </div>
           )}
         </SectionCard>
       )}
 
       {/* ── 主体：左对话（主要宽度）+ 右上下文栏（只留一小条）。
           并排从 1024（lg）就开始：用户期望的标准版式就是「上编排、
-          左会话主宽、右上下文一小栏」；再窄才退化为上下堆叠。 */}
+          左会话主宽、右上下文一小栏」；再窄才退化为上下堆叠。
+          review 态：审批卡（ReviewPanel）放在对话面板顶部——审批是
+          对话的一部分（agent 汇报 → 人拍板），内容以对话流为主呈现，
+          不再在顶栏操作区挤成"乱码"块。 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
         {/* 固定尺寸的对话面板：用户要求至少和上方编排区差不多高，之后又要求
             再拉高 1/3 —— 编排卡自然高约 670px，700 → 930px；矮屏下整页滚动，
             面板自身不缩。 */}
-        <div className="flex h-[930px] flex-col">
+        <div className="flex h-[930px] flex-col gap-3">
+          {goal.status === "review" && (
+            <div id="review-panel-anchor" className="shrink-0">
+              <ReviewPanel goal={goal} />
+            </div>
+          )}
           <GoalComments goalId={id} className="min-h-0" />
         </div>
         {/* 并排时右栏与对话面板等高，内容在栏内自滚，
