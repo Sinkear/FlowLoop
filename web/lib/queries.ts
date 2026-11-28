@@ -25,7 +25,8 @@ import {
   deleteSkill,
   configureSkillSource,
   clearSkillSource,
-  compareSkillSync,
+  checkSkillSync,
+  installSkillFromRepo,
   runSkillSync,
   createSkillPullRequest,
   listHooks,
@@ -157,7 +158,6 @@ export const qk = {
   runtimeModels: (id: string) => ["runtimes", id, "models"] as const,
   machines: ["machines"] as const,
   skills: ["skills"] as const,
-  skillSync: (id: string) => ["skills", id, "sync"] as const,
   hooks: ["hooks"] as const,
   hookRuns: (id: string) => ["hooks", id, "runs"] as const,
   goalHooks: (goalId: string) => ["hooks", "goal", goalId] as const,
@@ -279,10 +279,10 @@ export function useDeleteSkill() {
 }
 
 // ── Skill 远端仓库源同步（Feature A）──
-// 所有写操作都同时刷新技能列表（source/last_sync_* 会变）和该技能的 compare。
-function invalidateSkillSync(qc: ReturnType<typeof useQueryClient>, id: string) {
+// 写操作刷新技能列表：source/last_sync_* 列都在列表行上，check 结果由
+// 组件本地 state 承载（无需 query 缓存失效）。
+function invalidateSkillSync(qc: ReturnType<typeof useQueryClient>, _id: string) {
   qc.invalidateQueries({ queryKey: qk.skills });
-  qc.invalidateQueries({ queryKey: qk.skillSync(id) });
 }
 
 export function useConfigureSkillSource() {
@@ -304,20 +304,36 @@ export function useClearSkillSource() {
   });
 }
 
-// 只读比较：远端探测失败（403/网络）是业务结果，不自动重试。
-export function useSkillSyncCompare(skillId: string, enabled = true) {
-  return useQuery({
-    queryKey: qk.skillSync(skillId),
-    queryFn: () => compareSkillSync(skillId),
-    enabled,
-    retry: false,
+// 轻量检查：ls-remote SHA vs 上次同步基线，一次网络往返，无 clone。
+// 结果由调用方 setState 承载（SkillSyncDialog），远端探测失败（403/网络）
+// 是业务结果，不自动重试。
+export function useSkillSyncCheck() {
+  return useMutation({
+    mutationFn: (id: string) => checkSkillSync(id),
+  });
+}
+
+// 从仓库安装新 skill：clone + 注册 + 绑源 + 记基线一步完成。
+export function useInstallSkillFromRepo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      repo_url: string;
+      provider?: string;
+      branch?: string;
+      path?: string;
+      token?: string;
+    }) => installSkillFromRepo(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.skills });
+    },
   });
 }
 
 export function useRunSkillSync() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { id: string; direction: "pull" | "push" }) =>
+    mutationFn: (vars: { id: string; direction: "pull" }) =>
       runSkillSync(vars.id, vars.direction),
     onSuccess: (_data, vars) => invalidateSkillSync(qc, vars.id),
   });

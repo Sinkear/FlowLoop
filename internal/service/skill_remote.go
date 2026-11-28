@@ -83,6 +83,7 @@ type PullProvider interface {
 // never touches the network or a real git binary.
 type remoteGit interface {
 	Fetch(ctx context.Context, cfg remoteConfig) (*remoteState, error)
+	RemoteSHA(ctx context.Context, cfg remoteConfig) (string, error)
 	Push(ctx context.Context, cfg remoteConfig, files map[string]string, branch, message string) (commit string, err error)
 }
 
@@ -107,6 +108,16 @@ type remoteConfig struct {
 // slug returns the repo identifier the issue providers use ("owner/repo").
 func (c remoteConfig) slug() string { return skillRepoSlug(c.RepoURL) }
 
+// describePath renders "path@branch of repoURL" for error messages (the
+// URL is the user-supplied one, tokens are never embedded here).
+func (c remoteConfig) describePath() string {
+	p := c.Path
+	if p == "" {
+		p = "/"
+	}
+	return fmt.Sprintf("%s@%s of %s", p, c.Branch, c.RepoURL)
+}
+
 // SetPullProviderFactory wires the issue-provider factory (server.go does
 // this with issue.NewProvider; tests inject a fake).
 func (s *SkillService) SetPullProviderFactory(f func(provider, token string) (PullProvider, error)) {
@@ -129,6 +140,13 @@ func (s *SkillService) SetSource(ctx context.Context, id string, in SkillSourceI
 	sk, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	// Built-in skills are refreshed from the embedded assets at every boot
+	// (EnsureBuiltin rewrites the skill dir), so a repo binding + pull would
+	// be silently reverted on the next restart while the recorded baseline
+	// still claims in_sync. Sync tracks user copies only.
+	if sk.Builtin {
+		return nil, NewValidationError("built-in skills cannot bind a repository source: the platform refreshes them at boot; use a non-builtin copy for repository sync")
 	}
 	src, err := normalizeSourceInput(in, sk.Source)
 	if err != nil {
@@ -167,6 +185,60 @@ func (s *SkillService) ClearSource(ctx context.Context, id string) (*Skill, erro
 		return nil, fmt.Errorf("clear skill source: %w", err)
 	}
 	return s.Get(ctx, id)
+}
+
+// InstallFromRepo installs a NEW skill from a remote repository in one
+// call: shallow-clone the repo, read the skill files under path@branch,
+// create the skill (name from SKILL.md frontmatter), bind the source and
+// record the cloned HEAD SHA as the sync baseline — so the first `check`
+// reports in_sync, not unknown.
+//
+// This is the "upload skills by pointing at a repository" flow: the user
+// does not need a local zip; the platform pulls the files itself. A skill
+// with the same name must not already exist (the 409 path callers know).
+func (s *SkillService) InstallFromRepo(ctx context.Context, in SkillSourceInput) (*Skill, error) {
+	src, err := normalizeSourceInput(in, nil)
+	if err != nil {
+		return nil, err
+	}
+	cfg := remoteConfig{
+		RepoURL:  src.RepoURL,
+		Provider: src.Provider,
+		Branch:   src.Branch,
+		Path:     src.Path,
+		Token:    src.Token,
+	}
+	rs, err := s.git.Fetch(ctx, cfg)
+	if err != nil {
+		return nil, hintTokenless(cfg, fmt.Errorf("fetch remote repository: %w", err))
+	}
+	if rs.Cleanup != nil {
+		defer rs.Cleanup()
+	}
+	files := cleanRemoteFiles(rs.Files)
+	if len(files) == 0 {
+		return nil, NewValidationError("remote has no skill files at " + cfg.describePath())
+	}
+	if _, ok := files["SKILL.md"]; !ok {
+		return nil, NewValidationError("remote skill is missing SKILL.md at " + cfg.describePath())
+	}
+	sk, err := s.Create(ctx, files)
+	if err != nil {
+		return nil, err
+	}
+	// Bind the source and stamp the install baseline in one update. SetSource
+	// would work but resets bookkeeping on first bind (prev nil), so write
+	// the columns directly WITH the fetched SHA as the baseline.
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE skill SET repo_url=?,repo_provider=?,repo_branch=?,repo_path=?,repo_token=?,last_synced_at=?,last_sync_action=?,last_remote_sha=?,last_sync_digest=? WHERE id=?`,
+		src.RepoURL, src.Provider, src.Branch, src.Path, src.Token,
+		now(), "installed", rs.SHA, syncDigest(files), sk.ID); err != nil {
+		// Roll the half-installed skill back so a retry is clean.
+		s.st.DB().ExecContext(ctx, `DELETE FROM skill WHERE id=?`, sk.ID)
+		os.RemoveAll(skillDir(sk.ID))
+		return nil, fmt.Errorf("bind installed skill source: %w", err)
+	}
+	return s.Get(ctx, sk.ID)
 }
 
 // normalizeSourceInput validates a PUT source body and fills defaults.
@@ -341,6 +413,19 @@ func (s *SkillService) requirePush(ctx context.Context, cfg remoteConfig) (PullP
 	return p, identity, nil
 }
 
+// hintTokenless annotates a failed remote git operation when the source has
+// NO token configured. Public repositories are pullable without one, so an
+// unconditional token gate would block them; instead the raw git error is
+// kept (private repos reject unauthenticated access with messages that read
+// like a broken URL) and a factual note is appended. The note never
+// replaces the original error.
+func hintTokenless(cfg remoteConfig, err error) error {
+	if err == nil || strings.TrimSpace(cfg.Token) != "" {
+		return err
+	}
+	return fmt.Errorf("%w — no git token is configured for this skill source; private repositories need one", err)
+}
+
 // ── compare / pull / push / PR ──
 
 // SyncEntry is one differing file between the local skill and the remote
@@ -448,29 +533,88 @@ func (s *SkillService) Compare(ctx context.Context, id string) (*SyncCompare, er
 	}, nil
 }
 
-// Sync performs a pull (replace local files with remote) or push (commit
-// local files to the remote branch). Both directions verify that the
-// configured token identity can push — otherwise ErrForbidden.
+// SyncCheck is the GET /skills/{id}/check response: a lightweight
+// "is the remote ahead" verdict WITHOUT a clone or a file diff. The
+// remote branch head is compared with the SHA recorded at the last sync
+// (pull/PR baseline); the local side is summarized from the stored file set.
+type SyncCheck struct {
+	SkillID   string `json:"skill_id"`
+	State     string `json:"state"` // remote_ahead | in_sync | local_ahead | unknown
+	RemoteSHA string `json:"remote_sha"`
+	LastSHA   string `json:"last_sha"`
+	// HasUpdate is the one-bit answer the UI/CLI needs: the remote branch
+	// has moved past the recorded baseline, so a pull would change local
+	// files.
+	HasUpdate bool   `json:"has_update"`
+	Branch    string `json:"branch"`
+	CheckedAt string `json:"checked_at"`
+}
+
+// Check is the lightweight update probe: `git ls-remote` for the branch
+// head, compared against the last-sync SHA. No clone, no file diff — the
+// file-level verdict lives in Compare. State semantics:
+//
+//   - remote_ahead: remote head != recorded baseline SHA → pull has news.
+//   - in_sync: remote head == baseline (nothing changed upstream since).
+//   - local_ahead / diverged are NOT detectable without a file compare —
+//     SHA equality only says the remote did not move; local edits are
+//     invisible here. The check flow's contract is "is there something to
+//     PULL", so those cases report in_sync.
+//   - unknown: the skill has a source but was never synced (no baseline
+//     SHA to compare with) — the UI should offer a first pull.
+func (s *SkillService) Check(ctx context.Context, id string) (*SyncCheck, error) {
+	sk, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := remoteConfigFor(sk)
+	if err != nil {
+		return nil, err
+	}
+	remoteSHA, err := s.git.RemoteSHA(ctx, cfg)
+	if err != nil {
+		return nil, hintTokenless(cfg, fmt.Errorf("check remote branch: %w", err))
+	}
+	state, hasUpdate := "in_sync", false
+	switch {
+	case sk.Source.LastRemoteSHA == "":
+		state, hasUpdate = "unknown", true
+	case remoteSHA != sk.Source.LastRemoteSHA:
+		state, hasUpdate = "remote_ahead", true
+	}
+	return &SyncCheck{
+		SkillID:   sk.ID,
+		State:     state,
+		RemoteSHA: remoteSHA,
+		LastSHA:   sk.Source.LastRemoteSHA,
+		HasUpdate: hasUpdate,
+		Branch:    cfg.Branch,
+		CheckedAt: now(),
+	}, nil
+}
+
+// Sync pulls the remote source over the local skill files (replace local
+// files with remote). The push direction was REMOVED by product decision:
+// upstream contribution goes through PullRequest (review + human approval),
+// never a direct push. Direction is kept in the signature for API
+// compatibility; only "pull" is valid now.
 func (s *SkillService) Sync(ctx context.Context, id, direction string) (*SyncResult, error) {
 	sk, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	direction = strings.ToLower(strings.TrimSpace(direction))
-	if direction != "pull" && direction != "push" {
-		return nil, NewValidationError(`direction must be "pull" or "push"`)
+	if direction == "push" {
+		return nil, NewValidationError("direct push was removed; use the pull-request flow (POST /skills/{id}/pull-request)")
+	}
+	if direction != "" && direction != "pull" {
+		return nil, NewValidationError(`direction must be "pull"`)
 	}
 	cfg, err := remoteConfigFor(sk)
 	if err != nil {
 		return nil, err
 	}
-	if _, identity, err := s.requirePush(ctx, cfg); err != nil {
-		return nil, err
-	} else if direction == "pull" {
-		return s.pullRemote(ctx, sk, cfg, identity)
-	} else {
-		return s.pushRemote(ctx, sk, cfg, identity)
-	}
+	return s.pullRemote(ctx, sk, cfg, "")
 }
 
 // PullRequest clones the remote, applies the local skill files on a fresh
@@ -532,7 +676,7 @@ func (s *SkillService) PullRequest(ctx context.Context, id, title, body string) 
 func (s *SkillService) pullRemote(ctx context.Context, sk *Skill, cfg remoteConfig, identity string) (*SyncResult, error) {
 	rs, err := s.git.Fetch(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("fetch remote repository: %w", err)
+		return nil, hintTokenless(cfg, fmt.Errorf("fetch remote repository: %w", err))
 	}
 	if rs.Cleanup != nil {
 		defer rs.Cleanup()
@@ -566,41 +710,8 @@ func (s *SkillService) pullRemote(ctx context.Context, sk *Skill, cfg remoteConf
 	}, nil
 }
 
-func (s *SkillService) pushRemote(ctx context.Context, sk *Skill, cfg remoteConfig, identity string) (*SyncResult, error) {
-	local, err := s.localSkillFiles(ctx, sk.ID)
-	if err != nil {
-		return nil, fmt.Errorf("load local skill files: %w", err)
-	}
-	if len(local) == 0 {
-		return nil, NewValidationError("skill has no files to push")
-	}
-	rs, err := s.git.Fetch(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("fetch remote repository: %w", err)
-	}
-	if rs.Cleanup != nil {
-		defer rs.Cleanup()
-	}
-	remote := cleanRemoteFiles(rs.Files)
-	if _, counts := diffSkillFiles(local, remote); counts.Added+counts.Modified+counts.Removed == 0 {
-		return nil, NewValidationError("no local changes to push")
-	}
-	commit, err := s.git.Push(ctx, cfg, local, cfg.Branch, fmt.Sprintf("flowloop: sync skill %s", sk.Name))
-	if err != nil {
-		return nil, fmt.Errorf("push to remote: %w", err)
-	}
-	if err := s.markSynced(ctx, sk.ID, "pushed", commit, syncDigest(local)); err != nil {
-		return nil, err
-	}
-	return &SyncResult{
-		SkillID:   sk.ID,
-		Action:    "pushed",
-		Branch:    cfg.Branch,
-		Commit:    commit,
-		RemoteSHA: commit,
-		Identity:  identity,
-	}, nil
-}
+// pushRemote was REMOVED with the direct-push direction: upstream
+// contribution goes through PullRequest only (review + human approval).
 
 // markSynced records the outcome of a sync/PR on the skill row. baseline is
 // the content fingerprint of the last-known COMMON state of the two sides:
@@ -915,6 +1026,23 @@ func (g *gitCLI) Fetch(ctx context.Context, cfg remoteConfig) (*remoteState, err
 		return nil, err
 	}
 	return &remoteState{SHA: sha, Files: files, Dir: dir, Cleanup: cleanup}, nil
+}
+
+// RemoteSHA resolves the configured branch's head SHA without cloning —
+// `git ls-remote` is one round trip, which is what the lightweight
+// check-for-updates flow needs. An empty result (branch missing on the
+// remote) is an error the caller surfaces as a check failure.
+func (g *gitCLI) RemoteSHA(ctx context.Context, cfg remoteConfig) (string, error) {
+	cloneURL := gitutil.CloneURL(cfg.RepoURL, cfg.Token)
+	out, err := g.git(ctx, "", "ls-remote", cloneURL, "refs/heads/"+cfg.Branch)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("remote branch %q not found on %s", cfg.Branch, cfg.RepoURL)
+	}
+	return fields[0], nil
 }
 
 // Push clones the configured base branch, writes files under the repo path,

@@ -27,6 +27,9 @@ type fakeRemoteGit struct {
 	pushedBranch  string
 	pushedMessage string
 	pushedToken   string
+	lsRemoteSha   string
+	lsRemoteErr   error
+	lsRemotes     int
 }
 
 func copyFiles(in map[string]string) map[string]string {
@@ -55,6 +58,19 @@ func (f *fakeRemoteGit) Push(_ context.Context, cfg remoteConfig, files map[stri
 		return "", f.pushErr
 	}
 	return f.commit, nil
+}
+
+// RemoteSHA serves the lightweight Check probe: the branch head is f.sha
+// by default; lsRemoteSha (when set) lets a test move the remote forward.
+func (f *fakeRemoteGit) RemoteSHA(_ context.Context, _ remoteConfig) (string, error) {
+	f.lsRemotes++
+	if f.lsRemoteErr != nil {
+		return "", f.lsRemoteErr
+	}
+	if f.lsRemoteSha != "" {
+		return f.lsRemoteSha, nil
+	}
+	return f.sha, nil
 }
 
 type fakePullProvider struct {
@@ -397,8 +413,13 @@ func TestSkillSyncPull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync pull: %v", err)
 	}
-	if out.Action != "pulled" || out.Identity != "alice" || out.RemoteSHA != "remote-sha-1" || out.Branch != "main" {
+	if out.Action != "pulled" || out.RemoteSHA != "remote-sha-1" || out.Branch != "main" {
 		t.Fatalf("pull result = %+v", out)
+	}
+	// Pull no longer requires push permission, so the result carries no
+	// identity (the old two-way sync stamped the token identity here).
+	if out.Identity != "" {
+		t.Fatalf("pull result identity = %q, want empty", out.Identity)
 	}
 
 	files, err := svc.Files(ctx, sk.ID)
@@ -442,77 +463,94 @@ func TestSkillSyncPull(t *testing.T) {
 	}
 }
 
-// ── push / permission ──
+// ── pull permission semantics (push was removed) ──
 
-func TestSkillSyncRequiresPushPermission(t *testing.T) {
+func TestSkillSyncPullDoesNotRequirePushPermission(t *testing.T) {
 	ctx := context.Background()
-	for _, direction := range []string{"pull", "push"} {
-		t.Run(direction, func(t *testing.T) {
-			svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
-			git.files = map[string]string{"SKILL.md": "---\nname: s\n---\nremote\n"}
-			prov.canPush = false
-			prov.identity = "viewer"
-			mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	svc, sk, git, prov := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+	git.files = map[string]string{"SKILL.md": "---\nname: s\n---\nremote\n"}
+	// A viewer token (no push rights) must still be able to PULL — reading
+	// the remote is the pull-only sync flow's core operation.
+	prov.canPush = false
+	prov.identity = "viewer"
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
 
-			_, err := svc.Sync(ctx, sk.ID, direction)
-			if !errors.Is(err, ErrForbidden) {
-				t.Fatalf("%s err = %v, want ErrForbidden", direction, err)
-			}
-			if git.pushes != 0 || git.fetches != 0 {
-				t.Fatalf("%s must stop before git work (pushes=%d fetches=%d)", direction, git.pushes, git.fetches)
-			}
-		})
+	out, err := svc.Sync(ctx, sk.ID, "pull")
+	if err != nil {
+		t.Fatalf("pull err = %v, want nil (pull needs no push permission)", err)
+	}
+	if out.Action != "pulled" {
+		t.Fatalf("pull action = %q", out.Action)
+	}
+	if git.pushes != 0 || git.fetches == 0 {
+		t.Fatalf("pull must fetch without pushing (pushes=%d fetches=%d)", git.pushes, git.fetches)
 	}
 }
 
-func TestSkillSyncPush(t *testing.T) {
+func TestSkillSyncPullWithoutToken(t *testing.T) {
 	ctx := context.Background()
-	svc, sk, git, prov := remoteTestHarness(t, map[string]string{
+	svc, sk, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+	git.files = map[string]string{"SKILL.md": "---\nname: s\n---\nremote\n"}
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills"}) // no token
+
+	// Public repos are pullable without a token: the pull must go through.
+	out, err := svc.Sync(ctx, sk.ID, "pull")
+	if err != nil {
+		t.Fatalf("tokenless pull err = %v, want nil (public repos need no token)", err)
+	}
+	if out.Action != "pulled" || git.fetches == 0 || git.pushes != 0 {
+		t.Fatalf("pull = %+v (fetches=%d pushes=%d)", out, git.fetches, git.pushes)
+	}
+}
+
+func TestSkillSyncPullFetchFailureHintsToken(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills"}) // no token
+	git.fetchErr = errors.New("could not read Username: terminal prompts disabled")
+
+	_, err := svc.Sync(ctx, sk.ID, "pull")
+	if err == nil {
+		t.Fatal("tokenless pull against an auth-failing remote must fail")
+	}
+	// The raw git error stays, plus a factual note pointing at the token.
+	if !strings.Contains(err.Error(), "could not read Username") {
+		t.Fatalf("error should keep the git cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no git token is configured") {
+		t.Fatalf("error should hint the missing token: %v", err)
+	}
+
+	// With a token configured the note is not appended (a wrong token is a
+	// different problem and the hint would mislead).
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	_, err = svc.Sync(ctx, sk.ID, "pull")
+	if err == nil || strings.Contains(err.Error(), "no git token is configured") {
+		t.Fatalf("tokened pull error should not carry the tokenless hint: %v", err)
+	}
+}
+
+func TestSkillSyncPushRemoved(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, _ := remoteTestHarness(t, map[string]string{
 		"SKILL.md": "---\nname: sync-skill\n---\nlocal change\n",
 	})
 	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
-	prov.canPush = true
 	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\n---\nold remote\n"}
 
-	out, err := svc.Sync(ctx, sk.ID, "push")
-	if err != nil {
-		t.Fatalf("Sync push: %v", err)
+	// Direct push is REMOVED: the API must reject it without touching git.
+	_, err := svc.Sync(ctx, sk.ID, "push")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("push err = %v, want ErrValidation", err)
 	}
-	if out.Action != "pushed" || out.Commit != "commit-1" || out.RemoteSHA != "commit-1" ||
-		out.Branch != "main" || out.Identity != "alice" {
-		t.Fatalf("push result = %+v", out)
+	if !strings.Contains(err.Error(), "pull-request") {
+		t.Fatalf("push removal error should point at the PR flow: %v", err)
 	}
-	if git.pushes != 1 || git.pushedBranch != "main" {
-		t.Fatalf("push calls = %d branch=%q", git.pushes, git.pushedBranch)
-	}
-	if git.pushedFiles["SKILL.md"] != "---\nname: sync-skill\n---\nlocal change\n" {
-		t.Fatalf("pushed files = %v", git.pushedFiles)
-	}
-	if _, ok := git.pushedFiles["package.zip"]; ok {
-		t.Fatalf("push must not send package.zip: %v", git.pushedFiles)
-	}
-	if !strings.Contains(git.pushedMessage, "sync skill") {
-		t.Fatalf("push message = %q", git.pushedMessage)
+	if git.pushes != 0 || git.fetches != 0 {
+		t.Fatalf("removed push must not touch git (pushes=%d fetches=%d)", git.pushes, git.fetches)
 	}
 
-	gotSkill, err := svc.Get(ctx, sk.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotSkill.Source.LastSyncAction != "pushed" || gotSkill.Source.LastRemoteSHA != "commit-1" {
-		t.Fatalf("last_* after push = %+v", gotSkill.Source)
-	}
-
-	// No local changes → 400 validation, and no second push.
-	git.files = map[string]string{"SKILL.md": "---\nname: sync-skill\n---\nlocal change\n"}
-	if _, err := svc.Sync(ctx, sk.ID, "push"); !errors.Is(err, ErrValidation) {
-		t.Fatalf("no-change push err = %v, want ErrValidation", err)
-	}
-	if git.pushes != 1 {
-		t.Fatalf("no-change push contacted git, pushes=%d", git.pushes)
-	}
-
-	// Unknown direction is a validation error.
+	// Unknown direction is still a validation error.
 	if _, err := svc.Sync(ctx, sk.ID, "sideways"); !errors.Is(err, ErrValidation) {
 		t.Fatalf("bad direction err = %v, want ErrValidation", err)
 	}
@@ -923,5 +961,169 @@ func TestSyncDigestBasics(t *testing.T) {
 	}
 	if got := syncDigest(map[string]string{}); got == "" {
 		t.Fatal("syncDigest of the empty set must be non-empty (\"\" is the never-synced sentinel)")
+	}
+}
+
+// ── lightweight check (sha-level update probe) ──
+
+func TestSkillCheckStates(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+
+	// Never synced → unknown, has_update=true (first pull is meaningful).
+	chk, err := svc.Check(ctx, sk.ID)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if chk.State != "unknown" || !chk.HasUpdate || chk.RemoteSHA != "remote-sha-1" || chk.LastSHA != "" {
+		t.Fatalf("never-synced check = %+v", chk)
+	}
+	if git.lsRemotes != 1 || git.fetches != 0 {
+		t.Fatalf("check must ls-remote without cloning (lsRemotes=%d fetches=%d)", git.lsRemotes, git.fetches)
+	}
+
+	// Pull stamps the baseline; head unchanged → in_sync.
+	git.files = map[string]string{"SKILL.md": "---\nname: s\n---\nremote\n"}
+	if _, err := svc.Sync(ctx, sk.ID, "pull"); err != nil {
+		t.Fatal(err)
+	}
+	chk, err = svc.Check(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chk.State != "in_sync" || chk.HasUpdate || chk.LastSHA != "remote-sha-1" {
+		t.Fatalf("after-pull check = %+v", chk)
+	}
+
+	// Remote moves → remote_ahead with has_update.
+	git.lsRemoteSha = "remote-sha-2"
+	chk, err = svc.Check(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chk.State != "remote_ahead" || !chk.HasUpdate || chk.RemoteSHA != "remote-sha-2" {
+		t.Fatalf("moved-remote check = %+v", chk)
+	}
+}
+
+func TestSkillCheckRequiresSource(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, _, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+
+	if _, err := svc.Check(ctx, sk.ID); !errors.Is(err, ErrValidation) {
+		t.Fatalf("sourceless check err = %v, want ErrValidation", err)
+	}
+}
+
+func TestSkillCheckRemoteError(t *testing.T) {
+	ctx := context.Background()
+	svc, sk, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: s\n---\nlocal\n"})
+	mustSetSource(t, svc, sk.ID, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"})
+	git.lsRemoteErr = errors.New("network down")
+
+	if _, err := svc.Check(ctx, sk.ID); err == nil || !strings.Contains(err.Error(), "check remote branch") {
+		t.Fatalf("check err = %v, want wrapped probe failure", err)
+	}
+}
+
+// ── install from repo ──
+
+func TestSkillInstallFromRepo(t *testing.T) {
+	ctx := context.Background()
+	svc, _, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: seed\n---\nseed\n"})
+	git.files = map[string]string{
+		"SKILL.md":        "---\nname: installed-skill\ndescription: from repo\n---\nremote body\n",
+		"references/x.md": "ref\n",
+	}
+
+	sk, err := svc.InstallFromRepo(ctx, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Path: "skills/demo", Token: "tok"})
+	if err != nil {
+		t.Fatalf("InstallFromRepo: %v", err)
+	}
+	if sk.Name != "installed-skill" || sk.Source == nil || sk.Source.RepoURL != "https://github.com/acme/skills" {
+		t.Fatalf("installed skill = %+v", sk)
+	}
+	// Install stamps the baseline: the first check reports in_sync, not unknown.
+	if sk.Source.LastSyncAction != "installed" || sk.Source.LastRemoteSHA != "remote-sha-1" || sk.Source.LastSyncDigest == "" {
+		t.Fatalf("install baseline = %+v", sk.Source)
+	}
+	files, err := svc.Files(ctx, sk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files["SKILL.md"] != git.files["SKILL.md"] || files["references/x.md"] != "ref\n" {
+		t.Fatalf("installed files = %v", files)
+	}
+
+	// Installing the same repo again now collides on the skill name.
+	if _, err := svc.InstallFromRepo(ctx, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"}); err == nil {
+		t.Fatal("duplicate install must fail on skill name")
+	}
+}
+
+func TestSkillInstallFromRepoRequiresSKILLMD(t *testing.T) {
+	ctx := context.Background()
+	svc, _, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: seed\n---\nseed\n"})
+	git.files = map[string]string{"docs/only.md": "no skill here"}
+
+	if _, err := svc.InstallFromRepo(ctx, SkillSourceInput{RepoURL: "https://github.com/acme/skills", Token: "tok"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("skillless repo install err = %v, want ErrValidation", err)
+	}
+}
+
+func TestSkillInstallFromRepoTokenless(t *testing.T) {
+	ctx := context.Background()
+	svc, _, git, _ := remoteTestHarness(t, map[string]string{"SKILL.md": "---\nname: seed\n---\nseed\n"})
+	git.files = map[string]string{"SKILL.md": "---\nname: s2\n---\nx\n"}
+
+	// Public repos need no token: install goes through and stamps the baseline.
+	sk, err := svc.InstallFromRepo(ctx, SkillSourceInput{RepoURL: "https://github.com/acme/skills"})
+	if err != nil {
+		t.Fatalf("tokenless install err = %v, want nil (public repos need no token)", err)
+	}
+	if git.fetches == 0 {
+		t.Fatal("tokenless install must fetch")
+	}
+	if sk.Source == nil || sk.Source.LastSyncAction != "installed" {
+		t.Fatalf("installed source = %+v", sk.Source)
+	}
+}
+
+// ── builtin skill protection ──
+
+// SetSource must refuse built-in skills: EnsureBuiltin rewrites their files
+// from the embedded assets at every boot, so a binding would be silently
+// reverted on restart while the recorded baseline still claims in_sync.
+func TestSetSourceBuiltinRejected(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("FLOWLOOP_HOME", t.TempDir())
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewSkillService(st)
+	if _, err := SeedBuiltinSkills(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.SetSource(ctx, BuiltinChatCreateID, SkillSourceInput{
+		RepoURL: "https://github.com/acme/skills",
+		Token:   "tok",
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("builtin SetSource err = %v, want ErrValidation", err)
+	}
+	if !strings.Contains(err.Error(), "built-in") {
+		t.Fatalf("rejection should name the built-in constraint: %v", err)
+	}
+
+	// The rejection leaves no partial binding behind.
+	sk, err := svc.Get(ctx, BuiltinChatCreateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk.Source != nil {
+		t.Fatalf("rejected SetSource must not persist a source: %+v", sk.Source)
 	}
 }

@@ -206,10 +206,12 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /machines", h.listMachines)
 	mux.HandleFunc("GET /skills", h.listSkills)
 	mux.HandleFunc("POST /skills", h.createSkill)
+	mux.HandleFunc("POST /skills/install-from-repo", h.installSkillFromRepo)
 	mux.HandleFunc("DELETE /skills/{id}", h.deleteSkill)
 	mux.HandleFunc("PUT /skills/{id}/source", h.setSkillSource)
 	mux.HandleFunc("DELETE /skills/{id}/source", h.clearSkillSource)
 	mux.HandleFunc("GET /skills/{id}/sync", h.compareSkillSync)
+	mux.HandleFunc("GET /skills/{id}/check", h.checkSkillSync)
 	mux.HandleFunc("POST /skills/{id}/sync", h.syncSkill)
 	mux.HandleFunc("POST /skills/{id}/pull-request", h.pullRequestSkill)
 
@@ -1016,8 +1018,34 @@ func (h *Handlers) compareSkillSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, err)
 }
 
-// syncSkill pulls or pushes the skill against its remote source. The service
-// verifies push permission (ErrForbidden → 403) BEFORE touching files/remote.
+// checkSkillSync is the lightweight update probe: `git ls-remote` for the
+// branch head vs the last-sync SHA. One round trip, no clone, no diff.
+func (h *Handlers) checkSkillSync(w http.ResponseWriter, r *http.Request) {
+	if h.Skills == nil {
+		writeErr(w, http.StatusInternalServerError, errors.New("skills library not configured"))
+		return
+	}
+	out, err := h.Skills.Check(r.Context(), r.PathValue("id"))
+	writeJSON(w, out, err)
+}
+
+// installSkillFromRepo installs a NEW skill by pulling it from a remote
+// repository: clone, create, bind the source, stamp the install baseline.
+func (h *Handlers) installSkillFromRepo(w http.ResponseWriter, r *http.Request) {
+	if h.Skills == nil {
+		writeErr(w, http.StatusInternalServerError, errors.New("skills library not configured"))
+		return
+	}
+	var in service.SkillSourceInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	out, err := h.Skills.InstallFromRepo(r.Context(), in)
+	writeJSON(w, out, err)
+}
+
+// syncSkill pulls the skill from its remote source (replace local files).
 func (h *Handlers) syncSkill(w http.ResponseWriter, r *http.Request) {
 	if h.Skills == nil {
 		writeErr(w, http.StatusInternalServerError, errors.New("skills library not configured"))
