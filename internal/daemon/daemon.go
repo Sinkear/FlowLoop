@@ -1822,12 +1822,12 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		return
 	}
 	var title, desc, handoff, domainID, gitURL, defaultBranch, domainType, domainName, systemPrompt, argsJSON, rtEnvJSON, sourceRef, gitCredentials, gitIdentity, runtimeMachineID string
-	var agentName, agentModel, triggerAuthorName string
+	var agentName, agentModel, rtModelsJSON, triggerAuthorName string
 	var triggerAuthor, triggerCommentID, triggerCommentContent, runRole, subGoalID, wakeNote, wakeAnchorID, reviewRequest string
 	var maxConcurrent, maxRunDuration int
 	err := d.st.DB().QueryRowContext(ctx,
 		`SELECT g.title, g.description, g.handoff_note, d.id, d.git_url, d.default_branch, COALESCE(d.type,''), COALESCE(d.name,''), a.system_prompt, a.name, a.model, d.git_identity,
-		        r.args, r.env, COALESCE(r.machine_id,''), a.max_concurrent, d.max_run_duration,
+		        r.args, r.env, COALESCE(r.models,'[]'), COALESCE(r.machine_id,''), a.max_concurrent, d.max_run_duration,
 		        g.source_ref, d.git_credentials, COALESCE(g.review_request,''),
 		        r2.trigger_comment_id, COALESCE(c.author_type, ''), COALESCE(c.content, ''), COALESCE(ca.name,''), r2.role, r2.sub_goal_id, r2.wake_note, COALESCE(r2.wake_anchor,'')
 		 FROM run r2
@@ -1838,7 +1838,7 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		 LEFT JOIN comment c ON c.id = r2.trigger_comment_id
 		 LEFT JOIN agent ca ON ca.id = c.author_id
 		 WHERE r2.id = ?`, q.RunID).
-		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &agentModel, &gitIdentity, &argsJSON, &rtEnvJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
+		Scan(&title, &desc, &handoff, &domainID, &gitURL, &defaultBranch, &domainType, &domainName, &systemPrompt, &agentName, &agentModel, &gitIdentity, &argsJSON, &rtEnvJSON, &rtModelsJSON, &runtimeMachineID, &maxConcurrent, &maxRunDuration, &sourceRef, &gitCredentials, &reviewRequest, &triggerCommentID, &triggerAuthor, &triggerCommentContent, &triggerAuthorName, &runRole, &subGoalID, &wakeNote, &wakeAnchorID)
 	// Claim visibility: which run, which agent, which role — the panel's
 	// answer to "who is doing what right now". The TITLE travels with the
 	// id: ids are for the system, humans read titles.
@@ -1862,6 +1862,13 @@ func (d *Daemon) runTask(ctx context.Context, q *service.ClaimedRow) {
 		d.failRun(ctx, q, fmt.Sprintf("load config: %v", err))
 		return
 	}
+	// The agent's model config may be a BARE name while the runtime probe
+	// reported provider-qualified ids — qualify it here so the executor's
+	// session/set_config_option actually lands (bare names are rejected by
+	// CLIs with qualified catalogs and the run silently rides the agent
+	// default). Ambiguous/no-match cases keep the bare id — see
+	// resolveModel for the safety rules.
+	agentModel = resolveModel(agentModel, parseRuntimeModels(rtModelsJSON))
 	// The GOAL title/description survive the sub-goal override below — the
 	// fixed context block always names the goal; the wake line names the work
 	// item.
