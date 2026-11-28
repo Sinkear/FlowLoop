@@ -12,7 +12,7 @@ function pendingCopy(status: string): { title: string; desc: string } {
     case "waiting":
       return {
         title: "等待任务进入终态",
-        desc: "复盘会话已建好；任务跑到终态后才会冻结编排图并开始分析。",
+        desc: "迭代会话已建好；任务跑到终态后才会冻结编排图并开始分析。",
       };
     case "analyzing":
       return {
@@ -26,7 +26,7 @@ function pendingCopy(status: string): { title: string; desc: string } {
       };
     case "skipped":
       return {
-        title: "本次会话未做复盘分析",
+        title: "本次会话未做迭代分析",
         desc: "运行模式为推理（infer），或采样未命中；只保留了基础指标，没有冻结编排图。",
       };
     case "failed":
@@ -168,7 +168,7 @@ export function TrainingOverview({ detail }: { detail: RsiDetail }) {
       {!hasBaseline && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs leading-relaxed text-amber-300">
           样本不足：历史就绪会话不足 5 个，本次未生成跨会话中位数基线；
-          发现置信度最高 L2（单 run 统计），多跑几次复盘后才能做跨 run 对比。
+          发现置信度最高 L2（单 run 统计），多跑几次迭代后才能做跨 run 对比。
         </div>
       )}
 

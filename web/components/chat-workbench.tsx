@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AtSign,
@@ -10,13 +11,12 @@ import {
   Plus,
   Send,
   Sparkles,
-  Square,
   Trash2,
   UsersRound,
   X,
 } from "lucide-react";
 import { cn, relTime } from "@/lib/utils";
-import { Button, ConfirmDialog } from "@/components/ui";
+import { Button, ConfirmDialog, StopButton } from "@/components/ui";
 import { StewardSetup } from "@/components/steward-setup";
 import { AcpChatClient, ChatEvent, PermissionRequest } from "@/lib/acp";
 import { describeStewardFailure } from "@/lib/steward";
@@ -213,7 +213,10 @@ function truncate(s: string, n: number): string {
 const MAX_CONTEXT_MSGS = 8;
 const MAX_CONTEXT_CHARS = 420;
 
-export function ChatWorkbench({ className }: { className?: string }) {
+// shownTick 由全局保活层（chat-layer.tsx）传入：每次从别的页面回到 /chat 时 +1。
+// 隐藏期间新到的消息不会触发贴底滚动（display:none 下 scrollHeight 为 0），
+// 回到页面时用它手动贴一次底，保证立即看到最新现场。
+export function ChatWorkbench({ className, shownTick = 0 }: { className?: string; shownTick?: number }) {
   const qc = useQueryClient();
   const { data: agentList } = useAgents();
   const { data: runtimeList } = useRuntimes();
@@ -265,6 +268,12 @@ export function ChatWorkbench({ className }: { className?: string }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const skillsBarRef = useRef<HTMLDivElement>(null);
   const scrollRef = useStickToBottom<HTMLDivElement>([messages, busyAgents.size]);
+  // 保活层隐藏/显示切换时手动贴底用（见 shownTick 说明）。
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
+  const composedScrollRef = useCallback((node: HTMLDivElement | null) => {
+    scrollRef(node);
+    scrollElRef.current = node;
+  }, [scrollRef]);
 
   const activeMeta = index.find((m) => m.id === activeId) ?? null;
   // 保存/切换回调里读最新值，避免把它们塞进依赖导致 effect 反复触发。
@@ -296,6 +305,24 @@ export function ChatWorkbench({ className }: { className?: string }) {
   }, [activeMeta, agents]);
   const participantIds = participants.map((a) => a.id);
   const busyCount = busyAgents.size;
+
+  // 广播「正在生成」给保活层之外的监听者：侧栏「对话」的呼吸点靠它点亮。
+  // 组件常驻（只在离开 /chat 时隐藏），所以离开页面后回复继续、呼吸点继续亮；
+  // 刷新页面后广播一次 0，避免旧状态残留。
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("flowloop-chat-busy", { detail: { count: busyCount } }));
+  }, [busyCount]);
+  useEffect(() => {
+    return () => {
+      window.dispatchEvent(new CustomEvent("flowloop-chat-busy", { detail: { count: 0 } }));
+    };
+  }, []);
+
+  // 从别的页面回到 /chat：贴到最新（隐藏期间新消息不触发滚动）。
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (el && shownTick > 0) el.scrollTop = el.scrollHeight;
+  }, [shownTick]);
 
   const patchMeta = useCallback((id: string, patch: (m: ConvMeta) => ConvMeta) => {
     const cur = id === activeMetaRef.current?.id
@@ -972,7 +999,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
           </div>
         </header>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div ref={composedScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {!agents.length && (
             <StewardSetup
               className="mx-auto my-8 max-w-md"
@@ -1212,9 +1239,7 @@ export function ChatWorkbench({ className }: { className?: string }) {
               disabled={!agents.length}
             />
             {anyBusy ? (
-              <Button variant="danger" onClick={stopAll} className="gap-1.5" title="中断这一轮所有回复，会话与记录保留">
-                <Square className="h-3.5 w-3.5 fill-current" /> 停止
-              </Button>
+              <StopButton onClick={stopAll} title="中断这一轮所有回复，会话与记录保留" />
             ) : (
               <Button onClick={() => void send()} disabled={!input.trim() || !agents.length} className="gap-1.5">
                 <Send className="h-3.5 w-3.5" /> 发送
@@ -1320,7 +1345,10 @@ export function ChatWorkbench({ className }: { className?: string }) {
         />
       )}
 
-      {currentPerm && (
+      {currentPerm &&
+        // 权限弹窗 portal 到 body：对话层隐藏（用户在别的页面）时请求照样
+        // 立即出现在眼前——它本来就要求人拍板，藏着等用户回对话页只会卡住流程。
+        createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-96 rounded-xl border border-line bg-surface-1 p-4 shadow-xl shadow-black/30">
             <p className="text-sm font-medium text-ink">{currentPerm.agent.name} 请求权限</p>
@@ -1346,7 +1374,8 @@ export function ChatWorkbench({ className }: { className?: string }) {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

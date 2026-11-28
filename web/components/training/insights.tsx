@@ -272,7 +272,7 @@ export function TrainingInsights({ detail }: { detail: RsiDetail }) {
               : status === "failed"
                 ? "分析失败，暂无可展示的新轮次；可点「重跑分析」重试。"
                 : status === "skipped"
-                  ? "本次会话未做分析（未开启复盘或采样未命中），因此没有优化轮次。"
+                  ? "本次会话未做分析（未开启迭代或采样未命中），因此没有优化轮次。"
                   : "还没有可展示的优化轮次。"}
           {status === "failed" && session.error && (
             <span className="mt-2 block font-mono text-[11px] text-red-300">
@@ -317,7 +317,7 @@ export function TrainingInsights({ detail }: { detail: RsiDetail }) {
           {inFlight
             ? "首次分析完成后会在这里记录第 1 轮（终态分析）；页面会自动刷新。"
             : session.status === "skipped"
-              ? "本次会话未做分析（未开启复盘或采样未命中），因此没有优化轮次。"
+              ? "本次会话未做分析（未开启迭代或采样未命中），因此没有优化轮次。"
               : report
                 ? "这个会话没有轮次记录——可能是轮次账本启用前的历史数据。"
                 : "还没有优化轮次。任务进入终态并完成分析后，这里会记录每轮指标与变化。"}

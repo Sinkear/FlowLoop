@@ -449,7 +449,7 @@ export interface ScheduleBody {
   timezone?: string;
   category?: string; // hitl | hootl
   blueprint_version_id?: string; // '' = 自动拆解（不挂工作流）
-  execution_mode?: string; // infer | train（train = 执行后生成复盘）
+  execution_mode?: string; // infer | train（train = 执行后迭代工作流）
   content_capture?: string; // none | redacted | full
   sample_rate?: number; // 0..1
   budget_usd?: number;

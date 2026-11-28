@@ -39,10 +39,10 @@ import (
 // a night of uptime). token/tokenExp are guarded by mu.
 // approvalCardRec is one sent approval card's patch handle.
 type approvalCardRec struct {
-	messageID    string
-	hadPending   bool   // the card showed a "审查中" hint — only then is the opinion patch meaningful
-	domainType   string // repo|scratch — the processed-card wording branches on it
-	authorizePark bool  // F1: an authorization gate — the processed card says "continue", not "merging"
+	messageID     string
+	hadPending    bool   // the card showed a "审查中" hint — only then is the opinion patch meaningful
+	domainType    string // repo|scratch — the processed-card wording branches on it
+	authorizePark bool   // F1: an authorization gate — the processed card says "continue", not "merging"
 }
 
 type Notifier struct {
@@ -481,7 +481,31 @@ func (n *Notifier) onGoalFinished(_ context.Context, e events.Event) {
 		}
 		n.sendMilestoneCard("🏁", "green", "完成", body)
 	case "failed":
-		n.sendMilestoneCard("❌", "red", "失败", milestoneBody(title, truncate(summary, 200)))
+		// 决策 6-19 (user m00313): the failure card must explain itself in
+		// human terms. cause/advice come from the reconcile's
+		// classifyFailure; the raw summary stays as the "原始报错" tail so a
+		// human can always escalate to the exact error. All fields are
+		// optional — an event published elsewhere without cause/advice
+		// degrades to the old behavior.
+		cause, _ := m["cause"].(string)
+		advice, _ := m["advice"].(string)
+		var body strings.Builder
+		if c := strings.TrimSpace(cause); c != "" {
+			body.WriteString("原因：" + c)
+		}
+		if a := strings.TrimSpace(advice); a != "" {
+			if body.Len() > 0 {
+				body.WriteString("  \n\n")
+			}
+			body.WriteString("下一步：" + a)
+		}
+		if s := strings.TrimSpace(summary); s != "" {
+			if body.Len() > 0 {
+				body.WriteString("  \n\n")
+			}
+			body.WriteString("原始报错：" + truncate(s, 200))
+		}
+		n.sendMilestoneCard("❌", "red", "失败", milestoneBody(title, body.String()))
 	}
 }
 

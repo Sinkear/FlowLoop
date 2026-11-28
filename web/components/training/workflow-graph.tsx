@@ -1,9 +1,12 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Bot,
   CircleSlash,
+  Expand,
   Eye,
   ForkKnife,
   GitBranch,
@@ -15,6 +18,7 @@ import {
   Split,
   Target,
   Waypoints,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -35,10 +39,12 @@ import {
 // 横向按拓扑层排列，纵向同层横排；坐标是固定的 CSS 像素，连线用 SVG 画。
 // 卡片尺寸（m04217 视觉统一）：比旧版高一档，为了装下「状态章 + 两行标题 +
 // 元数据脚注」，和工作流规范图的节点卡共用同一套版式。
-const NODE_W = 212;
-const NODE_H = 94;
-const GAP_X = 66;
-const GAP_Y = 18;
+// 2026-11-28（用户反馈）：任务页双图并排后节点显得过大，缩小一档——
+// NODE_W 212→184, NODE_H 94→84, GAP 同步收紧。详见 nodeBody。
+const NODE_W = 184;
+const NODE_H = 84;
+const GAP_X = 56;
+const GAP_Y = 16;
 const COL_W = NODE_W + GAP_X;
 const ROW_H = NODE_H + GAP_Y;
 
@@ -314,20 +320,20 @@ function NodeCard({
       title={tooltip}
     >
       <span className={cn("absolute inset-y-0 left-0 w-[3px]", st.bar)} aria-hidden="true" />
-      <div className="flex h-full flex-col px-2.5 py-2 pl-[13px]">
-        <div className="flex items-center gap-1.5">
+      <div className="flex h-full flex-col px-2 py-1.5 pl-[11px]">
+        <div className="flex items-center gap-1">
           <span
             className={cn(
-              "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
+              "inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-0.5 text-[9.5px] font-medium",
               meta.badge
             )}
           >
-            <Icon className="h-3 w-3" />
+            <Icon className="h-2.5 w-2.5" />
             {meta.label}
           </span>
           <span
             className={cn(
-              "ml-auto inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] font-medium",
+              "ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium",
               st.chip
             )}
           >
@@ -336,12 +342,12 @@ function NodeCard({
           </span>
         </div>
         <div
-          className="mt-1 line-clamp-2 text-[11.5px] font-medium leading-[1.35] text-ink"
+          className="mt-0.5 line-clamp-2 text-[10.5px] font-medium leading-[1.3] text-ink"
           title={node.label}
         >
           {node.label || node.key}
         </div>
-        <div className="mt-auto flex items-center gap-2 overflow-hidden text-[10px] text-ink-3">
+        <div className="mt-auto flex items-center gap-2 overflow-hidden text-[9.5px] text-ink-3">
           {!isSpecNode && (unmeasured || duration !== DASH) && (
             <span className="shrink-0 font-mono tabular-nums">{unmeasured ? "未度量" : duration}</span>
           )}
@@ -590,7 +596,7 @@ export function WorkflowKindLegend({
   const edges = graph?.edges?.length ?? 0;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-surface-2/30 px-4 py-2">
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line bg-surface-2/30 px-4 py-2">
       {counts.map(([kind, n]) => {
         const meta = nodeKindMeta(kind);
         return (
@@ -615,46 +621,50 @@ export function WorkflowKindLegend({
   );
 }
 
-export function WorkflowGraphView({
+// 30 节点链宽度可达 7.5k px，直接铺开会把整页撑爆：内嵌窗格限制容器高度并
+// 允许双向滚动，提供缩放/适应宽度；大图细读交给「全屏」浮层（m00232）。
+const MIN_ZOOM = 0.15;
+const MAX_ZOOM = 2;
+
+// 内嵌窗格与全屏浮层共用的渲染器：自己持有 zoom / scrollRef / marker id，
+// 外部只传布局数据和容器样式（rootClassName / scrollAreaClass）。
+function GraphPane({
   graph,
-  loading,
-  error,
-  metrics,
-  analyzing = false,
-  heightClass = "min-h-[260px]",
-  showMetrics = true,
-  variant = "execution",
+  layout,
+  graphMetrics,
+  showMetrics,
+  spec,
+  analyzing,
+  autoFit = false,
+  rootClassName,
+  scrollAreaClass,
+  toolbarExtra,
 }: {
-  graph: WorkflowGraph | null | undefined;
-  loading?: boolean;
-  error?: string | null;
+  graph: WorkflowGraph | null;
+  layout: ReturnType<typeof computeLayout>;
   /** 图不可用时（分析失败/无图）仍可展示报告里的 metrics。 */
-  metrics?: Record<string, unknown> | null;
-  /** 分析进行中：此时图是实时图，分析完成后才冻结，文案不能写“已冻结”。 */
-  analyzing?: boolean;
-  heightClass?: string;
-  showMetrics?: boolean;
-  /**
-   * spec = 工作流规范图（计划态，未执行）：隐藏执行期概念——冻结横幅、
-   * 深度、生成时间、节点耗时、执行指标行；图例只列图上真实出现的边类型。
-   * 同一渲染器两种“味”（提案 §4.12），不是两套组件。
-   */
-  variant?: "execution" | "spec";
+  graphMetrics: Record<string, unknown> | null;
+  showMetrics: boolean;
+  spec: boolean;
+  analyzing: boolean;
+  /** 挂载时自动缩放到容器宽度：右栏这类窄容器先给整图概览，细节交给全屏。 */
+  autoFit?: boolean;
+  /** 根节点附加样式：全屏浮层用 flex 撑满，内嵌保持块级流。 */
+  rootClassName?: string;
+  /** 滚动画布的尺寸类：内嵌 max-h-[72vh]，全屏 flex-1。 */
+  scrollAreaClass?: string;
+  /** 工具条尾部附加按钮（内嵌=「全屏」，浮层=「退出全屏」）。 */
+  toolbarExtra?: ReactNode;
 }) {
-  const spec = variant === "spec";
   const uid = useId().replace(/[:]/g, "");
   const markerBase = `wf-arrow-${uid}`;
   const markerCritical = `wf-arrow-c-${uid}`;
   const markerSpec = `wf-arrow-s-${uid}`;
-  // 30 节点链宽度可达 7.5k px，直接铺开会把整页撑爆：限制容器高度并允许双向滚动，
-  // 再提供缩放/适应宽度，默认 1×。
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [zoom, setZoom] = useState(1);
-  const MIN_ZOOM = 0.15;
-  const MAX_ZOOM = 2;
-
-  const layout = useMemo(() => (graph && (graph.nodes?.length ?? 0) > 0 ? computeLayout(graph) : null), [graph]);
-  const graphMetrics = graph?.metrics ?? metrics ?? null;
+  // autoFit 只在「本次挂载后布局首次就绪」时执行一次：右栏窄容器先给整图
+  // 概览、全屏浮层打开即铺满；之后布局因执行进度变宽也不再打扰手动缩放。
+  const didFitRef = useRef(false);
   const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
   const zoomBy = (delta: number) => setZoom((z) => clampZoom(Number((z + delta).toFixed(2))));
   const fitWidth = () => {
@@ -664,50 +674,14 @@ export function WorkflowGraphView({
     setZoom(clampZoom(Number(((el.clientWidth - 40) / layout.width).toFixed(2))));
   };
 
-  if (loading) {
-    return (
-      <div className={cn("space-y-3 p-4", heightClass)}>
-        <div className="flex gap-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-[82px] flex-1 animate-pulse rounded-lg bg-surface-2" />
-          ))}
-        </div>
-        <div className="h-16 animate-pulse rounded-md bg-surface-2/60" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="space-y-3 p-4">
-        <p className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-red-300">
-          {spec ? "规范图读取失败" : "编排图读取失败"}：{error}
-        </p>
-        {showMetrics && <WorkflowMetricsRow metrics={graphMetrics} />}
-      </div>
-    );
-  }
-
-  if (!layout) {
-    return (
-      <div className="space-y-3 p-4">
-        <div
-          className={cn(
-            "flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-10 text-center",
-            heightClass
-          )}
-        >
-          <Waypoints className="h-5 w-5 text-ink-3" />
-          <p className="text-sm text-ink-2">还没有可展示的编排图</p>
-          <p className="max-w-md text-xs leading-relaxed text-ink-3">
-            复盘会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
-            分析失败或任务尚未拆解时为空。
-          </p>
-        </div>
-        {showMetrics && <WorkflowMetricsRow metrics={graphMetrics} />}
-      </div>
-    );
-  }
+  // autoFit：浮层打开 / 窄窗格挂载时铺满宽度，只执行一次；布局宽度随后
+  // 变化（实时图长出新节点）不重算，用户的手动缩放不被打扰。
+  useLayoutEffect(() => {
+    if (!autoFit || didFitRef.current || !layout.width) return;
+    fitWidth();
+    didFitRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fitWidth 读 ref，只跑一次
+  }, [autoFit, layout.width]);
 
   const cpSet = new Set(graph?.critical_path ?? []);
   const nodesByKey = layout.byKey;
@@ -715,10 +689,10 @@ export function WorkflowGraphView({
   // 无关键目的干扰（执行图早期常只有 created/depends_on 两三种边）。
   const legendKinds = new Set<string>((graph?.edges ?? []).map((e) => e.kind));
   return (
-    <div className="space-y-0">
+    <div className={cn("space-y-0", rootClassName)}>
       {/* 工具条（m04217）：第一行只说「这是什么图 + 缩放」，节点类型图例
           单独一行带计数——和工作流规范图同一套层级，读者先认图再认结构。 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[11px] text-ink-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[11px] text-ink-3">
         <span className="inline-flex items-center gap-1 text-ink-2">
           <Waypoints className="h-3.5 w-3.5" />
           {spec
@@ -791,6 +765,7 @@ export function WorkflowGraphView({
           >
             1:1
           </button>
+          {toolbarExtra}
         </div>
       </div>
 
@@ -801,7 +776,7 @@ export function WorkflowGraphView({
 
       <div
         ref={scrollRef}
-        className="max-h-[72vh] max-w-full overflow-auto px-4 py-3"
+        className={cn("max-h-[72vh] max-w-full overflow-auto px-4 py-3", scrollAreaClass)}
         style={{
           // 细点阵底（图的样子，不是空白画布）：深浅主题都用 --color-line，
           // 因此不需要两套样式。
@@ -901,7 +876,7 @@ export function WorkflowGraphView({
       </div>
 
       {cpSet.size > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-2 text-[10px] text-ink-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-4 py-2 text-[10px] text-ink-3">
           <span className="shrink-0">关键路径：</span>
           {graph!.critical_path.map((key, i) => {
             const n = nodesByKey.get(key)?.node;
@@ -918,13 +893,13 @@ export function WorkflowGraphView({
       )}
 
       {showMetrics && (
-        <div className="border-t border-line px-4 py-3">
+        <div className="shrink-0 border-t border-line px-4 py-3">
           <WorkflowMetricsRow metrics={graphMetrics} />
         </div>
       )}
 
       {legendKinds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] text-ink-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] text-ink-3">
           {Object.entries(EDGE_KIND_LABEL)
             .filter(([kind]) => legendKinds.has(kind))
             .map(([kind, label]) => (
@@ -935,6 +910,189 @@ export function WorkflowGraphView({
         </div>
       )}
     </div>
+  );
+}
+
+// ── 对外入口：内嵌窗格 + 「全屏」浮层（m00232）──
+// 编排图在任务详情右栏只有 ~370px 宽，1× 缩放下读 30 节点链要拖着走；
+// 全屏浮层把画布铺到视口 94vh，打开即自动适应宽度，细读再手动缩放。
+// loading / error / 无图 三态在浮层外处理（没必要让用户对着半屏骨架
+// 点全屏），浮层里只剩可交互的图本体。
+export function WorkflowGraphView({
+  graph,
+  loading,
+  error,
+  metrics,
+  analyzing = false,
+  heightClass = "min-h-[260px]",
+  showMetrics = true,
+  variant = "execution",
+  autoFit = false,
+}: {
+  graph: WorkflowGraph | null | undefined;
+  loading?: boolean;
+  error?: string | null;
+  /** 图不可用时（分析失败/无图）仍可展示报告里的 metrics。 */
+  metrics?: Record<string, unknown> | null;
+  /** 分析进行中：此时图是实时图，分析完成后才冻结，文案不能写“已冻结”。 */
+  analyzing?: boolean;
+  heightClass?: string;
+  showMetrics?: boolean;
+  /**
+   * spec = 工作流规范图（计划态，未执行）：隐藏执行期概念——冻结横幅、
+   * 深度、生成时间、节点耗时、执行指标行；图例只列图上真实出现的边类型。
+   * 同一渲染器两种“味”（提案 §4.12），不是两套组件。
+   */
+  variant?: "execution" | "spec";
+  /** 内嵌窗格挂载后自动适应容器宽度：任务详情右栏这类窄容器用；宽页面默认 1×。 */
+  autoFit?: boolean;
+}) {
+  const spec = variant === "spec";
+  const [fullscreen, setFullscreen] = useState(false);
+  const layout = useMemo(() => (graph && (graph.nodes?.length ?? 0) > 0 ? computeLayout(graph) : null), [graph]);
+  const graphMetrics = graph?.metrics ?? metrics ?? null;
+
+  // 浮层打开期间 Esc 即关；滚轮/触控板缩放不劫持（没有 ctrl 键约定）。
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [fullscreen]);
+
+  if (loading) {
+    return (
+      <div className={cn("space-y-3 p-4", heightClass)}>
+        <div className="flex gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-[82px] flex-1 animate-pulse rounded-lg bg-surface-2" />
+          ))}
+        </div>
+        <div className="h-16 animate-pulse rounded-md bg-surface-2/60" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-3 p-4">
+        <p className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-red-300">
+          {spec ? "规范图读取失败" : "编排图读取失败"}：{error}
+        </p>
+        {showMetrics && <WorkflowMetricsRow metrics={graphMetrics} />}
+      </div>
+    );
+  }
+
+  if (!layout) {
+    return (
+      <div className="space-y-3 p-4">
+        <div
+          className={cn(
+            "flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line px-4 py-10 text-center",
+            heightClass
+          )}
+        >
+          <Waypoints className="h-5 w-5 text-ink-3" />
+          <p className="text-sm text-ink-2">还没有可展示的编排图</p>
+          <p className="max-w-md text-xs leading-relaxed text-ink-3">
+            迭代会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
+            分析失败或任务尚未拆解时为空。
+          </p>
+        </div>
+        {showMetrics && <WorkflowMetricsRow metrics={graphMetrics} />}
+      </div>
+    );
+  }
+
+  const expandButton = (
+    <button
+      type="button"
+      onClick={() => setFullscreen(true)}
+      title="放大到全屏查看（Esc 退出）"
+      className="inline-flex h-6 items-center gap-1 rounded border border-line px-1.5 text-ink-3 transition-colors hover:text-ink-2"
+    >
+      <Expand className="h-3 w-3" />
+      全屏
+    </button>
+  );
+
+  return (
+    <>
+      <GraphPane
+        graph={graph ?? null}
+        layout={layout}
+        graphMetrics={graphMetrics}
+        showMetrics={showMetrics}
+        spec={spec}
+        analyzing={analyzing}
+        autoFit={autoFit}
+        toolbarExtra={expandButton}
+        // 成功路径也吃 heightClass：作为画布的 min-height（与默认类无冲突，
+        // tailwind-merge 直接叠加），避免 1-2 个节点的小图缩成一条窄带。
+        scrollAreaClass={heightClass}
+      />
+      {fullscreen &&
+        // Portal 到 body：页面级 page-enter 动画等祖先若带 transform，
+        // fixed 会被其劫持成 containing block（浮层被限制在页面栏宽度里）。
+        // 挂到 body 下彻底与页面布局解耦。fullscreen 只由点击触发，无 SSR 顾虑。
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="编排图全屏查看"
+            onClick={(e) => {
+              // 点到画布外的暗背景才关；图本体（含滚动条）的点击不冒泡关闭。
+              if (e.target === e.currentTarget) setFullscreen(false);
+            }}
+          >
+            {/* 整块（含头行）都是 surface-1 面板：头行文字/按钮用常规
+                ink token 就清晰可读——之前头行直接压在黑色遮罩上，
+                ink-3 + border-line 弱到看不见（用户反馈）。 */}
+            <div className="mx-auto flex min-h-0 w-full max-w-[1700px] flex-1 flex-col bg-surface-1 shadow-2xl">
+              <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-2.5 text-xs">
+                <Waypoints className="h-3.5 w-3.5 shrink-0 text-ink-2" />
+                <span className="shrink-0 font-medium text-ink">
+                  {spec ? "计划图 · 全屏" : "编排图 · 全屏"}
+                </span>
+                <span className="hidden min-w-0 truncate text-ink-2 sm:inline">
+                  滚轮/拖拽滚动平移 · 工具条缩放 · Esc 退出
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFullscreen(false)}
+                  aria-label="退出全屏"
+                  className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-accent/40 hover:bg-surface-3 hover:text-ink"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  退出全屏
+                </button>
+              </div>
+              <GraphPane
+                graph={graph ?? null}
+                layout={layout}
+                graphMetrics={graphMetrics}
+                showMetrics={showMetrics}
+                spec={spec}
+                analyzing={analyzing}
+                autoFit
+                // 浮层里画布吃掉剩余高度（代替内嵌的 max-h-[72vh]），宽图
+                // 交给横向滚动；关键路径/指标行保持可见。
+                rootClassName="flex min-h-0 flex-1 flex-col"
+                scrollAreaClass="max-h-none min-h-0 flex-1"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 

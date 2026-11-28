@@ -6,7 +6,7 @@ export type WorkflowTab = "spec" | "reviews" | "proposals" | "ab";
 
 const TABS: { value: WorkflowTab; label: string }[] = [
   { value: "spec", label: "规范" },
-  { value: "reviews", label: "复盘" },
+  { value: "reviews", label: "迭代" },
   { value: "proposals", label: "优化提案" },
   { value: "ab", label: "A/B 对比" },
 ];

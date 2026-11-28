@@ -41,7 +41,7 @@ type Schedule struct {
 	BlueprintVersionID string `json:"blueprint_version_id"`
 	// ExecutionMode mirrors goal.execution_mode on the fired goal:
 	// "infer" (default — no review) | "train" (review on). The web form renders
-	// it as the "执行后生成复盘" switch; it is NOT a separate concept.
+	// it as the "执行后迭代工作流" switch; it is NOT a separate concept.
 	ExecutionMode  string  `json:"execution_mode"`
 	ContentCapture string  `json:"content_capture"` // none|redacted|full
 	SampleRate     float64 `json:"sample_rate"`

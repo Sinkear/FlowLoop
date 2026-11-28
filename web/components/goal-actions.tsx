@@ -69,7 +69,16 @@ export function GoalActions({ goal }: { goal: Goal }) {
 
       <Button variant="danger" onClick={() => setShowDelete(true)}>删除</Button>
 
-      {goal.status === "review" && <ReviewPanel goal={goal} />}
+      {/* review 态的审批面板已挪到任务对话区（2026-11-28 用户反馈：顶栏
+          操作区混排审批内容导致格式乱码）；顶栏只留一个锚点按钮把视线
+          引到对话区的审批卡。 */}
+      {goal.status === "review" && (
+        <Button variant="outline" onClick={() => {
+          document.getElementById("review-panel-anchor")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}>
+          待审批 · 去处理
+        </Button>
+      )}
 
       {showAssign && <AssignDialog goal={goal} onClose={() => setShowAssign(false)} />}
       {showSubmitReview && (
@@ -113,10 +122,15 @@ export function GoalActions({ goal }: { goal: Goal }) {
 // The evidence bundle from the last run is shown so the decision is made on
 // facts, not trust.
 //
+// 归属变迁（2026-11-28 用户反馈）：原先渲染在顶栏 GoalActions 的
+// flex-wrap 操作行里，和分配/取消/删除按钮混排成"格式乱码"；审批是任务
+// 对话的一部分（agent 汇报 → 人拍板 → agent 继续），现在作为系统卡
+// 渲染在任务对话区顶部（goals/[id]/page.tsx 引用），顶栏只留锚点按钮。
+//
 // F1: an "authorize:" park is a MID-PIPELINE gate, not acceptance — its
 // approve means "continue" (no merge, no close). Every outcome label below
 // branches on authorizePark so the human sees what the button actually does.
-function ReviewPanel({ goal }: { goal: Goal }) {
+export function ReviewPanel({ goal }: { goal: Goal }) {
   const resolve = useResolveGoalReview();
   const { data: domains } = useDomains();
   // A scratch domain has nothing to merge — approval closes the loop

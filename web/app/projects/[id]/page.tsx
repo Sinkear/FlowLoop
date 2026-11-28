@@ -149,7 +149,7 @@ export default function ProjectDetailPage() {
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm text-ink">{goal.title}</div>
                         <div className="mt-0.5 text-[11px] text-ink-3">
-                          {goal.execution_mode === "train" ? "开启复盘" : "未开复盘"}
+                          {goal.execution_mode === "train" ? "开启迭代" : "未开迭代"}
                           {goal.blueprint_version_id ? " · 使用工作流" : " · 自动拆解"} · {relTime(goal.created_at)}
                         </div>
                       </div>
@@ -273,7 +273,7 @@ function GoalsTab({ projectId, goals }: { projectId: string; goals: Goal[] }) {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm text-ink">{goal.title}</div>
                 <div className="mt-0.5 text-[11px] text-ink-3">
-                  {goal.execution_mode === "train" ? "开启复盘" : "未开复盘"} · {goal.blueprint_version_id ? "使用工作流" : "自动拆解"} · {relTime(goal.created_at)}
+                  {goal.execution_mode === "train" ? "开启迭代" : "未开迭代"} · {goal.blueprint_version_id ? "使用工作流" : "自动拆解"} · {relTime(goal.created_at)}
                 </div>
               </div>
               <Badge status={goal.status} />

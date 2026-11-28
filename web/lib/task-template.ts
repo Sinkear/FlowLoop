@@ -37,7 +37,7 @@ export const CREATE_TEMPLATES: Record<CreateKind, string> = {
   workflow:
     "根据「XX 场景」创建一个工作流：名称「XX」，所属小队 <小队名>，步骤 <1… 2…>，需要人工确认的卡点 <…>。",
   schedule:
-    "创建一个定时任务：名称「XX」，项目 <项目名>，cron <0 9 * * *>，负责人 <agent 或小队>，完成后生成复盘。",
+    "创建一个定时任务：名称「XX」，项目 <项目名>，cron <0 9 * * *>，负责人 <agent 或小队>，完成后迭代工作流。",
 };
 
 // 标记取模板里唯一、且不会在日常描述中出现的短句。

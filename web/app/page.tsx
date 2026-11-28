@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   ArrowRight,
   Clock3,
@@ -17,6 +17,12 @@ import { useCreateDialog } from "@/components/create/create-dialog";
 import { Badge, Empty, PageBody, PageHeader, SectionCard, StatStrip } from "@/components/ui";
 import { STATUS_LABEL } from "@/components/ui";
 import { relTime } from "@/lib/utils";
+import {
+  attentionKeyOfGate,
+  attentionKeyOfGoal,
+  isAttentionGoal,
+  markAttentionSeen,
+} from "@/lib/attention-seen";
 import type { Goal, PendingGate, RsiSession } from "@/lib/types";
 
 function until(iso: string): string {
@@ -56,11 +62,30 @@ export default function WorkbenchPage() {
   }, [squads, agents]);
   const sessionByGoal = useMemo(() => new Map(allSessions.map((s) => [s.goal_id, s])), [allSessions]);
 
-  const attention = allGoals.filter((g) => g.status === "review" || g.status === "failed" || g.attention);
+  // 卡点判定复用 lib/attention-seen 的 isAttentionGoal：nav 侧栏徽标
+  // （components/nav.tsx）用同一个谓词，两处漂移会造成"侧栏亮红点、
+  // 工作台清单没有该条"的错位。
+  const attention = useMemo(() => allGoals.filter(isAttentionGoal), [allGoals]);
   // 工作流人工门不改变 goal.status：只数 review/failed/attention 会让
   // 「流程停在 gate 上等人」完全隐形。人工门与待审批合并成「待我处理」。
   const heldGates = pendingGates?.gates ?? [];
   const attentionCount = attention.length + heldGates.length;
+  // 红点走 app 式通知语义：徽标 = 新出现且还没看过的条数，点开工作台
+  // 即视为已读、红点消失；清单本身一直保留到处理完成。账本见
+  // lib/attention-seen.ts。
+  const attentionKeys = useMemo(
+    () => [
+      ...heldGates.map(attentionKeyOfGate),
+      ...attention.map(attentionKeyOfGoal),
+    ],
+    [heldGates, attention]
+  );
+  // 「点开即已读」（nav.tsx 的徽标 tooltip 承诺了这一点，这里是兑现
+  // 它的代码）：进入工作台就把当前可见卡点记为已看，侧栏红点随之熄灭。
+  // 之后新冒出来的卡点会改变 attentionKeys，effect 重跑、逐条补记。
+  useEffect(() => {
+    if (attentionKeys.length) markAttentionSeen(attentionKeys);
+  }, [attentionKeys]);
   const active = allGoals.filter((g) => g.status === "active");
   const done = allGoals
     .filter((g) => g.status === "done")
@@ -77,6 +102,13 @@ export default function WorkbenchPage() {
   const machineCount = (machines ?? []).length;
 
   const ownerOf = (goal: Goal) => ownerName.get(`${goal.assignee_type}:${goal.assignee_id}`) || "未指派";
+
+  // StatStrip 第一格的 hint（MINOR-3：不写嵌套三元，读起来像条件表）：
+  // 无卡点 / 有卡点（新冒出的会重新亮红点，点开工作台即已读）。
+  let attentionHint = "没有卡点";
+  if (attentionCount > 0) {
+    attentionHint = "条目保留到处理完成；新出现的会再亮红点";
+  }
 
   return (
     <PageBody className="space-y-5">
@@ -105,7 +137,7 @@ export default function WorkbenchPage() {
             <Step
               n="3"
               title="新建第一条任务"
-              desc="选负责人，决定用不用工作流，以及这次要不要复盘。"
+              desc="选负责人，决定用不用工作流，以及这次要不要迭代。"
               onClick={() => open("task")}
               action="新建任务"
             />
@@ -125,7 +157,7 @@ export default function WorkbenchPage() {
             label: "待我处理",
             value: attentionCount,
             tone: attentionCount ? "info" : "muted",
-            hint: attentionCount ? "人工门、待审批、失败或需要你介入" : "没有卡点",
+            hint: attentionHint,
           },
           {
             label: "进行中",
@@ -134,10 +166,10 @@ export default function WorkbenchPage() {
             hint: active.length ? "负责人正在推进" : "现在没有在跑的任务",
           },
           {
-            label: "复盘待看",
+            label: "迭代待看",
             value: readyReviews.length,
             tone: readyReviews.length ? "info" : "muted",
-            hint: readyReviews.length ? "分析已完成，等你读" : "没有待看的复盘",
+            hint: readyReviews.length ? "分析已完成，等你读" : "没有待看的迭代",
           },
           {
             label: "启用中的定时任务",
@@ -168,7 +200,12 @@ export default function WorkbenchPage() {
             ) : (
               <div className="divide-y divide-line">
                 {heldGates.slice(0, 4).map((gate) => (
-                  <ApprovalGateRow key={`${gate.goal_id}:${gate.node_key}`} gate={gate} project={projectName.get(gate.domain_id)} />
+                  <ApprovalGateRow
+                    key={`${gate.goal_id}:${gate.node_key}`}
+                    gate={gate}
+                    project={projectName.get(gate.domain_id)}
+                    onConsume={() => markAttentionSeen([attentionKeyOfGate(gate)])}
+                  />
                 ))}
                 {attention.length > 0 && heldGates.length > 0 && (
                   <div className="px-4 py-1.5 text-[10px] uppercase tracking-[0.12em] text-ink-3">任务审批</div>
@@ -180,6 +217,7 @@ export default function WorkbenchPage() {
                     project={projectName.get(goal.domain_id)}
                     owner={ownerOf(goal)}
                     session={sessionByGoal.get(goal.id)}
+                    onConsume={() => markAttentionSeen([attentionKeyOfGoal(goal)])}
                   />
                 ))}
               </div>
@@ -214,12 +252,12 @@ export default function WorkbenchPage() {
           <SectionCard
             title="最近完成"
             count={done.length}
-            desc="完成后复盘是否生成、有没有可看的发现。"
+            desc="完成后迭代是否生成、有没有可看的发现。"
             bodyClassName="p-0"
           >
             {done.length === 0 ? (
               <Empty icon={<ListChecks className="h-5 w-5" />}>
-                还没有完成的任务。第一条任务跑完后，这里会出现它的结果和复盘入口。
+                还没有完成的任务。第一条任务跑完后，这里会出现它的结果和迭代入口。
               </Empty>
             ) : (
               <div className="divide-y divide-line">
@@ -239,19 +277,19 @@ export default function WorkbenchPage() {
 
         <div className="space-y-4">
           <SectionCard
-            title="复盘待看"
+            title="迭代待看"
             count={readyReviews.length}
             desc="分析已经跑完，读一下发现再决定改不改。"
             action={
               <Link href="/training" className="shrink-0 whitespace-nowrap text-xs text-ink-3 hover:text-accent">
-                全部复盘
+                全部迭代
               </Link>
             }
             bodyClassName="p-0"
           >
             {readyReviews.length === 0 ? (
               <div className="px-4 py-5 text-[12px] text-ink-3">
-                复盘只在任务开启复盘时生成；小队任务默认开启，自动拆解默认关闭。
+                迭代只在任务开启「完成后迭代工作流」时生成；小队任务默认开启，自动拆解默认关闭。
               </div>
             ) : (
               <div className="divide-y divide-line">
@@ -356,7 +394,7 @@ export default function WorkbenchPage() {
 
           <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/30 px-3 py-2.5 text-[12px] text-ink-3">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>复盘不是训练模型。它只读一次执行的实际图，指出卡点和可优化的流程。</span>
+            <span>迭代不是训练模型。它只读一次执行的实际图，指出卡点和可优化的流程。</span>
           </div>
         </div>
       </div>
@@ -405,9 +443,25 @@ function Step({
   );
 }
 
-function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: string; owner: string; session?: RsiSession }) {
+function GoalRow({
+  goal,
+  project,
+  owner,
+  session,
+  onConsume,
+}: {
+  goal: Goal;
+  project?: string;
+  owner: string;
+  session?: RsiSession;
+  onConsume?: () => void;
+}) {
   return (
-    <Link href={`/goals/${goal.id}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50">
+    <Link
+      href={`/goals/${goal.id}`}
+      onClick={onConsume}
+      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50"
+    >
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-ink">{goal.title}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-3">
@@ -424,7 +478,7 @@ function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: stri
       </div>
       {session?.status === "ready" && (
         <span className="shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
-          复盘可用
+          迭代可用
         </span>
       )}
       <Badge status={goal.status} className="shrink-0" />
@@ -433,11 +487,20 @@ function GoalRow({ goal, project, owner, session }: { goal: Goal; project?: stri
   );
 }
 
-function ApprovalGateRow({ gate, project }: { gate: PendingGate; project?: string }) {
+function ApprovalGateRow({
+  gate,
+  project,
+  onConsume,
+}: {
+  gate: PendingGate;
+  project?: string;
+  onConsume?: () => void;
+}) {
   const waited = gate.held_since ? relTime(gate.held_since) : "";
   return (
     <Link
       href={`/goals/${gate.goal_id}#held-gates`}
+      onClick={onConsume}
       className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2/50"
     >
       <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />
