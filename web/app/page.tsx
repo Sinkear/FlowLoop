@@ -125,7 +125,7 @@ export default function WorkbenchPage() {
             <Step
               n="3"
               title="新建第一条任务"
-              desc="选负责人，决定用不用工作流，以及这次要不要复盘。"
+              desc="选负责人，决定用不用工作流，以及这次要不要迭代。"
               onClick={() => open("task")}
               action="新建任务"
             />
@@ -158,10 +158,10 @@ export default function WorkbenchPage() {
             hint: active.length ? "负责人正在推进" : "现在没有在跑的任务",
           },
           {
-            label: "复盘待看",
+            label: "迭代待看",
             value: readyReviews.length,
             tone: readyReviews.length ? "info" : "muted",
-            hint: readyReviews.length ? "分析已完成，等你读" : "没有待看的复盘",
+            hint: readyReviews.length ? "分析已完成，等你读" : "没有待看的迭代",
           },
           {
             label: "启用中的定时任务",
@@ -257,12 +257,12 @@ export default function WorkbenchPage() {
           <SectionCard
             title="最近完成"
             count={done.length}
-            desc="完成后复盘是否生成、有没有可看的发现。"
+            desc="完成后迭代是否生成、有没有可看的发现。"
             bodyClassName="p-0"
           >
             {done.length === 0 ? (
               <Empty icon={<ListChecks className="h-5 w-5" />}>
-                还没有完成的任务。第一条任务跑完后，这里会出现它的结果和复盘入口。
+                还没有完成的任务。第一条任务跑完后，这里会出现它的结果和迭代入口。
               </Empty>
             ) : (
               <div className="divide-y divide-line">
@@ -282,19 +282,19 @@ export default function WorkbenchPage() {
 
         <div className="space-y-4">
           <SectionCard
-            title="复盘待看"
+            title="迭代待看"
             count={readyReviews.length}
             desc="分析已经跑完，读一下发现再决定改不改。"
             action={
               <Link href="/training" className="shrink-0 whitespace-nowrap text-xs text-ink-3 hover:text-accent">
-                全部复盘
+                全部迭代
               </Link>
             }
             bodyClassName="p-0"
           >
             {readyReviews.length === 0 ? (
               <div className="px-4 py-5 text-[12px] text-ink-3">
-                复盘只在任务开启复盘时生成；小队任务默认开启，自动拆解默认关闭。
+                迭代只在任务开启「完成后迭代工作流」时生成；小队任务默认开启，自动拆解默认关闭。
               </div>
             ) : (
               <div className="divide-y divide-line">
@@ -399,7 +399,7 @@ export default function WorkbenchPage() {
 
           <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/30 px-3 py-2.5 text-[12px] text-ink-3">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>复盘不是训练模型。它只读一次执行的实际图，指出卡点和可优化的流程。</span>
+            <span>迭代不是训练模型。它只读一次执行的实际图，指出卡点和可优化的流程。</span>
           </div>
         </div>
       </div>
@@ -483,7 +483,7 @@ function GoalRow({
       </div>
       {session?.status === "ready" && (
         <span className="shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
-          复盘可用
+          迭代可用
         </span>
       )}
       <Badge status={goal.status} className="shrink-0" />

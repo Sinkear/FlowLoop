@@ -166,12 +166,12 @@ export function Nav() {
             onNavigate={() => setMobileOpen(false)}
           />
           <MobileGroup
-            title="运行与复盘"
+            title="运行与迭代"
             items={[
               { href: "/infra", label: "运行环境" },
               { href: "/im", label: "IM 渠道" },
               { href: "/schedules", label: "定时任务" },
-              { href: "/training", label: "复盘" },
+              { href: "/training", label: "迭代" },
             ]}
             onNavigate={() => setMobileOpen(false)}
           />

@@ -542,11 +542,11 @@ export interface Schedule {
   timezone: string;
   category: string; // hitl | hootl — 派生 goal 的验收分类
   // Phase C (WEB-IA-REDESIGN D3/D4): 定时任务是"保存好的任务模板"，所以它和
-  // 新建任务用同一套工作流/复盘字段。pin 在**保存时**固定，触发时原样复制到
-  // 派生 goal —— 每周跑一份"最新版"会让两周的复盘失去可比性。
+  // 新建任务用同一套工作流/迭代字段。pin 在**保存时**固定，触发时原样复制到
+  // 派生 goal —— 每周跑一份"最新版"会让两周的迭代失去可比性。
   // '' = 自动拆解（不挂工作流）；非空必须是该小队已发布版本。
   blueprint_version_id: string;
-  // 复盘开关：与 goal.execution_mode 同一套词（infer 不分析 / train 分析）。
+  // 迭代开关：与 goal.execution_mode 同一套词（infer 不分析 / train 分析）。
   // 不是第二个概念 —— 后端读的就是 goal 的同一个字段。
   execution_mode: string; // infer | train
   content_capture: string; // none | redacted | full
@@ -841,7 +841,7 @@ export interface RsiSession {
   critical_path_ms: number;
   parallel_speedup: number; // work_sum / critical_path，>=1；1 表示完全串行
   finding_count: number;
-  // Phase C (§8.8): 复盘归属快照（小队 + 工作流版本）。旧会话这两组为空，
+  // Phase C (§8.8): 迭代归属快照（小队 + 工作流版本）。旧会话这两组为空，
   // 后端读取时回退到 goal 自己的归属/pin —— 历史会话照常显示归属，不造假。
   squad_id: string;
   squad_name: string;
@@ -879,7 +879,7 @@ export interface RsiFinding {
   score: number; // 排序权重，越大越值得先看
   status: RsiFindingStatus;
   created_at?: string;
-  // Phase C：这条发现已经转成的提案（'' = 还没有）。复盘详情据此显示"查看提案"
+  // Phase C：这条发现已经转成的提案（'' = 还没有）。迭代详情据此显示"查看提案"
   // 或"生成提案" —— 不会给一个点下去只会重复建提案的按钮。
   proposal_id: string;
 }
@@ -1028,7 +1028,7 @@ export interface RsiDetail {
   report: RsiReport | null; // 会话还在 waiting/analyzing 时为 null
   findings: RsiFinding[];
   workflow: WorkflowGraph | null; // 分析失败/跳过时可能为 null
-  // Phase C: 该复盘所属工作流上已存在的提案（发现的 proposal_id 指向其中
+  // Phase C: 该迭代所属工作流上已存在的提案（发现的 proposal_id 指向其中
   // 一条）。后端未返回时按空数组处理 —— 面板显示"暂无提案"，不臆造。
   proposals?: BlueprintProposal[];
 }

@@ -955,7 +955,7 @@ export function WorkflowGraphView({
           <Waypoints className="h-5 w-5 text-ink-3" />
           <p className="text-sm text-ink-2">还没有可展示的编排图</p>
           <p className="max-w-md text-xs leading-relaxed text-ink-3">
-            复盘会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
+            迭代会话进入分析、任务进入终态并完成分析后，这里会展示冻结的编排 DAG；
             分析失败或任务尚未拆解时为空。
           </p>
         </div>

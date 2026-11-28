@@ -18,7 +18,7 @@ import type { Goal, WorkflowGraph } from "@/lib/types";
 //
 // 执行图已经上移到页面顶部全宽区（见 goals/[id]/page.tsx），这里不再
 // 放图；这列只留「执行 / 计划 / 详情」的结构化上下文：子任务、runs、
-// 计划态规范图与逐节点对账、变更、env、hooks、终态复盘。
+// 计划态规范图与逐节点对账、变更、env、hooks、终态迭代。
 //
 // 高度：文档流页面里这一列随内容自然长高（页面整体滚动）。
 export type GoalContextTab = "exec" | "plan" | "details";
@@ -185,7 +185,7 @@ export function GoalContextRail({
               </div>
             </SectionCard>
 
-            {/* 终态复盘：已生成 / 进行中 / 未开启三种情况都在这说清楚 */}
+            {/* 终态迭代：已生成 / 进行中 / 未开启三种情况都在这说清楚 */}
             <ReviewCard goal={goal} />
 
             {/* 变更（v2：子任务的逻辑交付物 + 修订史——owner 的集成视图） */}
@@ -464,11 +464,11 @@ function PlanAlignmentCard({ goalId }: { goalId: string }) {
   );
 }
 
-// 终态复盘卡（Phase A + C）：复盘会话只在「训练」模式任务激活时由
+// 终态迭代卡（Phase A + C）：迭代会话只在「训练」模式任务激活时由
 // RSI EnsureSession 创建（internal/service/rsi.go:154）。因此终态却没有
-// 会话 = 本次未开启复盘，而不是“分析失败”。提案有两条生成路径（Phase C）：
-// 分析完成时自动转换一部分，复盘页里也能对单条发现点「生成提案」。这里只说
-// 时机与归属，不编造提案条数——条数在复盘页按真实数据渲染。
+// 会话 = 本次未开启迭代，而不是“分析失败”。提案有两条生成路径（Phase C）：
+// 分析完成时自动转换一部分，迭代页里也能对单条发现点「生成提案」。这里只说
+// 时机与归属，不编造提案条数——条数在迭代页按真实数据渲染。
 const REVIEW_TERMINAL = new Set(["done", "failed", "cancelled"]);
 
 function ReviewCard({ goal }: { goal: Goal }) {
@@ -476,7 +476,7 @@ function ReviewCard({ goal }: { goal: Goal }) {
   // 一个 goal 只会有一个会话（EnsureSession 幂等），find 足够；轮询仍由 query 负责。
   const session = sessions?.find((s) => s.goal_id === goal.id);
   const terminal = REVIEW_TERMINAL.has(goal.status);
-  // 会话列表还没回来时不能断言「本次未开启复盘」——那会把加载中误报成没有复盘。
+  // 会话列表还没回来时不能断言「本次未开启迭代」——那会把加载中误报成没有迭代。
   if (!session && (isLoading || !sessions)) return null;
   if (!session && !terminal) return null;
 
@@ -486,26 +486,26 @@ function ReviewCard({ goal }: { goal: Goal }) {
       href={`/training/${session.id}`}
       className="inline-flex items-center gap-0.5 text-xs text-ink-2 transition-colors hover:text-accent"
     >
-      查看复盘
+      查看迭代
       <ArrowUpRight className="h-3 w-3" />
     </Link>
   ) : null;
 
   return (
-    <SectionCard title="复盘" action={view}>
+    <SectionCard title="迭代" action={view}>
       {session ? (
         <div className="space-y-1.5 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge status={session.status} />
             {session.status === "ready" ? (
               <span className="text-sm text-ink-2">
-                复盘已生成：
+                迭代已生成：
                 <span className="font-mono tabular-nums text-ink">{fmtInt(session.finding_count)}</span>{" "}
                 个发现
               </span>
             ) : session.status === "analyzing" ? (
               <span className="text-sm text-ink-2">
-                分析中：复盘正在分析编排图，页面会自动刷新；完成后可查看发现。
+                分析中：迭代正在分析编排图，页面会自动刷新；完成后可查看发现。
               </span>
             ) : session.status === "waiting" ? (
               <span className="text-sm text-ink-2">
@@ -513,17 +513,17 @@ function ReviewCard({ goal }: { goal: Goal }) {
               </span>
             ) : session.status === "failed" ? (
               <span className="text-sm text-ink-2">
-                复盘分析失败{session.error ? `：${session.error}` : "，没有可展示的发现"}。
+                迭代分析失败{session.error ? `：${session.error}` : "，没有可展示的发现"}。
               </span>
             ) : (
               <span className="text-sm text-ink-2">
-                本次复盘被跳过（未开启复盘或采样未命中），没有分析报告。
+                本次迭代被跳过（未开启迭代或采样未命中），没有分析报告。
               </span>
             )}
           </div>
           {session.status === "ready" && !noBlueprint && (
             <p className="text-xs leading-relaxed text-ink-3">
-              提案有两处来源：分析完成时会自动转换一部分结构类发现；复盘页里也能对单条发现点「
+              提案有两处来源：分析完成时会自动转换一部分结构类发现；迭代页里也能对单条发现点「
               生成提案」，再由人工在
               <Link href={`/workflows/${session.blueprint_id}#wf-proposals`} className="text-accent hover:underline">
                 工作流
@@ -535,10 +535,10 @@ function ReviewCard({ goal }: { goal: Goal }) {
       ) : (
         <div className="space-y-1.5 p-3">
           <p className="text-sm text-ink-2">
-            本次未开启复盘。适合一次性/探索性任务；不会产生优化提案。
+            本次未开启迭代。适合一次性/探索性任务；不会产生优化提案。
           </p>
           <p className="text-xs leading-relaxed text-ink-3">
-            复盘只在勾选「完成后生成复盘」的任务上开启；这次执行没有复盘会话，因此也不会产生提案。
+            迭代只在勾选「完成后迭代工作流」的任务上开启；这次执行没有迭代会话，因此也不会产生提案。
           </p>
         </div>
       )}

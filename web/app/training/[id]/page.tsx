@@ -47,7 +47,7 @@ const RETRYABLE = ["waiting", "failed", "ready"];
 // 分析进行中页面靠轮询刷新；这里只用于文案。
 const IN_FLIGHT = ["waiting", "analyzing"];
 
-// 复盘头部上下文：会话行只带 goal_id / domain_id，项目名、小队名与工作流版本
+// 迭代头部上下文：会话行只带 goal_id / domain_id，项目名、小队名与工作流版本
 // 要从 goal + domains/squads/agents 里 join。拆成独立组件，useGoal 才只在
 // 会话确实关联任务时挂载（goal_id 为空时不发请求）。
 function ReviewContext({
@@ -66,8 +66,8 @@ function ReviewContext({
 
   const domainId = goal?.domain_id || fallbackDomainId;
   const domain = domains?.find((d) => d.id === domainId);
-  // 归属优先取会话快照（复盘发生时的 squad/工作流），旧会话没有快照才回退到 goal：
-  // 任务被改派之后，历史复盘的归属不应该跟着变。
+  // 归属优先取会话快照（迭代发生时的 squad/工作流），旧会话没有快照才回退到 goal：
+  // 任务被改派之后，历史迭代的归属不应该跟着变。
   const squadId = session.squad_id || (goal?.assignee_type === "squad" ? goal.assignee_id : "");
   const squad = squads?.find((s) => s.id === squadId);
   const agent =
@@ -157,7 +157,7 @@ export default function TrainingDetailPage() {
   if (isLoading) {
     return (
       <PageBody>
-        <PageHeader title="复盘" desc="复盘是一次执行的镜子，不是评分" action={back} />
+        <PageHeader title="迭代" desc="迭代是一次执行的镜子，不是评分" action={back} />
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -168,10 +168,10 @@ export default function TrainingDetailPage() {
   if (isError || !detail) {
     return (
       <PageBody>
-        <PageHeader title="复盘" desc="复盘是一次执行的镜子，不是评分" action={back} />
+        <PageHeader title="迭代" desc="迭代是一次执行的镜子，不是评分" action={back} />
         <SectionCard bodyClassName="p-0">
           <Empty>
-            找不到这个复盘会话，可能已被删除，或后端尚未部署 RSI 接口。
+            找不到这个迭代会话，可能已被删除，或后端尚未部署 RSI 接口。
             {isError && (
               <span className="mt-2 block font-mono text-[11px] text-red-300">
                 {error instanceof Error ? error.message : String(error)}
@@ -222,8 +222,8 @@ export default function TrainingDetailPage() {
   return (
     <PageBody>
       <PageHeader
-        title={session.goal_title || "复盘"}
-        desc={`复盘是一次执行的镜子，不是评分 · 会话 ${session.id.slice(0, 8)}`}
+        title={session.goal_title || "迭代"}
+        desc={`迭代是一次执行的镜子，不是评分 · 会话 ${session.id.slice(0, 8)}`}
         action={
           <div className="flex items-center gap-3">
             {back}
@@ -281,7 +281,7 @@ export default function TrainingDetailPage() {
         <p className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[11px] leading-relaxed text-ink-3">
           本次会话被跳过：运行模式为推理（infer），或采样未命中（会话采样率
           {session.sample_rate === 1 ? "100%" : `${Math.round(session.sample_rate * 100)}%`}
-          ），没有执行复盘分析，因此没有报告与图快照。重跑只对 waiting / failed / ready
+          ），没有执行迭代分析，因此没有报告与图快照。重跑只对 waiting / failed / ready
           开放，跳过会话不可重跑。
         </p>
       )}
@@ -332,12 +332,12 @@ export default function TrainingDetailPage() {
                 ? "重跑分析中；下方是上一次分析冻结的快照，完成后才会更新为本次快照，旧报告指标暂不展示"
                 : "当前实时编排图；分析完成后才会冻结为只读快照，分析期间不展示报告指标"
               : status === "waiting"
-                ? "任务进入终态后会冻结编排图并用于复盘分析"
+                ? "任务进入终态后会冻结编排图并用于迭代分析"
                 : status === "failed"
                   ? "分析失败；下方图仅用于查看编排结构，旧报告指标已隐藏"
                   : workflow?.frozen
                     ? "任务终态时冻结的只读 DAG；关键路径节点高亮，绿色连线为关键路径"
-                    : "实时编排图；任务终态后冻结并用于复盘分析"
+                    : "实时编排图；任务终态后冻结并用于迭代分析"
           }
           bodyClassName="p-0"
         >

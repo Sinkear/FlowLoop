@@ -156,7 +156,7 @@ function GoalDetailPageInner() {
   const { data: alignment } = usePlanAlignment(id);
   const [railTab, setRailTab] = useState<GoalContextTab>("exec");
 
-  // 终态任务的首屏重点是「这一轮到底做成了什么」——复盘卡在「详情」tab 里，
+  // 终态任务的首屏重点是「这一轮到底做成了什么」——迭代卡在「详情」tab 里，
   // 默认停在「执行」会把它藏起来。只在任务首次进入终态时切一次，之后人手动
   // 切回「执行」不再被顶走。
   const terminalStatus = goal?.status;
@@ -330,7 +330,7 @@ function GoalDetailPageInner() {
         <SectionCard
           title="编排"
           count={workflow?.nodes?.length}
-          desc="只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后复盘会冻结同一张图"
+          desc="只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
           descInBody
           bodyClassName="p-0"
         >
@@ -353,10 +353,10 @@ function GoalDetailPageInner() {
           并排从 1024（lg）就开始：用户期望的标准版式就是「上编排、
           左会话主宽、右上下文一小栏」；再窄才退化为上下堆叠。 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
-        {/* 固定尺寸的对话面板：用户要求至少和上方编排区差不多高 ——
-            编排卡（头部/描述/工具条 + min-h-300px 画布）自然高约 670px，
-            所以面板固定 700px；矮屏下整页滚动，面板自身不缩。 */}
-        <div className="flex h-[700px] flex-col">
+        {/* 固定尺寸的对话面板：用户要求至少和上方编排区差不多高，之后又要求
+            再拉高 1/3 —— 编排卡自然高约 670px，700 → 930px；矮屏下整页滚动，
+            面板自身不缩。 */}
+        <div className="flex h-[930px] flex-col">
           <GoalComments goalId={id} className="min-h-0" />
         </div>
         {/* 并排时右栏与对话面板等高，内容在栏内自滚，
@@ -376,7 +376,7 @@ function GoalDetailPageInner() {
           }
           tab={railTab}
           onTabChange={setRailTab}
-          className="lg:h-[700px]"
+          className="lg:h-[930px]"
         />
       </div>
     </PageBody>

@@ -33,7 +33,7 @@ function mutError(e: unknown): string {
 
 /**
  * 工作流详情：规范图 / 版本 / JSON 合并为一个「规范」分区，切换版本时图和原文一起变；
- * 复盘、提案、A/B 作为次级页签。
+ * 迭代、提案、A/B 作为次级页签。
  */
 export default function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();

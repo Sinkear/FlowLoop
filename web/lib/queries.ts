@@ -1297,7 +1297,7 @@ export function useRetryRsiSession() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rsi"] }),
   });
 }
-// Phase C：单条发现 → 待审提案。成功后要刷两处：复盘的 findings
+// Phase C：单条发现 → 待审提案。成功后要刷两处：迭代的 findings
 // （proposal_id 变了 → 按钮变"查看提案"）和该工作流的提案列表（工作流页）。
 // 不吞错误：mutation 的 error 由调用点直接渲染给用户。
 export function useDraftProposalFromFinding() {

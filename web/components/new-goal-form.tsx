@@ -69,7 +69,8 @@ export function NewGoalForm({
   const [deepVersionParam, setDeepVersionParam] = useState("");
   // 小队有默认工作流时，勾选此项显式跳过默认、走自动拆解。
   const [skipDefault, setSkipDefault] = useState(false);
-  // 复盘与高级项（§5.6）：默认跟随「是否用工作流」；用户手动点过之后不再自动改。
+  // 迭代与高级项（§5.6）：只跟工作流走（显式钉或小队默认在生效才展示）；
+  // 默认开，用户手动点过之后不再自动改。
   const [review, setReview] = useState(false);
   const [reviewTouched, setReviewTouched] = useState(false);
   const [contentCapture, setContentCapture] = useState<"redacted" | "none" | "full">("redacted");
@@ -193,7 +194,7 @@ export function NewGoalForm({
     if (project && domains?.some((d) => d.id === project)) setDomainId(project);
   }, [domains, initialProjectId]);
 
-  // 复盘默认：有工作流（显式钉或小队默认在生效）就开，自动拆解就关；
+  // 迭代默认：有工作流（显式钉或小队默认在生效）就开，自动拆解就关；
   // 用户手动勾过之后尊重用户选择，不再随字段变化来回跳。
   useEffect(() => {
     if (!reviewTouched) setReview(workflowInEffect);
@@ -205,7 +206,9 @@ export function NewGoalForm({
   })();
   const effectiveCategory: "hitl" | "hootl" =
     categoryMode === "inherit" ? (projectLevel || "hitl") : categoryMode;
-  const executionMode: ExecutionMode = review ? "train" : "infer";
+  // 迭代工作流跟工作流走：自动拆解没有可迭代的图，UI 不展示开关，
+  // 提交端也强制 infer，防止「先勾选再切回自动拆解」把 train 带出去。
+  const executionMode: ExecutionMode = workflowInEffect && review ? "train" : "infer";
 
   const pickAssigneeType = (v: string) => {
     setAssigneeType(v);
@@ -368,7 +371,7 @@ export function NewGoalForm({
               <span className="min-w-0">
                 <span className="block text-sm text-ink">不使用默认工作流（自动拆解）</span>
                 <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-3">
-                  不勾选：任务开始时自动套用这份默认工作流，复盘默认打开；勾选：不钉工作流，由负责人边做边拆。
+                  不勾选：任务开始时自动套用这份默认工作流，迭代默认打开；勾选：不钉工作流，由负责人边做边拆。
                 </span>
               </span>
             </label>
@@ -524,7 +527,7 @@ export function NewGoalForm({
         )}
       </div>
 
-      {/* 执行方式与复盘拆开：工作流回答“怎么干”，复盘回答“跑完要不要看”。 */}
+      {/* 执行方式与迭代拆开：工作流回答“怎么干”，迭代回答“跑完要不要看”。 */}
       <div className="space-y-3 rounded-md border border-line bg-surface-2/30 p-3">
         <div>
           <div className="text-xs font-medium text-ink-2">执行方式</div>
@@ -596,28 +599,32 @@ export function NewGoalForm({
           <p className="text-[12px] text-ink-3">先选负责人，再决定用不用工作流。</p>
         )}
 
-        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-line bg-surface-1 px-3 py-2">
-          <input
-            type="checkbox"
-            checked={review}
-            onChange={(e) => {
-              setReviewTouched(true);
-              setReview(e.target.checked);
-            }}
-            className="mt-0.5 accent-accent"
-          />
-          <span className="min-w-0">
-            <span className="block text-sm text-ink">完成后生成复盘</span>
-            <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-3">
-              复盘读这次执行的实际图，找卡点和可改的流程；不是训练模型，也不保存对话正文。用工作流（含小队默认）默认开，自动拆解默认关。
+        {/* 迭代工作流跟工作流走：只有钉了工作流（含小队默认在生效）才展示开关；
+            自动拆解没有可迭代的图，整个选项不出现。 */}
+        {workflowInEffect && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-line bg-surface-1 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={review}
+              onChange={(e) => {
+                setReviewTouched(true);
+                setReview(e.target.checked);
+              }}
+              className="mt-0.5 accent-accent"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm text-ink">完成后迭代工作流</span>
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-3">
+                迭代读这次执行的实际图，找卡点和可改的流程；不是训练模型，也不保存对话正文。
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        )}
       </div>
 
-      {review && (
+      {workflowInEffect && review && (
         <div className="space-y-3 rounded-md border border-line bg-surface-2/40 p-3">
-          <div className="text-xs font-medium text-ink-2">复盘高级项</div>
+          <div className="text-xs font-medium text-ink-2">迭代高级项</div>
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="内容采集" hint="预留字段：当前仅保存该选项，尚未读取工具正文或参数。">
               <select
@@ -641,7 +648,7 @@ export function NewGoalForm({
                   className={inputCls}
                 />
               </Field>
-              <Field label="采样率（%）" hint="低于 100% 时随机跳过复盘分析">
+              <Field label="采样率（%）" hint="低于 100% 时随机跳过迭代分析">
                 <input
                   type="number"
                   min={1}

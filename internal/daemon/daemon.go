@@ -2875,8 +2875,8 @@ func (d *Daemon) fireSchedule(ctx context.Context, r scheduleDueRow) {
 	// Phase C: a fired goal bypasses GoalService.Create, so the training
 	// session it would have created there must be ensured HERE (after the
 	// commit — the session row references the goal by id). Without this a
-	// schedule saved with 复盘 on would fire infer goals forever and the task
-	// card would claim "未开启复盘" while the schedule says otherwise.
+	// schedule saved with 迭代 on would fire infer goals forever and the task
+	// card would claim "未开启迭代" while the schedule says otherwise.
 	if d.rsi != nil && wf.ExecutionMode == "train" {
 		if err := d.rsi.EnsureSession(ctx, &service.Goal{
 			ID: goalID, DomainID: r.DomainID,

@@ -141,7 +141,7 @@ const KIND_META: Record<
     label: "定时任务",
     icon: <CalendarClock className="h-3.5 w-3.5" />,
     hint: "按 cron 反复生成任务；需要项目、负责人和时区",
-    placeholder: "例如：每天 9 点给「运维」项目建一条巡检任务，负责人 ops，完成后生成复盘",
+    placeholder: "例如：每天 9 点给「运维」项目建一条巡检任务，负责人 ops，完成后迭代工作流",
     examples: [
       "每天 9 点给「运维」项目建一条巡检任务，负责人 ops",
       "每周一 10 点创建「周报」任务，绑定小队 weekly",
@@ -182,7 +182,7 @@ const KIND_NOTES: Record<CreateKind, string[]> = {
   ],
   schedule: [
     "保存时 pin 住当前工作流版本，之后发布新版本不会偷偷改它。",
-    "可以开启“完成后生成复盘”，让定时任务也进入优化闭环。",
+    "可以开启“完成后迭代工作流”，让定时任务也进入优化闭环。",
     "触发时会在项目下生成一条普通任务，沿用项目的验收策略。",
   ],
 };
