@@ -34,6 +34,33 @@ export function Button({
   );
 }
 
+// ── StopButton ──
+// 聊天流的「停止」按钮。之前用 danger 变体（实心红块）——把"中断这轮输出"
+// 这个中性操作渲染成了危险操作，在一排安静的控件里非常刺眼。改成中性描边
+// 底 + 居中小方块（真正的停止键形态），hover 才浮出一点红：语义仍是停止，
+// 但不打断视觉。与「发送」按钮同底同高，输入区不跳动。
+export function StopButton({
+  label = "停止",
+  className,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { label?: string }) {
+  return (
+    <Button
+      variant="outline"
+      {...props}
+      className={cn(
+        "gap-1.5 hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-300",
+        className
+      )}
+    >
+      <span className="flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden="true">
+        <span className="h-[9px] w-[9px] rounded-[2px] bg-current" />
+      </span>
+      {label}
+    </Button>
+  );
+}
+
 // ── Badge ──
 // 深色底上的状态色：低饱和填充 + 亮色文字（-500/10 填充 + -300 文字）。
 // 同一状态一个主色，圆点给"活着"的提示。
@@ -451,6 +478,7 @@ export function SectionCard({
   count,
   desc,
   action,
+  titleExtra,
   children,
   className,
   bodyClassName,
@@ -460,6 +488,8 @@ export function SectionCard({
   count?: number;
   desc?: string;
   action?: React.ReactNode;
+  /** 标题行内、计数之后的附加元素（如红点）。与 action 分开：红点不是操作。 */
+  titleExtra?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   bodyClassName?: string;
@@ -479,6 +509,7 @@ export function SectionCard({
           {typeof count === "number" && (
             <span className="font-mono text-[11px] text-ink-3">{count}</span>
           )}
+          {titleExtra}
           {descInline && <span className="min-w-0 truncate text-xs text-ink-3">{desc}</span>}
           {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
         </header>

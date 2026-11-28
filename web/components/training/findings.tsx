@@ -34,8 +34,8 @@ function proposalsLink(blueprintId: string) {
 }
 
 // 发现与提案并排（§4.9）：确认发现时右侧能直接看到“这条发现有没有变成提案”。
-// 数据来源是 /rsi/sessions/{id} 的 proposals（该复盘所属工作流上的提案）——
-// 没有工作流的复盘（自动拆解）没有提案，这里如实说明，不渲染假的空列表。
+// 数据来源是 /rsi/sessions/{id} 的 proposals（该迭代所属工作流上的提案）——
+// 没有工作流的迭代（自动拆解）没有提案，这里如实说明，不渲染假的空列表。
 function ProposalPanel({ detail }: { detail: RsiDetail }) {
   const proposals = detail.proposals ?? [];
   const blueprintId = detail.session.blueprint_id;
@@ -112,8 +112,8 @@ function ProposalRow({
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] text-ink-3">
         <span>{proposal.created_by_id === "rsi-translator" ? "分析生成" : "人工"}</span>
-        {proposal.finding_id && !fromThisReview && <span>· 其他复盘</span>}
-        {fromThisReview && <span>· 本次复盘</span>}
+        {proposal.finding_id && !fromThisReview && <span>· 其他迭代</span>}
+        {fromThisReview && <span>· 本次迭代</span>}
       </div>
     </li>
   );
@@ -160,7 +160,7 @@ function emptyCopy(status: string, hasReport: boolean): string {
     case "failed":
       return "分析失败，没有产出可展示的发现。错误原因见页面顶部；修复后可点「重跑分析」重试。";
     case "skipped":
-      return "本次会话被跳过（未开启复盘或采样未命中），没有执行结构分析，因此没有发现。";
+      return "本次会话被跳过（未开启迭代或采样未命中），没有执行结构分析，因此没有发现。";
     case "ready":
       return hasReport
         ? "本次分析没有命中结构规则：要么编排没有明显异常，要么样本太少不足以判定。"

@@ -10,7 +10,7 @@ import type { RsiSession, RsiSessionStatus } from "@/lib/types";
 import { relTime } from "@/lib/utils";
 import { DASH, fmtInt, fmtMs, fmtSpeedup, measured } from "@/components/training/format";
 
-// 小队详情的「复盘」tab。
+// 小队详情的「迭代」tab。
 //
 // training_session 没有 squad 字段（schema 事实），所以只能用 goal 反查：
 // 本队任务（assignee_type=squad && assignee_id=本队）→ goal_id → 会话。
@@ -66,7 +66,7 @@ function ReviewRow({ session }: { session: RsiSession }) {
             href={`/training/${session.id}`}
             className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-accent-dim transition-colors hover:text-accent md:hidden"
           >
-            复盘 <ArrowRight className="h-3 w-3" />
+            迭代 <ArrowRight className="h-3 w-3" />
           </Link>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-3 md:hidden">
@@ -103,7 +103,7 @@ function ReviewRow({ session }: { session: RsiSession }) {
           href={`/training/${session.id}`}
           className="inline-flex items-center gap-0.5 text-xs text-ink-2 transition-colors hover:text-accent"
         >
-          复盘详情 <ArrowRight className="h-3 w-3" />
+          迭代详情 <ArrowRight className="h-3 w-3" />
         </Link>
       </span>
     </li>
@@ -140,16 +140,16 @@ export function SquadReviews({ squadId, blueprintId }: { squadId?: string; bluep
 
   return (
     <SectionCard
-      title="复盘"
+      title="迭代"
       count={isLoading ? undefined : rows.length}
       desc={
         blueprintId
           ? rows.length > 0
-            ? `使用这个工作流的任务复盘 · 已分析 ${analyzed} 条 · 按开始时间倒序`
-            : "使用这个工作流的任务复盘（仅开启复盘的任务）"
+            ? `使用这个工作流的任务迭代 · 已分析 ${analyzed} 条 · 按开始时间倒序`
+            : "使用这个工作流的任务迭代（仅开启迭代的任务）"
           : rows.length > 0
-            ? `本队任务的复盘 · 已分析 ${analyzed} 条 · 按开始时间倒序`
-            : "本队任务的复盘（仅开启复盘的任务）"
+            ? `本队任务的迭代 · 已分析 ${analyzed} 条 · 按开始时间倒序`
+            : "本队任务的迭代（仅开启迭代的任务）"
       }
       bodyClassName="p-0"
     >
@@ -165,15 +165,15 @@ export function SquadReviews({ squadId, blueprintId }: { squadId?: string; bluep
       ) : rows.length === 0 ? (
         <Empty icon={<Activity className="h-4 w-4" />}>
           {blueprintId
-            ? "还没有使用这个工作流的任务复盘。任务开启「完成后生成复盘」并且进入终态后，复盘会出现在这里。"
-            : "这支小队还没有复盘。复盘只对开启「完成后生成复盘」的任务生成（小队 + 工作流默认开启，自动拆解默认关闭）；任务进入终态后才会出现在这里，所以为空不代表任务没跑过。"}
+            ? "还没有使用这个工作流的任务迭代。任务开启「完成后迭代工作流」并且进入终态后，迭代会出现在这里。"
+            : "这支小队还没有迭代。迭代只对开启「完成后迭代工作流」的任务生成（小队 + 工作流默认开启，自动拆解默认关闭）；任务进入终态后才会出现在这里，所以为空不代表任务没跑过。"}
           <span className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {!blueprintId && (
               <Link
                 href="/training"
                 className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
               >
-                查看全部复盘
+                查看全部迭代
               </Link>
             )}
             <button
@@ -181,7 +181,7 @@ export function SquadReviews({ squadId, blueprintId }: { squadId?: string; bluep
               onClick={() => open("task")}
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
             >
-              新建复盘任务
+              新建迭代任务
             </button>
           </span>
         </Empty>
@@ -191,7 +191,7 @@ export function SquadReviews({ squadId, blueprintId }: { squadId?: string; bluep
             <Segmented value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} />
           </div>
           {visible.length === 0 ? (
-            <Empty>当前筛选条件下没有复盘；换个状态看看。</Empty>
+            <Empty>当前筛选条件下没有迭代；换个状态看看。</Empty>
           ) : (
             <>
               <div className={HEAD_GRID}>

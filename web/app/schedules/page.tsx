@@ -35,8 +35,9 @@ import { CategoryBadge } from "@/components/category-badge";
 import type { Blueprint, Schedule } from "@/lib/types";
 
 // WorkflowChip：列表行只回答两个问题——「触发时会按哪个工作流跑」和
-// 「这一条复盘开不开」。固定版本号来自后端投影（blueprint_version），
+// 「这一条迭代开不开」。固定版本号来自后端投影（blueprint_version），
 // 不拿 latest_version 顶替：草稿版本号会让「v3」看起来像已发布的 v3。
+// 迭代跟工作流走：自动拆解（没有固定版本）不再展示迭代开关/标记。
 function WorkflowChip({ schedule, blueprints }: { schedule: Schedule; blueprints?: Blueprint[] }) {
   const review = schedule.execution_mode === "train";
   const reviewChip = review ? (
@@ -44,14 +45,14 @@ function WorkflowChip({ schedule, blueprints }: { schedule: Schedule; blueprints
       className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300"
       title="任务进入终态时分析本次执行，发现可转成该工作流的提案"
     >
-      复盘 开
+      迭代 开
     </span>
   ) : (
     <span
       className="rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
-      title="不分析本次执行；任务卡上会显示「本次未开启复盘」"
+      title="不分析本次执行；任务卡上会显示「本次未开启迭代」"
     >
-      复盘 关
+      迭代 关
     </span>
   );
 
@@ -64,7 +65,6 @@ function WorkflowChip({ schedule, blueprints }: { schedule: Schedule; blueprints
         >
           自动拆解
         </span>
-        {reviewChip}
       </>
     );
   }
@@ -513,6 +513,9 @@ function ScheduleFormFields({
               assignee_id: "",
               blueprint_version_id: "",
               blueprint_name: "",
+              // 换负责人类型 = 工作流清空 = 自动拆解，迭代开关一并回落；
+              // 否则「小队+train → 改成智能体」会把无工作流的 train 带出去。
+              execution_mode: "infer",
             });
           }}
           className={inputCls}
@@ -547,8 +550,8 @@ function ScheduleFormFields({
                 assignee_id: sid,
                 blueprint_version_id: def?.latest_version_id ?? "",
                 blueprint_name: def?.name ?? "",
-                // 与新建任务同一默认：钉了工作流就默认开复盘，自动拆解默认关。
-                // 用户仍可在下面的“复盘”字段手动改。
+                // 与新建任务同一默认：钉了工作流就默认开迭代，自动拆解默认关。
+                // 用户仍可在下面的“迭代”字段手动改。
                 execution_mode: def?.latest_version_id ? "train" : "infer",
               });
             }}
@@ -583,7 +586,7 @@ function ScheduleFormFields({
               set({
                 blueprint_version_id: vid,
                 blueprint_name: bp?.name ?? (vid ? form.blueprint_name : ""),
-                // 选择/清空工作流时同步复盘默认；手动改过复盘则以此后手动值为准。
+                // 选择/清空工作流时同步迭代默认；手动改过迭代则以此后手动值为准。
                 execution_mode: vid ? "train" : "infer",
               });
             }}
@@ -608,24 +611,28 @@ function ScheduleFormFields({
         </Field>
       )}
 
-      <Field
-        label="复盘"
-        hint={
-          form.execution_mode === "train"
-            ? "任务进入终态时分析本次执行，发现可转成该工作流的提案"
-            : "不分析本次执行；任务卡上显示「本次未开启复盘」"
-        }
-      >
-        <select
-          value={form.execution_mode}
-          onChange={(e) => set({ execution_mode: e.target.value })}
-          className={inputCls}
+      {/* 迭代跟工作流走：只有钉了工作流才展示开关；自动拆解没有可迭代的图。
+           老数据里 agent 任务可能残留 train，这里保存时也压回 infer（见 submit）。 */}
+      {form.blueprint_version_id && (
+        <Field
+          label="迭代"
+          hint={
+            form.execution_mode === "train"
+              ? "任务进入终态时分析本次执行，发现可转成该工作流的提案"
+              : "不分析本次执行；任务卡上显示「本次未开启迭代」"
+          }
         >
-          <option value="infer">关 · 不分析本次执行</option>
-          <option value="train">开 · 分析本次执行</option>
-        </select>
-      </Field>
-      {form.execution_mode === "train" && (
+          <select
+            value={form.execution_mode}
+            onChange={(e) => set({ execution_mode: e.target.value })}
+            className={inputCls}
+          >
+            <option value="infer">关 · 不分析本次执行</option>
+            <option value="train">开 · 分析本次执行</option>
+          </select>
+        </Field>
+      )}
+      {form.blueprint_version_id && form.execution_mode === "train" && (
         <>
           <div className="grid grid-cols-2 gap-3">
             <Field label="分析预算 (USD)" hint="上限 100；超预算即停止分析">
@@ -688,6 +695,9 @@ function ScheduleFormFields({
 // 不是可提交字段：后端只存版本 id，名称由 projectPin 从 pin 投影出来。
 function scheduleBody(form: ScheduleFormState) {
   const { blueprint_name, ...body } = form;
+  // 迭代跟工作流走：没钉工作流（自动拆解）一律压回 infer，
+  // 兜住老数据残留和「小队+train → 改成智能体」这类历史状态。
+  if (!body.blueprint_version_id) body.execution_mode = "infer";
   return body;
 }
 
@@ -701,7 +711,7 @@ type ScheduleFormState = {
   cron_expression: string;
   timezone: string;
   category: string; // hitl | hootl
-  // Phase C：固定工作流版本（'' = 自动拆解）+ 复盘三件套。
+  // Phase C：固定工作流版本（'' = 自动拆解）+ 迭代三件套。
   // 字段与 goal 同名同义，触发时原样写进 goal，不在这里做二次解释。
   blueprint_version_id: string;
   blueprint_name: string; // 仅用于回显（后端会投影，这里是表单内的临时标签）
@@ -870,7 +880,7 @@ function EditScheduleDialog({
         )}
         {(pinChanged || reviewChanged) && (
           <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
-            工作流固定版本或复盘开关只影响<strong>后续触发</strong>；已派生的 goal 保持创建时的版本与开关，复盘按当时的图对比，不会改写历史。
+            工作流固定版本或迭代开关只影响<strong>后续触发</strong>；已派生的 goal 保持创建时的版本与开关，迭代按当时的图对比，不会改写历史。
           </p>
         )}
         {updateSchedule.isError && (

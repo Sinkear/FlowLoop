@@ -72,7 +72,7 @@ const CREATE_INTENTS: Record<
     label: "定时任务",
     cliKind: "schedule",
     cli: 'flowloop create schedule --name "..."',
-    fields: "项目/cron/负责人/验收分类/是否生成复盘",
+    fields: "项目/cron/负责人/验收分类/是否迭代工作流",
     backView: "定时任务列表",
   },
 };

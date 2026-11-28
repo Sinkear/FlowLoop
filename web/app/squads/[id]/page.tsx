@@ -77,6 +77,8 @@ export default function SquadDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editInstr, setEditInstr] = useState("");
   const [editDefaultWorkflow, setEditDefaultWorkflow] = useState("");
+  // 概览里 instructions 的展开态：长文本默认折叠成 3 行，点开看全文。
+  const [instrExpanded, setInstrExpanded] = useState(false);
 
   const squad = squads?.find((s) => s.id === id);
   const agentName = (aid: string) => agents?.find((a) => a.id === aid)?.name ?? aid;
@@ -257,10 +259,29 @@ export default function SquadDetailPage() {
             </dl>
             {squad.instructions && (
               <div className="border-t border-line px-4 py-3">
-                <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3">
-                  Instructions
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3">
+                    Instructions
+                  </div>
+                  {/* 长文本收敛：默认 3 行截断，需要时展开。约 120 字符
+                      （≈3 行中文）以内视为短文本，不给多余的展开按钮。 */}
+                  {squad.instructions.length > 120 && (
+                    <button
+                      type="button"
+                      onClick={() => setInstrExpanded((v) => !v)}
+                      className="shrink-0 text-[11px] text-ink-3 underline decoration-dotted underline-offset-2 transition-colors hover:text-ink"
+                    >
+                      {instrExpanded ? "收起" : "展开全部"}
+                    </button>
+                  )}
                 </div>
-                <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2">
+                <p
+                  className={cn(
+                    "mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink-2",
+                    !instrExpanded && "line-clamp-3"
+                  )}
+                  title={!instrExpanded ? squad.instructions : undefined}
+                >
                   {squad.instructions}
                 </p>
               </div>

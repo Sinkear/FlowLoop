@@ -35,7 +35,7 @@ function mutError(e: unknown): string {
 }
 
 /**
- * 优化提案（Phase C）：复盘产出结构化补丁，人工批准后落成草稿。
+ * 优化提案（Phase C）：迭代产出结构化补丁，人工批准后落成草稿。
  * 这是次级信息——默认折叠成一行行提案，需要时再展开三色 diff。
  */
 export function WorkflowProposals({
@@ -101,7 +101,7 @@ export function WorkflowProposals({
     <SectionCard
       title="优化提案"
       count={list.length}
-      desc="复盘把“这张图哪里该改”算成结构化补丁：批准 = 落一份新草稿，并自动创建下一轮训练 goal（backlog，未启动，需人工启动）；拒绝 = 只留记录。草稿仍需手动发布。"
+      desc="迭代把“这张图哪里该改”算成结构化补丁：批准 = 落一份新草稿，并自动创建下一轮训练 goal（backlog，未启动，需人工启动）；拒绝 = 只留记录。草稿仍需手动发布。"
       bodyClassName="p-0"
     >
       {nextRoundResult && (
@@ -124,7 +124,7 @@ export function WorkflowProposals({
         </div>
       ) : list.length === 0 ? (
         <Empty icon={<GitPullRequestArrow className="h-5 w-5" />}>
-          还没有提案。任务执行完、复盘发现可复用的改法后，会在这里生成待批补丁。
+          还没有提案。任务执行完、迭代发现可复用的改法后，会在这里生成待批补丁。
         </Empty>
       ) : (
         <ul className="divide-y divide-line/60">
@@ -236,7 +236,7 @@ export function WorkflowProposals({
         >
           <p className="text-sm leading-relaxed text-ink-2">
             批准会把补丁应用到基于版本 <code className="font-mono text-ink-3">{approveId.slice(0, 8)}</code>{" "}
-            的新草稿上；对训练复盘（RSI）提案，还会自动创建下一轮训练 goal（backlog，未启动，需人工启动）。
+            的新草稿上；对训练迭代（RSI）提案，还会自动创建下一轮训练 goal（backlog，未启动，需人工启动）。
             草稿需要手动发布才会被任务钉住。
           </p>
           {actionError && <WorkflowErrorBox title="批准失败" message={actionError} />}
@@ -245,7 +245,7 @@ export function WorkflowProposals({
 
       {nextRoundId && (
         <Dialog
-          title="开始下一轮复盘？"
+          title="开始下一轮迭代？"
           onClose={() => (nextRound.isPending ? null : setNextRoundId(null))}
           footer={
             <>

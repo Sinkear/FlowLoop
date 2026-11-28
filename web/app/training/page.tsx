@@ -93,7 +93,7 @@ function TrainingRow({
   squadName: string;
 }) {
   // 工作流归属由会话快照提供（旧会话为空，回退到 goal 上的版本）。
-  // 复盘按「小队 × 工作流」聚合的前提就是这一行能被看见。
+  // 迭代按「小队 × 工作流」聚合的前提就是这一行能被看见。
   const workflow = session.blueprint_id
     ? `${session.blueprint_name || "已删除的工作流"} · v${session.blueprint_version || "?"}`
     : "自动拆解";
@@ -112,7 +112,7 @@ function TrainingRow({
       <div className={ROW_GRID}>
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            {/* 主链接：::after 撑满整行，点行内空白也能进复盘。 */}
+            {/* 主链接：::after 撑满整行，点行内空白也能进迭代。 */}
             <Link
               href={`/training/${session.id}`}
               className="min-w-0 truncate text-sm font-medium text-ink after:absolute after:inset-0 after:content-[''] hover:text-accent-dim"
@@ -123,7 +123,7 @@ function TrainingRow({
               <Link
                 href={`/goals/${session.goal_id}`}
                 className="relative z-10 inline-flex shrink-0 items-center gap-0.5 text-[11px] text-ink-3 transition-colors hover:text-accent"
-                title="查看这次复盘对应的任务"
+                title="查看这次迭代对应的任务"
               >
                 任务
                 <ArrowUpRight className="h-3 w-3" />
@@ -276,8 +276,8 @@ export default function TrainingPage() {
       </Link>
 
       <PageHeader
-        title="复盘"
-        desc="复盘是一次执行的镜子，不是评分"
+        title="迭代"
+        desc="迭代是一次执行的镜子，不是评分"
         action={
           <Button onClick={() => open("task")}>
             <Plus className="mr-1 h-4 w-4" />
@@ -289,7 +289,7 @@ export default function TrainingPage() {
       {overviewError && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-red-500/25 bg-red-500/10 px-3.5 py-2 text-[11px] text-red-300">
           <span className="min-w-0 flex-1">
-            复盘概览读取失败：
+            迭代概览读取失败：
             {overviewErr instanceof Error ? overviewErr.message : String(overviewErr)}
           </span>
           <Button
@@ -305,12 +305,12 @@ export default function TrainingPage() {
       <StatStrip
         items={[
           {
-            label: "复盘数",
+            label: "迭代数",
             value: overviewUnavailable ? DASH : fmtInt(overview?.sessions ?? null),
             hint:
               range === "all"
-                ? "复盘会话（不含跳过；概览上限 365 天）"
-                : `${rangeLabel}的复盘会话`,
+                ? "迭代会话（不含跳过；概览上限 365 天）"
+                : `${rangeLabel}的迭代会话`,
           },
           {
             label: "成功率",
@@ -370,7 +370,7 @@ export default function TrainingPage() {
       {!overviewError && <TrainingTrend trend={overview?.trend} loading={overviewLoading} />}
 
       <SectionCard
-        title="复盘会话"
+        title="迭代会话"
         count={visible.length}
         desc={`${rangeLabel} · 按开始时间倒序`}
         bodyClassName="p-0"
@@ -415,11 +415,11 @@ export default function TrainingPage() {
           </div>
         ) : isError ? (
           <Empty icon={<BarChart3 className="h-5 w-5" />}>
-            读取复盘会话失败：{error instanceof Error ? error.message : String(error)}
+            读取迭代会话失败：{error instanceof Error ? error.message : String(error)}
           </Empty>
         ) : !sessions?.length ? (
           <Empty icon={<BarChart3 className="h-5 w-5" />}>
-            还没有复盘会话。任务开启复盘后，进入终态会自动分析并出现在这里；用右上角「新建任务」派一条。
+            还没有迭代会话。任务开启迭代后，进入终态会自动分析并出现在这里；用右上角「新建任务」派一条。
           </Empty>
         ) : !visible.length ? (
           <Empty>当前筛选条件下没有会话；换个状态、项目或时间范围看看。</Empty>

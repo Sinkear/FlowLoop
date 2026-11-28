@@ -501,6 +501,18 @@ function RunDetail({ goalId, runId, agentName }: {
         <code className="text-[9px] text-ink-3">{runId.slice(0, 8)}</code>
       </div>
 
+      {/* 失败原因（决策 6-19）：时间线节点此前只有"失败 ×N"四个字，点开也
+          不知道哪里坏了——result_summary 早就在 API 里，只是没人渲染。
+          对话区的 system 评论讲人话；这里放原始报错，排障用。 */}
+      {full?.status === "failed" && full?.result_summary && (
+        <div>
+          <div className="text-[10px] font-medium text-ink-3">失败原因（原始报错）</div>
+          <pre className="mt-0.5 text-[9.5px] text-red-300 whitespace-pre-wrap bg-red-500/5 rounded border border-red-500/30 p-1.5 max-h-40 overflow-y-auto">
+            {full.result_summary}
+          </pre>
+        </div>
+      )}
+
       {evidence && !!(evidence.diff_stat || evidence.verify) && (
         <details>
           <summary className="text-[10px] font-medium text-ink-3 cursor-pointer">证据包</summary>

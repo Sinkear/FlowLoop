@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AcpChatClient, ChatEvent, PermissionRequest, SessionInfo } from "@/lib/acp";
-import { Button, Dialog, inputCls } from "@/components/ui";
+import { Button, Dialog, inputCls, StopButton } from "@/components/ui";
 import { StreamCards } from "@/lib/run-messages";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 
@@ -256,15 +256,13 @@ export function ChatPanel({ agentId, agentName, onClose }: { agentId: string; ag
               {busy && (
                 <div className="flex items-center gap-3">
                   <p className="text-xs text-ink-3">agent 思考中…</p>
-                  <button
+                  <StopButton
                     onClick={() => {
                       const client = clientRef.current;
                       if (client && current) client.cancel(current);
                     }}
-                    className="text-xs text-red-400 hover:text-red-300"
-                  >
-                    停止
-                  </button>
+                    title="中断当前这轮"
+                  />
                 </div>
               )}
             </div>

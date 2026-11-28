@@ -185,6 +185,17 @@ function RunCard({ run, goalId, agentName }: { run: Run; goalId: string; agentNa
               </div>
             </div>
           )}
+          {/* 失败原因（决策 6-19）：result_summary 一直在 API 里，但从没有组件
+              渲染它——用户只看到红 Badge，不知道哪里坏了。对话区的 system
+              评论讲人话版；这里给原始报错，排障用。 */}
+          {run.status === "failed" && run.result_summary && (
+            <div className="text-xs">
+              <div className="text-[11px] font-medium text-ink-3 uppercase tracking-wide mb-1">失败原因（原始报错）</div>
+              <div className="max-h-72 overflow-y-auto whitespace-pre-wrap font-mono text-red-300 bg-red-500/5 rounded-lg border border-red-500/30 p-2.5">
+                {run.result_summary}
+              </div>
+            </div>
+          )}
           {run.status === "running" && (
             <div className="text-[11px] text-emerald-400 flex items-center gap-1">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

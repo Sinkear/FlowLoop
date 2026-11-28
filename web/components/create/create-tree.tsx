@@ -31,7 +31,7 @@ const GROUPS: TreeNode[] = [
     children: [
       { label: "成员", href: "/squads" },
       { label: "工作流", href: "/workflows" },
-      { label: "复盘", href: "/training" },
+      { label: "迭代", href: "/training" },
     ],
   },
   {

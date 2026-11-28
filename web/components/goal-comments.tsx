@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowDown,
   AtSign,
@@ -54,9 +55,13 @@ const WINDOW_STEP = 200;
 export function GoalComments({
   goalId,
   className,
+  reviewSlot,
 }: {
   goalId: string;
   className?: string;
+  /** review 态的审批卡：渲染为对话流末尾的系统级卡片（agent 汇报 → 人拍板
+      是对话的一部分，2026-11-28 用户反馈要求审批内容进对话，不再悬在对话外）。 */
+  reviewSlot?: ReactNode;
 }) {
   const { data: comments, isLoading, isError } = useGoalComments(goalId);
   const createComment = useCreateGoalComment();
@@ -333,12 +338,15 @@ export function GoalComments({
 
       {/* ── 消息区：唯一滚动容器；浮按钮相对它定位 ── */}
       <div className="relative min-h-0 flex-1">
+        {/* overscroll 不 contain：滚到顶/底后滚动链交给页面（2026-11-28
+            用户反馈：contain 把滚轮事件拦在面板里，鼠标悬停在对话/右栏上
+            时整页滚不动）。 */}
         <div
           ref={setListRef}
           onScroll={handleScroll}
           role="log"
           aria-label="任务对话消息"
-          className="h-full overflow-y-auto overscroll-contain"
+          className="h-full overflow-y-auto"
         >
           {isLoading ? (
             <div className="mx-auto w-full max-w-3xl px-3 sm:px-5">
@@ -391,6 +399,15 @@ export function GoalComments({
                 </div>
               )}
               {rows}
+            </div>
+          )}
+          {/* 审批卡锚点渲染在消息三分支之外：评论还在加载/为空/加载失败时
+              review 态 goal 也必须能定位到审批卡（goal-actions 的"待审批 ·
+              去处理"按钮按 id 找它），否则 scrollIntoView 静默失效——卡是
+              该状态下页面上唯一的审批入口。 */}
+          {reviewSlot && (
+            <div id="review-panel-anchor" className="mt-3 scroll-mt-2">
+              {reviewSlot}
             </div>
           )}
         </div>

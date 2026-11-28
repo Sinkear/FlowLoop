@@ -22,3 +22,18 @@ export function relTime(iso: string): string {
   if (days < 7) return `${days} 天前`;
   return new Date(t).toLocaleDateString();
 }
+
+// handoff_note 语义拆分：重开时后端（internal/service/goal.go Reopen）会往
+// 这个字段写 "Reopened" / "Reopened: <reason>"——那是一条状态转换记录，不是
+// 真人交接。展示层分开渲染：重开 → 「重新打开」状态条（带人话解释），
+// 其余 → 「交接备注」，不再拿英文原文吓用户。
+export type HandoffNoteView =
+  | { kind: "reopen"; reason: string }
+  | { kind: "handoff"; text: string };
+
+export function parseHandoffNote(note: string): HandoffNoteView {
+  if (note === "Reopened") return { kind: "reopen", reason: "" };
+  if (note.startsWith("Reopened: "))
+    return { kind: "reopen", reason: note.slice("Reopened: ".length) };
+  return { kind: "handoff", text: note };
+}
