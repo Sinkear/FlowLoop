@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowDown,
   AtSign,
@@ -54,9 +55,13 @@ const WINDOW_STEP = 200;
 export function GoalComments({
   goalId,
   className,
+  reviewSlot,
 }: {
   goalId: string;
   className?: string;
+  /** review 态的审批卡：渲染为对话流末尾的系统级卡片（agent 汇报 → 人拍板
+      是对话的一部分，2026-11-28 用户反馈要求审批内容进对话，不再悬在对话外）。 */
+  reviewSlot?: ReactNode;
 }) {
   const { data: comments, isLoading, isError } = useGoalComments(goalId);
   const createComment = useCreateGoalComment();
@@ -391,6 +396,13 @@ export function GoalComments({
                 </div>
               )}
               {rows}
+              {/* 审批卡：跟在消息流末尾——它是"当前待你拍板"的最新状态，
+                  stick-to-bottom 会把它带进首屏视野。 */}
+              {reviewSlot && (
+                <div id="review-panel-anchor" className="mt-3 scroll-mt-2">
+                  {reviewSlot}
+                </div>
+              )}
             </div>
           )}
         </div>

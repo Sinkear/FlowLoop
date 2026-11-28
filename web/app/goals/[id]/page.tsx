@@ -267,6 +267,24 @@ function GoalDetailPageInner() {
               <GoalStatusBar goalId={id} goalStatus={goal.status} />
             </div>
 
+            {/* 问题描述（"必要描述"）：mention 语法压平成 @名字，多行折叠为一段，
+                最多两行——完整的原始描述在「详情」tab 里。 */}
+            {(() => {
+              const desc = (goal.description || "")
+                .replace(/\[@([^\]]+)\]\(mention:\/\/[^)]*\)/g, "@$1")
+                .replace(/[ \t]*\n[ \t]*/g, " ")
+                .trim();
+              if (!desc) return null;
+              return (
+                <p
+                  className="line-clamp-2 min-w-0 text-xs leading-relaxed text-ink-3"
+                  title={desc}
+                >
+                  {desc}
+                </p>
+              );
+            })()}
+
             {/* 元信息行：项目 / 分配给 / 工作流 / 来源（紧凑，窄屏可换行） */}
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
               <span className="inline-flex min-w-0 items-center gap-1">
@@ -324,15 +342,11 @@ function GoalDetailPageInner() {
             </div>
           </div>
 
-          {/* 操作 + 执行 flow：正常态右对齐成一行；review 态的审批面板本身就是
-              全宽决策区（GoalActions 内部 w-full），让它独占一行。 */}
-          <div
-            className={
-              goal.status === "review"
-                ? "flex w-full flex-wrap items-center gap-2"
-                : "flex shrink-0 flex-wrap items-center justify-end gap-2"
-            }
-          >
+          {/* 操作 + 执行 flow：右对齐一行，允许换行。
+              注意绝不能 w-full——父级是 lg:flex-row，w-full 会把左边
+              min-w-0 flex-1 的标题块挤到 0 宽，标题/徽章/元信息全部
+              垂直堆叠溢出，看起来就像"乱码"（2026-11-28 用户反馈）。 */}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:max-w-[46%]">
             <GoalActions goal={goal} />
             <GoalTimeline goalId={id} goalStatus={goal.status} />
           </div>
@@ -369,8 +383,8 @@ function GoalDetailPageInner() {
              tab 可见；
           ③ 节点缩小一档（NODE_W/H 已调小），框整体更高（执行图窗格
              min-h 300→380px）。
-          没钉工作流的自动拆解任务没有规范图与对账表，只剩执行图单窗格，
-          tab 也随之隐藏。 */}
+          自动拆解任务没有规范图/对账表时，tab 仍然显示，
+          用空态说明"为什么没有、怎么才有"。 */}
       {(workflowLoading || workflowError || workflow ||
         (goal.blueprint_version_id && (bpGraphLoading || blueprintGraph))) && (
         <SectionCard
@@ -382,7 +396,9 @@ function GoalDetailPageInner() {
           }
           desc={
             planView === "align"
-              ? "逐节点对账：计划节点是否有对应的执行子任务与 run；计划外子任务/咨询化执行都会列出来"
+              ? goal.blueprint_version_id
+                ? "逐节点对账：计划节点是否有对应的执行子任务与 run；计划外子任务/咨询化执行都会列出来"
+                : "自动拆解任务没有钉住的工作流，暂无逐节点计划对账——下方说明了怎么才有"
               : goal.blueprint_version_id
                 ? "上：实时执行图（实际怎么跑）；下：计划图（钉住的工作流规范，应然结构）——上下对照看计划 vs 实际"
                 : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
@@ -390,20 +406,33 @@ function GoalDetailPageInner() {
           descInBody
           bodyClassName="p-0"
           titleExtra={
-            goal.blueprint_version_id ? (
-              <Segmented
-                value={planView}
-                onChange={setPlanView}
-                options={[
-                  { value: "graphs", label: "执行图 · 计划图" },
-                  { value: "align", label: "计划 vs 实际" },
-                ]}
-              />
-            ) : undefined
+            <Segmented
+              value={planView}
+              onChange={setPlanView}
+              options={[
+                { value: "graphs", label: "执行图 · 计划图" },
+                { value: "align", label: "计划 vs 实际" },
+              ]}
+            />
           }
         >
           {planView === "align" ? (
-            <PlanAlignmentCard goalId={id} framed={false} />
+            goal.blueprint_version_id ? (
+              <PlanAlignmentCard goalId={id} framed={false} />
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-3">
+                  <AlertTriangle className="h-4 w-4" />
+                </span>
+                <p className="text-xs font-medium text-ink-2">没有逐节点对账表</p>
+                <p className="max-w-md text-[11px] leading-relaxed text-ink-3">
+                  「计划 vs 实际」把钉住的工作流逐节点与实际执行对账（计划节点 ↔
+                  子任务 ↔ runs、计划外子任务、偏差清单）。本任务是
+                  <strong className="text-ink-2">自动拆解</strong>：创建时没有指定工作流，由
+                  Agent 现场编排，没有计划基线可对。创建任务时选择（或事后给任务钉住）工作流后，这里会展示逐节点对账表。
+                </p>
+              </div>
+            )
           ) : (
             <div className="divide-y divide-line">
               <WorkflowGraphView
@@ -418,7 +447,7 @@ function GoalDetailPageInner() {
                 }
                 heightClass="min-h-[380px]"
               />
-              {goal.blueprint_version_id && (
+              {goal.blueprint_version_id ? (
                 <WorkflowGraphView
                   graph={blueprintGraph ?? null}
                   loading={bpGraphLoading}
@@ -433,6 +462,19 @@ function GoalDetailPageInner() {
                   showMetrics={false}
                   heightClass="min-h-[320px]"
                 />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-3">
+                    <AlertTriangle className="h-4 w-4" />
+                  </span>
+                  <p className="text-xs font-medium text-ink-2">没有计划图（规范图）</p>
+                  <p className="max-w-md text-[11px] leading-relaxed text-ink-3">
+                    计划图是钉住的工作流规范（应然结构），与上方
+                    <strong className="text-ink-2">实时执行图</strong>
+                    上下对照就是逐节点的计划 vs 实际。本任务是自动拆解：Agent
+                    现场编排、无预先计划。创建任务时选择（或事后钉住）工作流后，这里会与执行图并排显示。
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -442,20 +484,21 @@ function GoalDetailPageInner() {
       {/* ── 主体：左对话（主要宽度）+ 右上下文栏（只留一小条）。
           并排从 1024（lg）就开始：用户期望的标准版式就是「上编排、
           左会话主宽、右上下文一小栏」；再窄才退化为上下堆叠。
-          review 态：审批卡（ReviewPanel）放在对话面板顶部——审批是
-          对话的一部分（agent 汇报 → 人拍板），内容以对话流为主呈现，
-          不再在顶栏操作区挤成"乱码"块。 */}
+          review 态：审批卡作为 reviewSlot 传进 GoalComments，渲染在
+          消息流末尾——审批是对话的一部分（agent 汇报 → 人拍板），
+          在对话内呈现，不再悬在对话面板外。 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
         {/* 固定尺寸的对话面板：用户要求至少和上方编排区差不多高，之后又要求
             再拉高 1/3 —— 编排卡自然高约 670px，700 → 930px；矮屏下整页滚动，
             面板自身不缩。 */}
-        <div className="flex h-[930px] flex-col gap-3">
-          {goal.status === "review" && (
-            <div id="review-panel-anchor" className="shrink-0">
-              <ReviewPanel goal={goal} />
-            </div>
-          )}
-          <GoalComments goalId={id} className="min-h-0" />
+        <div className="flex h-[930px] flex-col">
+          <GoalComments
+            goalId={id}
+            className="min-h-0"
+            reviewSlot={
+              goal.status === "review" ? <ReviewPanel goal={goal} /> : undefined
+            }
+          />
         </div>
         {/* 并排时右栏与对话面板等高，内容在栏内自滚，
             不再垂成 2000px 的长条把页面拖长；堆叠态（<lg）恢复自然高度。 */}
