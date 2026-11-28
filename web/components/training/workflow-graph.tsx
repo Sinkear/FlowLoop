@@ -1006,22 +1006,28 @@ export function WorkflowGraphView({
               if (e.target === e.currentTarget) setFullscreen(false);
             }}
           >
-            {/* 浮层头：一眼知道这是什么图，Esc/按钮都能退出 */}
-            <div className="flex items-center gap-3 border-b border-white/10 px-4 py-2 text-[11px] text-ink-2">
-              <Waypoints className="h-3.5 w-3.5" />
-              <span className="font-medium">{spec ? "计划图 · 全屏" : "编排图 · 全屏"}</span>
-              <span className="hidden text-ink-3 sm:inline">滚轮/拖拽滚动平移，工具条缩放，Esc 退出</span>
-              <button
-                type="button"
-                onClick={() => setFullscreen(false)}
-                aria-label="退出全屏"
-                className="ml-auto inline-flex h-6 items-center gap-1 rounded border border-line px-1.5 text-ink-3 transition-colors hover:text-ink"
-              >
-                <X className="h-3 w-3" />
-                退出全屏
-              </button>
-            </div>
-            <div className="mx-auto flex min-h-0 w-full max-w-[1700px] flex-1 flex-col bg-surface-1/95 shadow-2xl">
+            {/* 整块（含头行）都是 surface-1 面板：头行文字/按钮用常规
+                ink token 就清晰可读——之前头行直接压在黑色遮罩上，
+                ink-3 + border-line 弱到看不见（用户反馈）。 */}
+            <div className="mx-auto flex min-h-0 w-full max-w-[1700px] flex-1 flex-col bg-surface-1 shadow-2xl">
+              <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-2.5 text-xs">
+                <Waypoints className="h-3.5 w-3.5 shrink-0 text-ink-2" />
+                <span className="shrink-0 font-medium text-ink">
+                  {spec ? "计划图 · 全屏" : "编排图 · 全屏"}
+                </span>
+                <span className="hidden min-w-0 truncate text-ink-2 sm:inline">
+                  滚轮/拖拽滚动平移 · 工具条缩放 · Esc 退出
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFullscreen(false)}
+                  aria-label="退出全屏"
+                  className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line-strong bg-surface-2 px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-accent/40 hover:bg-surface-3 hover:text-ink"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  退出全屏
+                </button>
+              </div>
               <GraphPane
                 graph={graph ?? null}
                 layout={layout}

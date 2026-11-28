@@ -7,18 +7,18 @@ import { GoalRuns } from "@/components/goal-runs";
 import { GoalChanges } from "@/components/goal-changes";
 import { GoalHooksPanel } from "@/components/goal-hooks-panel";
 import { CategoryBadge } from "@/components/category-badge";
-import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { fmtInt, nodeKindMeta } from "@/components/training/format";
 import { Badge, SectionCard, Segmented, StatStrip } from "@/components/ui";
 import { useEnvChanges, usePlanAlignment, useRsiSessions } from "@/lib/queries";
 import { cn, parseHandoffNote } from "@/lib/utils";
-import type { Goal, WorkflowGraph } from "@/lib/types";
+import type { Goal } from "@/lib/types";
 
 // ── 任务上下文右栏 ────────────────────────────────────────────────
 //
 // 执行图已经上移到页面顶部全宽区（见 goals/[id]/page.tsx），这里不再
 // 放图；这列只留「执行 / 计划 / 详情」的结构化上下文：子任务、runs、
-// 计划态规范图与逐节点对账、变更、env、hooks、终态迭代。
+// 逐节点对账、变更、env、hooks、终态迭代（计划图本体在页面顶部
+// 「编排」卡里，与实时执行图并排双视图）。
 //
 // 高度：文档流页面里这一列随内容自然长高（页面整体滚动）。
 export type GoalContextTab = "exec" | "plan" | "details";
@@ -33,9 +33,6 @@ export function GoalContextRail({
   goal,
   goalId,
   acceptanceSource,
-  blueprintGraph,
-  blueprintLoading,
-  blueprintError,
   tab,
   onTabChange,
   className,
@@ -44,9 +41,6 @@ export function GoalContextRail({
   goalId: string;
   /** 验收级别来源（任务级覆盖 / 与项目一致 / 平台默认…），由页面按 domain 算出。 */
   acceptanceSource: string;
-  blueprintGraph: WorkflowGraph | undefined;
-  blueprintLoading: boolean;
-  blueprintError: string | null;
   tab: GoalContextTab;
   onTabChange: (tab: GoalContextTab) => void;
   className?: string;
@@ -84,32 +78,15 @@ export function GoalContextRail({
           <>
             {goal.blueprint_version_id ? (
               <>
-                {/* 工作流规范图（计划态）：只在 goal 钉了 published 版本时出现 */}
-                <SectionCard
-                  title="工作流（计划）"
-                  count={blueprintGraph?.nodes?.length}
-                  desc="激活时钉住的规范图：执行顺序由结构保证。与「执行」里的编排图对照可看出计划 vs 实际"
-                  descInBody
-                  bodyClassName="p-0"
-                >
-                  <WorkflowGraphView
-                    graph={blueprintGraph ?? null}
-                    loading={blueprintLoading}
-                    error={blueprintError}
-                    variant="spec"
-                    showMetrics={false}
-                    heightClass="min-h-[220px]"
-                    autoFit
-                  />
-                </SectionCard>
-
-                {/* 计划 vs 实际：逐节点对账，偏离直接可见 */}
+                {/* 计划 vs 实际：逐节点对账，偏离直接可见。
+                    计划图本体已上移到页面顶部「编排」卡（与实时执行图
+                    并排双视图），右栏只留对账明细。 */}
                 <PlanAlignmentCard goalId={goalId} />
               </>
             ) : (
               <SectionCard title="计划" desc="这个任务没有钉工作流，执行结构由激活时自动拆解">
                 <div className="px-4 py-6 text-sm leading-relaxed text-ink-3">
-                  自动拆解的任务没有计划图；实际执行结构见「执行」里的编排图与子任务。
+                  自动拆解的任务没有计划图；实际执行结构见上方「编排 · 实时执行」与「执行」里的子任务。
                 </div>
               </SectionCard>
             )}

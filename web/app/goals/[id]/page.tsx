@@ -12,7 +12,7 @@ import { GoalContextRail, type GoalContextTab } from "@/components/goal-context-
 import { WorkflowGraphView } from "@/components/training/workflow-graph";
 import { GoalStatusBar, GoalTimeline } from "@/components/goal-timeline";
 import { CategoryBadge } from "@/components/category-badge";
-import { Badge, AttentionChip, SectionCard, PageBody } from "@/components/ui";
+import { Badge, AttentionChip, SectionCard, PageBody, Segmented } from "@/components/ui";
 import type { Goal, HeldGate } from "@/lib/types";
 
 // ── 任务页 = 文档流：编排图全宽在前，对话面板固定高 ─────────────
@@ -156,6 +156,8 @@ function GoalDetailPageInner() {
   // 计划偏差提示（警示区）与右栏「计划」tab 共用同一份对账数据（同一 query）。
   const { data: alignment } = usePlanAlignment(id);
   const [railTab, setRailTab] = useState<GoalContextTab>("exec");
+  // 编排卡双视图：实时执行图 / 计划图（钉了工作流才有计划 tab）。
+  const [graphTab, setGraphTab] = useState<"exec" | "plan">("exec");
 
   // 终态任务的首屏重点是「这一轮到底做成了什么」——迭代卡在「详情」tab 里，
   // 默认停在「执行」会把它藏起来。只在任务首次进入终态时切一次，之后人手动
@@ -338,29 +340,69 @@ function GoalDetailPageInner() {
         </div>
       )}
 
-      {/* ── 编排图（全宽）：从右栏上移，读图不再挤在 400px 窄栏里。
-          全宽下 1:1 渲染（不 autoFit：小图会被 fit-width 顶到 200% 上限
-          放大成巨块），横向超宽的图用工具条「适应宽度 / 全屏」。 */}
-      {(workflowLoading || workflowError || workflow) && (
+      {/* ── 编排图（全宽，实时执行 + 计划放在一起）：从右栏上移，读图不再
+          挤在 400px 窄栏里。实时执行 / 计划 两个 tab 切换；没钉工作流的
+          自动拆解任务只有实时图。全宽下 1:1 渲染（不 autoFit：小图会被
+          fit-width 顶到 200% 上限放大成巨块），横向超宽的图用工具条
+          「适应宽度 / 全屏」。 */}
+      {(workflowLoading || workflowError || workflow ||
+        (goal.blueprint_version_id && (bpGraphLoading || blueprintGraph))) && (
         <SectionCard
           title="编排"
-          count={workflow?.nodes?.length}
-          desc="只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
+          count={
+            graphTab === "plan"
+              ? blueprintGraph?.nodes?.length
+              : workflow?.nodes?.length
+          }
+          desc={
+            graphTab === "plan"
+              ? "计划图：激活时钉住的工作流规范（应然结构）；与实时执行对照看计划 vs 实际"
+              : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
+          }
           descInBody
           bodyClassName="p-0"
+          titleExtra={
+            goal.blueprint_version_id ? (
+              <Segmented
+                value={graphTab}
+                onChange={setGraphTab}
+                options={[
+                  { value: "exec", label: "实时执行" },
+                  { value: "plan", label: "计划" },
+                ]}
+              />
+            ) : undefined
+          }
         >
-          <WorkflowGraphView
-            graph={workflow}
-            loading={workflowLoading}
-            error={
-              workflowError
-                ? workflowErr instanceof Error
-                  ? workflowErr.message
-                : String(workflowErr)
-                : null
-            }
-            heightClass="min-h-[300px]"
-          />
+          {graphTab === "plan" ? (
+            <WorkflowGraphView
+              graph={blueprintGraph ?? null}
+              loading={bpGraphLoading}
+              error={
+                bpGraphError
+                  ? bpGraphErr instanceof Error
+                    ? bpGraphErr.message
+                  : String(bpGraphErr)
+                  : null
+              }
+              variant="spec"
+              showMetrics={false}
+              heightClass="min-h-[300px]"
+            />
+          ) : (
+            <WorkflowGraphView
+              graph={workflow}
+              loading={workflowLoading}
+              error={
+                workflowError
+                  ? workflowErr instanceof Error
+                    ? workflowErr.message
+                  : String(workflowErr)
+                  : null
+              }
+              heightClass="min-h-[300px]"
+            />
+          )}
         </SectionCard>
       )}
 
@@ -380,15 +422,6 @@ function GoalDetailPageInner() {
           goal={goal}
           goalId={id}
           acceptanceSource={acceptanceSource}
-          blueprintGraph={blueprintGraph}
-          blueprintLoading={bpGraphLoading}
-          blueprintError={
-            bpGraphError
-              ? bpGraphErr instanceof Error
-                ? bpGraphErr.message
-                : String(bpGraphErr)
-              : null
-          }
           tab={railTab}
           onTabChange={setRailTab}
           className="lg:h-[930px]"
