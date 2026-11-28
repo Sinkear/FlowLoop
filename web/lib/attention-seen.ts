@@ -18,6 +18,14 @@ let version = 0;
 const listeners = new Set<() => void>();
 
 function load(): string[] {
+  // 显式 SSR 守卫："use client" 的模块也会在服务器上预渲染执行，此时
+  // window 未定义；不能依赖 "window is not defined" 的 ReferenceError
+  // 恰好落进下面的 catch——try/catch 语义一旦收窄（例如只包 JSON.parse）
+  // 这层隐式保护就没了。
+  if (typeof window === "undefined") {
+    cache = [];
+    return cache;
+  }
   if (cache) return cache;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -82,6 +90,11 @@ export function attentionKeyOfGate(gate: {
 
 /** 打开工作台（或清单变化）时调用：把当前清单全部记为已读。 */
 export function markAttentionSeen(keys: string[]): void {
+  // 先丢弃内存缓存再从 localStorage 重读：多 tab 各自持有自己的
+  // cache 副本，若直接在旧副本上合并，后写的 tab 会把先写 tab 刚标记
+  // 的 key 覆盖掉（已读红点重开后又亮）。重读相当于"写前刷新"，
+  // 合并永远发生在最新账本之上。
+  cache = null;
   const cur = load();
   const set = new Set(cur);
   let changed = false;

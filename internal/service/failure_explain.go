@@ -33,8 +33,17 @@ type failureExplanation struct {
 // matching rule wins, so transport-specific rules must precede generic ones
 // (the ECONNREFUSED text embeds "Internal error", the 5xx text embeds
 // "ECONNREFUSED"-adjacent noise — most specific first).
+//
+// Each rule has two marker sets: `markers` is any-of (one hit selects the
+// rule); `also` is all-of — every string in `also` must ALSO appear in the
+// summary for the rule to fire. `also` exists for co-occurrence pairs whose
+// parts are too generic alone: OpenAI writes "The model `gpt-x` does not
+// exist" — "does not exist" by itself also matches "container image does
+// not exist" / "reference does not exist" (docker/infra launch failures that
+// are NOT model problems), but the pairing with "model" is unambiguous.
 var failureRules = []struct {
 	markers []string
+	also    []string
 	explain failureExplanation
 }{
 	{
@@ -88,7 +97,29 @@ var failureRules = []struct {
 		},
 	},
 	{
-		markers: []string{"model unavailable", "model not found", "no such model", "does not exist"},
+		// "does not exist" alone is too broad — rc.Summary carries arbitrary
+		// launch failures ("container image does not exist", "reference
+		// does not exist", "path does not exist"), and misdiagnosing those
+		// as a model problem would violate the file's own
+		// refusal-to-guess principle. Split: unambiguous phrases stay
+		// unguarded; the bare phrase only fires when "model" co-occurs
+		// (OpenAI: "The model `gpt-x` does not exist").
+		markers: []string{"model unavailable", "model not found", "no such model"},
+		explain: failureExplanation{
+			cause:  "配置的模型不可用（模型名不存在或已下线）",
+			advice: "检查 agent 运行时配置的模型名是否仍然有效；改为可用模型后「重开任务」即可继续。",
+		},
+	},
+	{
+		markers: []string{"does not exist", "doesn't exist"},
+		also:    []string{"model"},
+		explain: failureExplanation{
+			cause:  "配置的模型不可用（模型名不存在或已下线）",
+			advice: "检查 agent 运行时配置的模型名是否仍然有效；改为可用模型后「重开任务」即可继续。",
+		},
+	},
+	{
+		markers: []string{"模型不存在"},
 		explain: failureExplanation{
 			cause:  "配置的模型不可用（模型名不存在或已下线）",
 			advice: "检查 agent 运行时配置的模型名是否仍然有效；改为可用模型后「重开任务」即可继续。",
@@ -118,10 +149,27 @@ var defaultFailureExplanation = failureExplanation{
 func classifyFailure(summary string) (cause string, advice string) {
 	s := strings.ToLower(strings.TrimSpace(summary))
 	for _, r := range failureRules {
+		matched := false
 		for _, m := range r.markers {
 			if strings.Contains(s, m) {
-				return r.explain.cause, r.explain.advice
+				matched = true
+				break
 			}
+		}
+		if !matched {
+			continue
+		}
+		// all-of guard: a rule with `also` only fires when every co-occurrence
+		// partner is present too (see the model/"does not exist" pairing).
+		guarded := true
+		for _, a := range r.also {
+			if !strings.Contains(s, a) {
+				guarded = false
+				break
+			}
+		}
+		if guarded {
+			return r.explain.cause, r.explain.advice
 		}
 	}
 	return defaultFailureExplanation.cause, defaultFailureExplanation.advice

@@ -31,9 +31,12 @@ func TestClassifyFailure(t *testing.T) {
 		{"dns failure", "getaddrinfo: nodename nor servname provided", "域名解析失败", "DNS"},
 		{"conn reset", "read: connection reset by peer", "连接被重置", "网络"},
 		{"bad api key", "Error code: 401 - Incorrect API key provided", "认证失败", "API key"},
+		{"auth case-variant 401", "Upstream error: 401 Unauthorized", "认证失败", "API key"},
+		{"auth case-variant sentence", "Authentication failed: token expired", "认证失败", "API key"},
 		{"rate limited", "Error code: 429 - Rate limit reached", "限流", "稍等片刻"},
 		{"quota exhausted", "billing hard limit reached, insufficient quota", "额度/余额不足", "充值"},
 		{"model gone", "The model `gpt-x` does not exist", "模型不可用", "模型名"},
+		{"non-model does-not-exist stays unknown", "Error: container image does not exist in registry", "未能自动识别", "原始报错"},
 		{"upstream 5xx", "Error code: 503 - service unavailable", "服务端错误", "供应商"},
 		{"unknown garbage", "kaboom mystery failure", "未能自动识别", "原始报错"},
 		{"empty summary", "", "未能自动识别", "原始报错"},
@@ -197,7 +200,10 @@ func TestNonRetryableFailureGoesTerminalImmediately(t *testing.T) {
 	if len(runs) == 0 {
 		t.Fatal("expected birth owner run")
 	}
-	const authErr = "Error code: 401 - Incorrect API key provided: sk-xxx"
+	// Real-world auth errors arrive in provider case ("Unauthorized",
+	// "Authentication failed") — the marker match must be case-insensitive
+	// (isNonRetryable lowercases the summary; see MAJOR-1 regression).
+	const authErr = "Upstream error: 401 Unauthorized: invalid authentication credentials"
 	if _, err := st.DB().ExecContext(ctx,
 		`UPDATE run SET status='failed', attempt=1, finished_at=?, result_summary=? WHERE id=?`,
 		now(), authErr, runs[0].ID); err != nil {
@@ -244,4 +250,34 @@ func goalStatus(t *testing.T, st *store.Store, goalID string) string {
 		t.Fatalf("goal status: %v", err)
 	}
 	return status
+}
+
+// TestIsNonRetryableCaseInsensitive: MAJOR-1 regression guard — provider
+// summaries arrive in arbitrary case ("401 Unauthorized", "Model
+// Unavailable"); a case-sensitive match would burn the full retry budget
+// on deterministic faults and post self-contradicting comments
+// (cause says auth, terminal note says retries exhausted).
+func TestIsNonRetryableCaseInsensitive(t *testing.T) {
+	for _, s := range []string{
+		"Upstream error: 401 Unauthorized",
+		"Authentication failed: token expired",
+		"Model Unavailable: provider rejected",
+		"Invalid API Key provided",
+		"  free quota 已用完  ",
+	} {
+		if !isNonRetryable(s) {
+			t.Errorf("isNonRetryable(%q) = false, want true (case-insensitive match)", s)
+		}
+	}
+	for _, s := range []string{
+		liveECONNREFUSED,
+		"Error: container image does not exist in registry",
+		"",
+		"   ",
+		"kaboom mystery failure",
+	} {
+		if isNonRetryable(s) {
+			t.Errorf("isNonRetryable(%q) = true, want false (retryable/empty)", s)
+		}
+	}
 }

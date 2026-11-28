@@ -591,7 +591,6 @@ function GraphPane({
   spec,
   analyzing,
   autoFit = false,
-  initialZoom,
   rootClassName,
   scrollAreaClass,
   toolbarExtra,
@@ -605,9 +604,6 @@ function GraphPane({
   analyzing: boolean;
   /** 挂载时自动缩放到容器宽度：右栏这类窄容器先给整图概览，细节交给全屏。 */
   autoFit?: boolean;
-  /** 初始缩放（0.15–2 clamp）：autoFit 的静态替代，任务页双图上下并排时
-   *  两张图用同一档缩放，视觉上可直接对比（2026-11-28 用户反馈）。 */
-  initialZoom?: number;
   /** 根节点附加样式：全屏浮层用 flex 撑满，内嵌保持块级流。 */
   rootClassName?: string;
   /** 滚动画布的尺寸类：内嵌 max-h-[72vh]，全屏 flex-1。 */
@@ -620,11 +616,7 @@ function GraphPane({
   const markerCritical = `wf-arrow-c-${uid}`;
   const markerSpec = `wf-arrow-s-${uid}`;
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [zoom, setZoom] = useState(() =>
-    typeof initialZoom === "number" && Number.isFinite(initialZoom)
-      ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, initialZoom))
-      : 1
-  );
+  const [zoom, setZoom] = useState(1);
   // autoFit 只在「本次挂载后布局首次就绪」时执行一次：右栏窄容器先给整图
   // 概览、全屏浮层打开即铺满；之后布局因执行进度变宽也不再打扰手动缩放。
   const didFitRef = useRef(false);
@@ -891,7 +883,6 @@ export function WorkflowGraphView({
   showMetrics = true,
   variant = "execution",
   autoFit = false,
-  initialZoom,
 }: {
   graph: WorkflowGraph | null | undefined;
   loading?: boolean;
@@ -910,8 +901,6 @@ export function WorkflowGraphView({
   variant?: "execution" | "spec";
   /** 内嵌窗格挂载后自动适应容器宽度：任务详情右栏这类窄容器用；宽页面默认 1×。 */
   autoFit?: boolean;
-  /** 初始缩放（0.15–2 clamp）：不随布局变化重算，用户手动缩放优先。 */
-  initialZoom?: number;
 }) {
   const spec = variant === "spec";
   const [fullscreen, setFullscreen] = useState(false);
@@ -999,7 +988,6 @@ export function WorkflowGraphView({
         spec={spec}
         analyzing={analyzing}
         autoFit={autoFit}
-        initialZoom={initialZoom}
         toolbarExtra={expandButton}
         // 成功路径也吃 heightClass：作为画布的 min-height（与默认类无冲突，
         // tailwind-merge 直接叠加），避免 1-2 个节点的小图缩成一条窄带。

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo } from "react";
 import {
   ArrowRight,
   Clock3,
@@ -20,10 +20,8 @@ import { relTime } from "@/lib/utils";
 import {
   attentionKeyOfGate,
   attentionKeyOfGoal,
-  attentionSeenVersion,
+  isAttentionGoal,
   markAttentionSeen,
-  subscribeAttentionSeen,
-  unseenAttentionCount,
 } from "@/lib/attention-seen";
 import type { Goal, PendingGate, RsiSession } from "@/lib/types";
 
@@ -64,13 +62,17 @@ export default function WorkbenchPage() {
   }, [squads, agents]);
   const sessionByGoal = useMemo(() => new Map(allSessions.map((s) => [s.goal_id, s])), [allSessions]);
 
-  const attention = allGoals.filter((g) => g.status === "review" || g.status === "failed" || g.attention);
+  // 卡点判定复用 lib/attention-seen 的 isAttentionGoal：nav 侧栏徽标
+  // （components/nav.tsx）用同一个谓词，两处漂移会造成"侧栏亮红点、
+  // 工作台清单没有该条"的错位。
+  const attention = useMemo(() => allGoals.filter(isAttentionGoal), [allGoals]);
   // 工作流人工门不改变 goal.status：只数 review/failed/attention 会让
   // 「流程停在 gate 上等人」完全隐形。人工门与待审批合并成「待我处理」。
   const heldGates = pendingGates?.gates ?? [];
   const attentionCount = attention.length + heldGates.length;
-  // 红点走 app 式通知语义：徽标 = 新出现且还没看过的条数，点开（或点清单）
-  // 即视为已读、红点消失；清单本身一直保留到处理完成。账本见 lib/attention-seen.ts。
+  // 红点走 app 式通知语义：徽标 = 新出现且还没看过的条数，点开工作台
+  // 即视为已读、红点消失；清单本身一直保留到处理完成。账本见
+  // lib/attention-seen.ts。
   const attentionKeys = useMemo(
     () => [
       ...heldGates.map(attentionKeyOfGate),
@@ -78,9 +80,12 @@ export default function WorkbenchPage() {
     ],
     [heldGates, attention]
   );
-  useSyncExternalStore(subscribeAttentionSeen, attentionSeenVersion, attentionSeenVersion);
-  const unseenCount = unseenAttentionCount(attentionKeys);
-  const clearAttentionAlert = () => markAttentionSeen(attentionKeys);
+  // 「点开即已读」（nav.tsx 的徽标 tooltip 承诺了这一点，这里是兑现
+  // 它的代码）：进入工作台就把当前可见卡点记为已看，侧栏红点随之熄灭。
+  // 之后新冒出来的卡点会改变 attentionKeys，effect 重跑、逐条补记。
+  useEffect(() => {
+    if (attentionKeys.length) markAttentionSeen(attentionKeys);
+  }, [attentionKeys]);
   const active = allGoals.filter((g) => g.status === "active");
   const done = allGoals
     .filter((g) => g.status === "done")
@@ -97,6 +102,13 @@ export default function WorkbenchPage() {
   const machineCount = (machines ?? []).length;
 
   const ownerOf = (goal: Goal) => ownerName.get(`${goal.assignee_type}:${goal.assignee_id}`) || "未指派";
+
+  // StatStrip 第一格的 hint（MINOR-3：不写嵌套三元，读起来像条件表）：
+  // 无卡点 / 有卡点（新冒出的会重新亮红点，点开工作台即已读）。
+  let attentionHint = "没有卡点";
+  if (attentionCount > 0) {
+    attentionHint = "条目保留到处理完成；新出现的会再亮红点";
+  }
 
   return (
     <PageBody className="space-y-5">
@@ -145,11 +157,7 @@ export default function WorkbenchPage() {
             label: "待我处理",
             value: attentionCount,
             tone: attentionCount ? "info" : "muted",
-            hint: attentionCount
-              ? unseenCount
-                ? `其中 ${unseenCount} 项是新提醒 —— 红点已在下方清单标题上，点击即清除`
-                : "清单已看过：红点不亮，条目保留到处理完成"
-              : "没有卡点",
+            hint: attentionHint,
           },
           {
             label: "进行中",
@@ -178,19 +186,6 @@ export default function WorkbenchPage() {
             title="待我处理"
             count={attentionCount}
             desc="工作流人工门、审批、失败和 attention 卡点集中在这里。"
-            titleExtra={
-              unseenCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={clearAttentionAlert}
-                  title={`${unseenCount} 项新提醒 —— 点击清除红点（清单保留，逐条处理即可）`}
-                  className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center gap-1 rounded-full border border-red-400/40 bg-red-500/15 px-1.5 font-mono text-[10px] font-semibold leading-none text-red-300 tabular-nums transition-colors hover:bg-red-500/25"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
-                  {unseenCount > 99 ? "99+" : unseenCount}
-                </button>
-              ) : null
-            }
             action={
               <Link href="/goals" className="text-xs text-ink-3 hover:text-accent">
                 全部任务 →

@@ -130,6 +130,10 @@ const maxAttempts = 3
 // Whitelist starts with the narrowest high-confidence marker only
 // (model-configuration errors); transient faults keep the full retry
 // behavior below. Extend only with equally unambiguous markers.
+// Matching is case-insensitive (real summaries arrive in provider case,
+// e.g. "401 Unauthorized"): markers must be lowercase, and isNonRetryable
+// lowercases the summary before matching — same convention as
+// classifyFailure (failure_explain.go).
 // (RSI R2 提案3【已批准】—— 基线重建 flowloop-int-v2 时语义化重放)
 //
 // P7 (issue #31): quota/billing markers added. Live: 11-26 the SAME
@@ -138,14 +142,14 @@ const maxAttempts = 3
 // quota reset cannot happen inside a retry backoff window. These faults are
 // deterministic per-day, fail fast, and surface to the human instead.
 var nonRetryableMarkers = []string{
-	"Model unavailable",
+	"model unavailable",
 	"额度已用完", "已用完", "quota exceeded", "insufficient quota", "配额不足",
 	"余额不足", "insufficient balance", "payment required",
 	// Auth failures are as deterministic as quota errors (goal.go's own
 	// comment on the failed branch names "model/config/auth errors") — a bad
 	// key never heals with time, so burning the retry budget on it only
 	// delays the terminal failure the human already needs to act on.
-	"invalid api key", "invalid_api_key", "Incorrect API key",
+	"invalid api key", "invalid_api_key", "incorrect api key",
 	"unauthorized", "authentication", "认证失败", "鉴权失败", "无效的密钥",
 }
 
@@ -153,7 +157,7 @@ var nonRetryableMarkers = []string{
 // deterministic (non-retryable) fault. Empty summaries are always
 // retryable — absence of evidence is not evidence of a config error.
 func isNonRetryable(summary string) bool {
-	s := strings.TrimSpace(summary)
+	s := strings.ToLower(strings.TrimSpace(summary))
 	if s == "" {
 		return false
 	}

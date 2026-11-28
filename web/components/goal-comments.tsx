@@ -399,13 +399,15 @@ export function GoalComments({
                 </div>
               )}
               {rows}
-              {/* 审批卡：跟在消息流末尾——它是"当前待你拍板"的最新状态，
-                  stick-to-bottom 会把它带进首屏视野。 */}
-              {reviewSlot && (
-                <div id="review-panel-anchor" className="mt-3 scroll-mt-2">
-                  {reviewSlot}
-                </div>
-              )}
+            </div>
+          )}
+          {/* 审批卡锚点渲染在消息三分支之外：评论还在加载/为空/加载失败时
+              review 态 goal 也必须能定位到审批卡（goal-actions 的"待审批 ·
+              去处理"按钮按 id 找它），否则 scrollIntoView 静默失效——卡是
+              该状态下页面上唯一的审批入口。 */}
+          {reviewSlot && (
+            <div id="review-panel-anchor" className="mt-3 scroll-mt-2">
+              {reviewSlot}
             </div>
           )}
         </div>

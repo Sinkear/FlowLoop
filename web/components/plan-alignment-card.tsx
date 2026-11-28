@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { fmtInt, nodeKindMeta } from "@/components/training/format";
-import { Badge, SectionCard, StatStrip } from "@/components/ui";
+import { Badge, StatStrip } from "@/components/ui";
 import { usePlanAlignment } from "@/lib/queries";
 
 // ── 计划 vs 实际对账（BUG-4 / 2026-11-28 版式调整）──
@@ -10,9 +10,9 @@ import { usePlanAlignment } from "@/lib/queries";
 // 偏离（未物化/计划外子任务/节点无执行/咨询化执行）直接列成文字。
 //
 // 归属变迁：原先住在右栏「计划」tab 里，用户看不到（对照右栏 400px 窄
-// 列 + 深层 tab，对账表 min-w-[960px] 几乎必然横向滚动）。现在移到任务
-// 页顶部「计划与执行」卡，与规范图/执行图同级 tab（framed=false 时嵌在
-// 大卡的 body 里，卡片自己不带框）。
+// 列 + 深层 tab，对账表 min-w-[960px] 几乎必然横向滚动）。现在嵌在
+// 任务页顶部「计划与执行」卡的 body 里，与规范图/执行图同级 tab——
+// 外层框/标题由调用方提供，本组件只渲染对账内容本身。
 //
 // 版式（2026-11-23）：统计、偏差、表格拆成三段，各段有自己的留白和描边。
 // 统计走 StatStrip（自动折行），对账表 min-w-[960px] 在卡片内横向滚动，
@@ -31,14 +31,7 @@ const RUN_ROLE_LABEL: Record<string, string> = {
 // 子任务；它们没有 sub_goal 是正常结构，不该像 task 节点一样报「未映射」。
 const NODE_TYPES_WITHOUT_SUB_GOAL = new Set(["gate", "condition", "router", "spawn", "end"]);
 
-export function PlanAlignmentCard({
-  goalId,
-  framed = true,
-}: {
-  goalId: string;
-  /** false = 嵌进「计划与执行」卡的 body（外层已有框和标题），不重复画 SectionCard。 */
-  framed?: boolean;
-}) {
+export function PlanAlignmentCard({ goalId }: { goalId: string }) {
   const { data, isLoading } = usePlanAlignment(goalId);
   if (isLoading || !data || !data.pinned) return null;
   const deviations = data.deviations ?? [];
@@ -212,24 +205,8 @@ export function PlanAlignmentCard({
     </div>
   );
 
-  if (!framed) return body;
-
-  return (
-    <SectionCard
-      title="计划 vs 实际"
-      count={data.planned}
-      desc="逐节点对账：计划节点是否有对应的执行子任务与 run；「计划外子任务」「咨询化执行」都会列在下方"
-      descInBody
-      action={
-        !data.materialized ? (
-          <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300">
-            <AlertTriangle className="h-3 w-3" />
-            计划未物化
-          </span>
-        ) : undefined
-      }
-    >
-      {body}
-    </SectionCard>
-  );
+  // 该组件只有"嵌入「计划与执行」卡 body"一种用法：外层框/标题由调用方
+  // （app/goals/[id]/page.tsx）提供，"计划未物化"警示也由页面级
+  // hasPlanWarning 横幅承担——不再保留独立的 SectionCard 包装分支。
+  return body;
 }

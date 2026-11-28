@@ -27,9 +27,11 @@ import type { Goal, HeldGate } from "@/lib/types";
 // 版面（整页可滚）：
 //   顶栏          返回 / 标题 + badges + 持有者状态 / 元信息 / 操作 + 执行 flow
 //   警示区        持门决策卡、handoff、计划偏差（有才渲染）
-//   编排图        全宽 SectionCard：1:1 读图，超宽图用「适应宽度 / 全屏」
+//   计划与执行    全宽 SectionCard：执行图/规范图（上下双图）与「计划 vs
+//                 实际」对账表 tab 切换（对账明细原在右栏"计划"tab，
+//                 2026-11-28 用户反馈后并入此卡同级 tab）
 //   主体 grid     左：GoalComments（固定高度，内部自滚）
-//                 右：GoalContextRail（执行 / 计划 / 详情，子任务+运行+对账）
+//                 右：GoalContextRail（执行 / 详情，子任务+运行）
 
 export default function GoalDetailPage() {
   // useSearchParams 要求 Suspense 边界。
@@ -155,8 +157,13 @@ function GoalDetailPageInner() {
     isError: bpGraphError,
     error: bpGraphErr,
   } = useBlueprintGraph(goal?.blueprint_version_id ?? "");
-  // 计划偏差提示（警示区）与右栏「计划」tab 共用同一份对账数据（同一 query）。
-  const { data: alignment } = usePlanAlignment(id);
+  // 计划偏差提示（警示区）与「计划 vs 实际」tab 共用同一份对账数据
+  // （同一 query）。三态解构齐全：tab 内的加载/出错兜底（MINOR-6）要用。
+  const {
+    data: alignment,
+    isLoading: alignmentLoading,
+    isError: alignmentError,
+  } = usePlanAlignment(id);
   const [railTab, setRailTab] = useState<GoalContextTab>("exec");
   // 计划与执行卡视图（2026-11-28 用户反馈重构）：
   //   graphs   = 执行图与规范图（计划）上下同框，1:1 同缩放直接对比；
@@ -242,6 +249,18 @@ function GoalDetailPageInner() {
   const deviations = alignment?.deviations ?? [];
   const hasPlanWarning =
     !!goal.blueprint_version_id && !!alignment?.pinned && (!alignment.materialized || deviations.length > 0);
+
+  // 计划与执行卡的副标题与两图 error 文案：先算后用（MINOR-7：三元
+  // 嵌套读不出层次，提到 JSX 之前的具名 const / helper）。
+  const planDesc =
+    planView === "align"
+      ? goal.blueprint_version_id
+        ? "逐节点对账：计划节点是否有对应的执行子任务与 run；计划外子任务/咨询化执行都会列出来"
+        : "自动拆解任务没有钉住的工作流，暂无逐节点计划对账——下方说明了怎么才有"
+      : goal.blueprint_version_id
+        ? "上：实时执行图（实际怎么跑）；下：计划图（钉住的工作流规范，应然结构）——上下对照看计划 vs 实际"
+        : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图";
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   return (
     <PageBody className="space-y-2.5 px-4 py-4 sm:px-6">
@@ -394,15 +413,7 @@ function GoalDetailPageInner() {
               ? alignment?.planned
               : workflow?.nodes?.length
           }
-          desc={
-            planView === "align"
-              ? goal.blueprint_version_id
-                ? "逐节点对账：计划节点是否有对应的执行子任务与 run；计划外子任务/咨询化执行都会列出来"
-                : "自动拆解任务没有钉住的工作流，暂无逐节点计划对账——下方说明了怎么才有"
-              : goal.blueprint_version_id
-                ? "上：实时执行图（实际怎么跑）；下：计划图（钉住的工作流规范，应然结构）——上下对照看计划 vs 实际"
-                : "只读执行图：节点是子任务/验证/审查/咨询/集成，边是依赖与时序；任务终态后迭代会冻结同一张图"
-          }
+          desc={planDesc}
           descInBody
           bodyClassName="p-0"
           titleExtra={
@@ -418,7 +429,21 @@ function GoalDetailPageInner() {
         >
           {planView === "align" ? (
             goal.blueprint_version_id ? (
-              <PlanAlignmentCard goalId={id} framed={false} />
+              // 对账数据三态兜底（MINOR-6）：PlanAlignmentCard 只在
+              // data 就绪且已钉住时渲染；加载中/出错时若不在这里
+              // 接住，tab 会是一块无解释的空白。
+              !alignment && alignmentLoading ? (
+                <div className="flex items-center justify-center px-4 py-10 text-xs text-ink-3">
+                  对账数据加载中…
+                </div>
+              ) : alignmentError ? (
+                <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+                  <p className="text-xs font-medium text-red-400">对账数据加载失败</p>
+                  <p className="text-[11px] text-ink-3">稍后重试；也可以刷新页面重新拉取。</p>
+                </div>
+              ) : (
+                <PlanAlignmentCard goalId={id} />
+              )
             ) : (
               <div className="flex flex-col items-center justify-center gap-2.5 px-4 py-10 text-center">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-3">
@@ -438,26 +463,14 @@ function GoalDetailPageInner() {
               <WorkflowGraphView
                 graph={workflow}
                 loading={workflowLoading}
-                error={
-                  workflowError
-                    ? workflowErr instanceof Error
-                      ? workflowErr.message
-                    : String(workflowErr)
-                    : null
-                }
+                error={workflowError ? errText(workflowErr) : null}
                 heightClass="min-h-[380px]"
               />
               {goal.blueprint_version_id ? (
                 <WorkflowGraphView
                   graph={blueprintGraph ?? null}
                   loading={bpGraphLoading}
-                  error={
-                    bpGraphError
-                      ? bpGraphErr instanceof Error
-                        ? bpGraphErr.message
-                      : String(bpGraphErr)
-                      : null
-                  }
+                  error={bpGraphError ? errText(bpGraphErr) : null}
                   variant="spec"
                   showMetrics={false}
                   heightClass="min-h-[320px]"
