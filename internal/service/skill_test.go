@@ -465,13 +465,36 @@ func TestEnsureBuiltinRejectsForeignName(t *testing.T) {
 	}
 }
 
-// TestStewardBuiltinSkillIDs: only chat-create is auto-attached to the
-// steward. VOD needs a goal source, which chat runs do not have, so adding it
-// here would ship a skill that can never post.
+// TestStewardBuiltinSkillIDs: the steward attaches EVERY builtin skill
+// minus the explicit exclusion set — new builtins ship on the steward by
+// default. The expectation is derived from the builtinSkills seed array
+// (not hardcoded), so adding a builtin does not require a test edit; only
+// adding an exclusion does.
 func TestStewardBuiltinSkillIDs(t *testing.T) {
 	got := stewardBuiltinSkillIDs()
-	if len(got) != 1 || got[0] != BuiltinChatCreateID {
-		t.Fatalf("steward builtins = %v, want only %s", got, BuiltinChatCreateID)
+	want := make([]string, 0, len(builtinSkills))
+	for _, b := range builtinSkills {
+		if !stewardBuiltinSkillExclusions[b.ID] {
+			want = append(want, b.ID)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("steward builtins = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("steward builtins = %v, want %v", got, want)
+		}
+	}
+	// Exclusion actually removes: a fake exclusion must shrink the set.
+	// The exclusion map is a package-level GLOBAL — t.Cleanup restores it
+	// even when this test fails midway, so it never leaks into later tests
+	// (which read the same map above).
+	saved := stewardBuiltinSkillExclusions[builtinSkills[0].ID]
+	stewardBuiltinSkillExclusions[builtinSkills[0].ID] = true
+	t.Cleanup(func() { stewardBuiltinSkillExclusions[builtinSkills[0].ID] = saved })
+	if n := len(stewardBuiltinSkillIDs()); n != len(want)-1 {
+		t.Fatalf("exclusion did not shrink steward set: got %d, want %d", n, len(want)-1)
 	}
 }
 

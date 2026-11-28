@@ -73,6 +73,8 @@ func stewardChatBriefAppendix() string {
 	b.WriteString("- `flowloop schedule list`\n")
 	b.WriteString("- `flowloop domain list`\n")
 	b.WriteString("- `flowloop skill list`\n")
+	b.WriteString("- `flowloop skill check <name>` (skill↔repo update probe: state in_sync|remote_ahead|unknown, has_update)\n")
+	b.WriteString("- `flowloop skill sync <name>` (file-level sync state + next_step hint)\n")
 	b.WriteString("- `flowloop agent history` (your own past runs)\n\n")
 
 	b.WriteString("Manage (returns {\"status\":\"replied\",\"message\":\"...\"} — relay message to user, do not parse for ids):\n")
@@ -92,6 +94,15 @@ func stewardChatBriefAppendix() string {
 	b.WriteString("- `flowloop schedule delete <name>` (comma-separated batch)\n")
 	b.WriteString("- `flowloop domain delete <name>` (comma-separated batch)\n")
 	b.WriteString("- `flowloop skill delete <name>` (comma-separated batch)\n\n")
+
+	b.WriteString("Skill ↔ repository sync (returns JSON on stdout — relay the key fields):\n")
+	b.WriteString("- `flowloop skill install --repo <url> [--path <subdir>] [--branch <b>] [--token <t>]` — install a NEW skill from a git repository (one call: clone + register + bind + baseline)\n")
+	b.WriteString("- `flowloop skill source set <name> --repo <url> [--path <subdir>] [--branch <b>] [--token <t>]` — bind an existing skill to a repository\n")
+	b.WriteString("- `flowloop skill source clear <name>` — remove the repository binding (local files stay)\n")
+	b.WriteString("- `flowloop skill check <name>` — lightweight update probe (ls-remote SHA vs last-sync baseline; no clone)\n")
+	b.WriteString("- `flowloop skill pull <name>` — replace local skill files with the repository's (confirm with the user first: local edits are overwritten)\n")
+	b.WriteString("- `flowloop skill pr <name> [--title \"...\"] [--body \"...\"]` — submit local skill edits as a pull request on a flowloop/skill-* branch (the only way changes go upstream; direct push is not supported)\n")
+	b.WriteString("- Private repositories need a git-host token (--token). Never echo the token in output, logs, or PR text.\n\n")
 
 	b.WriteString("When the user asks you to create something, call the CLI directly. If required fields are missing, the CLI returns a structured {\"status\":\"need_fields\",\"missing\":[...],\"message\":\"...\",\"platform_hint\":\"<system-reminder>...</system-reminder>\"} response. Relay `message` to the user (it lists what's missing). Read `platform_hint` yourself — it carries the current roster (available agents/domains/runtimes) so you can fill the missing fields or suggest options to the user. The <system-reminder> tags wrap platform instructions for you, NOT text to relay verbatim. On success the CLI returns {\"status\":\"created\",\"entity\":{...},\"message\":\"...\"} — parse entity.id for follow-up. You do NOT output any special markers.\n")
 	return b.String()

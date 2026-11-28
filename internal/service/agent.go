@@ -698,13 +698,30 @@ func (s *AgentService) insertSteward(ctx context.Context, runtimeID string) erro
 	return nil
 }
 
-// stewardBuiltinSkillIDs is the platform skill set every steward carries: the
-// conversation-first creation skill (创建任务 / 团队 / 智能体 / 蓝本 by talking).
-// Agent.skills is a JSON array of platform skill ids (pushed to the machine's
-// staging dir by the daemon), so this rides the same pipeline as user skills.
+// stewardBuiltinSkillIDs is the platform skill set every steward carries.
+// By default EVERY builtin skill is auto-attached to the steward: a new
+// builtin ships on the steward without touching this file. To keep one
+// off the steward, add its ID to stewardBuiltinSkillExclusions (e.g. a
+// skill that requires a goal context the steward chat cannot provide).
+// Agent.skills is a JSON array of platform skill ids (pushed to the
+// machine's staging dir by the daemon), so these ride the same pipeline
+// as user skills.
 func stewardBuiltinSkillIDs() []string {
-	return []string{BuiltinChatCreateID}
+	ids := make([]string, 0, len(builtinSkills))
+	for _, b := range builtinSkills {
+		if stewardBuiltinSkillExclusions[b.ID] {
+			continue
+		}
+		ids = append(ids, b.ID)
+	}
+	return ids
 }
+
+// stewardBuiltinSkillExclusions lists builtin skills that are NOT
+// auto-attached to the steward. Empty today; the historical VOD exclusion
+// ("chat runs have no goal source") was lifted when the steward CLI
+// appendix taught report submission.
+var stewardBuiltinSkillExclusions = map[string]bool{}
 
 // ensureStewardBuiltinSkills attaches the platform's built-in skills to a
 // steward that predates them (a DB seeded before the skill shipped), without

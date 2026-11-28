@@ -8,7 +8,8 @@ import {
   useDeleteSkill,
   useConfigureSkillSource,
   useClearSkillSource,
-  useSkillSyncCompare,
+  useSkillSyncCheck,
+  useInstallSkillFromRepo,
   useRunSkillSync,
   useCreateSkillPullRequest,
 } from "@/lib/queries";
@@ -30,7 +31,7 @@ import type {
   Skill,
   SkillSource,
   SkillPullRequestResult,
-  SyncEntry,
+  SkillSyncCheck,
 } from "@/lib/types";
 
 const ROW_GRID =
@@ -39,26 +40,21 @@ const ROW_GRID =
 const HEAD_GRID =
   "hidden md:grid md:grid-cols-[minmax(0,1fr)_184px_72px_112px] md:gap-3 border-b border-line px-4 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-3";
 
+// check / compare 共用的状态徽标。direct push 已移除：本地改动只走 PR，
+// 所以 local_ahead/diverged 只作为信息展示，不再伴随推送动作。
 const SYNC_STATE_META: Record<string, { label: string; cls: string }> = {
   in_sync: { label: "已同步", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" },
   local_ahead: { label: "本地有新改动", cls: "border-sky-500/30 bg-sky-500/10 text-sky-300" },
   remote_ahead: { label: "远端有更新", cls: "border-amber-500/30 bg-amber-500/10 text-amber-300" },
   diverged: { label: "双向分叉", cls: "border-red-500/30 bg-red-500/10 text-red-300" },
+  unknown: { label: "无同步基线", cls: "border-line-strong bg-surface-2 text-ink-3" },
 };
 
 const SYNC_ACTION_LABEL: Record<string, string> = {
   pulled: "拉取",
-  pushed: "推送",
+  installed: "安装",
   pr: "提交 PR",
 };
-
-// 后端 diff 以「拉取」为视角：added=远端有/本地无（拉取会新增），
-// modified=两边都有但内容不同，removed=本地有/远端无（拉取会删除）。
-const SYNC_GROUPS = [
-  { key: "added", label: "远端新增", sign: "+", cls: "text-emerald-300" },
-  { key: "modified", label: "内容修改", sign: "~", cls: "text-amber-300" },
-  { key: "removed", label: "本地独有", sign: "−", cls: "text-red-300" },
-] as const;
 
 function fullTime(iso: string): string {
   return iso ? new Date(iso).toLocaleString() : "—";
@@ -91,7 +87,7 @@ function BuiltinTag({ className }: { className?: string }) {
 function stateMeta(state?: string) {
   return (
     SYNC_STATE_META[state ?? ""] ?? {
-      label: "未比较",
+      label: "未检查",
       cls: "border-line-strong bg-surface-2 text-ink-3",
     }
   );
@@ -100,7 +96,7 @@ function stateMeta(state?: string) {
 // 平台 Skill 模型只有 id/name/title/description/created_at/builtin：没有分类、
 // 大小、updated_at 字段，所以列表不编这些列，只显示真实存在的「上传时间」。
 // 展示名优先 title（人读），name 是机器身份，builtin 是平台内置标记。
-// Feature A：source 存在时显示远端仓库摘要与最近同步状态。
+// Feature A：source 存在时显示远端仓库摘要与最近同步动作。
 function SkillRow({
   sk,
   onDelete,
@@ -228,8 +224,8 @@ export default function SkillsPage() {
     <PageBody>
       <PageHeader
         title="技能"
-        desc="平台技能库：上传 skill 包（SKILL.md），勾选给 agent 后随 run 下发到项目级 skills 目录。可绑定远端仓库（GitHub / GitCode）做双向同步或发起 PR。"
-        action={<Button onClick={() => setShowCreate(true)}>上传 Skill</Button>}
+        desc="平台技能库：上传 skill 包（SKILL.md）或从远端仓库直接安装；勾选给 agent 后随 run 下发到项目级 skills 目录。绑定仓库后可检查更新、一键拉取；本地改动通过 PR 提交。"
+        action={<Button onClick={() => setShowCreate(true)}>添加 Skill</Button>}
       />
 
       <StatStrip
@@ -246,7 +242,7 @@ export default function SkillsPage() {
             hint: `${(skills?.length ?? 0) - described} 个待补充描述`,
           },
           {
-            label: "最近上传",
+            label: "最近添加",
             value: latest ? relTime(latest.created_at) : "—",
             hint: latest ? skillLabel(latest) : "还没有技能包",
           },
@@ -282,7 +278,7 @@ export default function SkillsPage() {
           </div>
         ) : !skills?.length ? (
           <Empty icon={<Sparkles className="h-5 w-5" />}>
-            技能库为空——上传一个 skill 包开始；平台会从包内 SKILL.md 的 frontmatter 解析名称与描述。
+            技能库为空——上传一个 skill 包，或从远端仓库直接安装；平台会从包内 SKILL.md 的 frontmatter 解析名称与描述。
           </Empty>
         ) : !visible.length ? (
           <Empty>没有匹配当前关键词的技能。</Empty>
@@ -312,7 +308,7 @@ export default function SkillsPage() {
         )}
       </SectionCard>
 
-      {showCreate && <CreateSkillDialog onClose={() => setShowCreate(false)} />}
+      {showCreate && <AddSkillDialog onClose={() => setShowCreate(false)} />}
       {syncSkill && (
         <SkillSyncDialog skill={syncSkill} onClose={() => setSyncSkill(null)} />
       )}
@@ -320,12 +316,48 @@ export default function SkillsPage() {
   );
 }
 
-// CreateSkillDialog uploads a skill package as a ZIP archive. The skill's
-// name and description are PARSED by the platform from the archive's
-// SKILL.md frontmatter — the user only picks the zip. A zip without a valid
-// SKILL.md (or without a name in its frontmatter) is rejected as "not a
-// skill package".
-function CreateSkillDialog({ onClose }: { onClose: () => void }) {
+// AddSkillDialog is the single "add a skill" entry with two modes:
+// - zip: upload a skill package as a ZIP archive (name/description PARSED by
+//   the platform from the archive's SKILL.md frontmatter).
+// - repo: install directly from a remote repository (clone + register +
+//   bind + baseline in one call).
+function AddSkillDialog({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"zip" | "repo">("zip");
+  return (
+    <Dialog
+      title="添加 Skill"
+      onClose={onClose}
+      wide
+      footer={
+        <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
+      }
+    >
+      <div className="mb-4 flex gap-1 rounded-lg border border-line bg-surface-2 p-1 text-xs">
+        <button
+          type="button"
+          onClick={() => setMode("zip")}
+          className={`flex-1 rounded-md px-3 py-1.5 transition-colors ${
+            mode === "zip" ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"
+          }`}
+        >
+          上传 ZIP 包
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("repo")}
+          className={`flex-1 rounded-md px-3 py-1.5 transition-colors ${
+            mode === "repo" ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"
+          }`}
+        >
+          从仓库安装
+        </button>
+      </div>
+      {mode === "zip" ? <ZipUploadForm onClose={onClose} /> : <RepoInstallForm onClose={onClose} />}
+    </Dialog>
+  );
+}
+
+function ZipUploadForm({ onClose }: { onClose: () => void }) {
   const create = useCreateSkill();
   const [file, setFile] = useState<File | null>(null);
 
@@ -336,72 +368,156 @@ function CreateSkillDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog
-      title="上传 Skill"
-      onClose={onClose}
-      wide
-      footer={
-        <>
-          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
-          <Button type="submit" form="skill-form" disabled={create.isPending || !file}>
-            {create.isPending ? "上传中…" : "上传"}
-          </Button>
-        </>
-      }
-    >
-      <form id="skill-form" onSubmit={submit} className="space-y-4">
-        <Field
-          label="Skill 包（.zip）"
-          hint="包内必须有 SKILL.md，且其 frontmatter 含 name（可选 description）。平台解析 SKILL.md 自动回填名称与描述，原样下发到机器解压。"
-        >
-          <input
-            type="file"
-            accept=".zip"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className={`${inputCls} file:mr-3 file:rounded-lg file:border-0 file:bg-accent/10 file:px-3 file:py-1 file:text-sm file:text-accent`}
-            required
-          />
-          {file && (
-            <p className="text-xs text-ink-3">
-              已选择：{file.name}（{(file.size / 1024).toFixed(0)} KB）
-            </p>
-          )}
+    <form id="skill-form" onSubmit={submit} className="space-y-4">
+      <Field
+        label="Skill 包（.zip）"
+        hint="包内必须有 SKILL.md，且其 frontmatter 含 name（可选 description）。平台解析 SKILL.md 自动回填名称与描述，原样下发到机器解压。"
+      >
+        <input
+          type="file"
+          accept=".zip"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className={`${inputCls} file:mr-3 file:rounded-lg file:border-0 file:bg-accent/10 file:px-3 file:py-1 file:text-sm file:text-accent`}
+          required
+        />
+        {file && (
+          <p className="text-xs text-ink-3">
+            已选择：{file.name}（{(file.size / 1024).toFixed(0)} KB）
+          </p>
+        )}
+      </Field>
+      <p className="text-xs text-ink-3">
+        SKILL.md 示例：<br />
+        <code className="font-mono">{"---"}</code><br />
+        <code className="font-mono">name: code-review-checklist</code><br />
+        <code className="font-mono">description: 一句话说明这个 skill 干什么</code><br />
+        <code className="font-mono">{"---"}</code><br />
+        （以下是 skill 指令正文）
+      </p>
+      {create.isError && <p className="text-sm text-red-400">{String(create.error)}</p>}
+      <Button type="submit" disabled={create.isPending || !file}>
+        {create.isPending ? "上传中…" : "上传"}
+      </Button>
+    </form>
+  );
+}
+
+// RepoInstallForm installs a NEW skill straight from a git repository:
+// clone → register → bind source → record baseline, one call. The same
+// fields as the source-binding form (a repo already containing skills can
+// be bound later per-skill via the sync dialog).
+function RepoInstallForm({ onClose }: { onClose: () => void }) {
+  const install = useInstallSkillFromRepo();
+  const [repoUrl, setRepoUrl] = useState("");
+  const [provider, setProvider] = useState("");
+  const [branch, setBranch] = useState("main");
+  const [path, setPath] = useState("");
+  const [token, setToken] = useState("");
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    install.mutate(
+      {
+        repo_url: repoUrl.trim(),
+        provider: provider || undefined,
+        branch: branch.trim() || undefined,
+        path: path.trim(),
+        token: token.trim() || undefined,
+      },
+      { onSuccess: onClose }
+    );
+  };
+
+  return (
+    <form id="skill-install-form" onSubmit={submit} className="space-y-4">
+      <p className="text-xs text-ink-3">
+        从包含 skill 的远端仓库目录直接安装：平台克隆仓库、注册 skill、绑定来源并记录基线，
+        一步完成。之后可在该 skill 的「同步」里检查更新、一键拉取。
+      </p>
+      <Field label="仓库地址" hint="http(s) 地址，例如 https://github.com/owner/repo">
+        <input
+          value={repoUrl}
+          onChange={(e) => setRepoUrl(e.target.value)}
+          className={inputCls}
+          required
+          placeholder="https://github.com/owner/repo"
+        />
+      </Field>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="平台" hint="留空按域名自动识别">
+          <select
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">自动识别</option>
+            <option value="github">GitHub</option>
+            <option value="gitcode">GitCode</option>
+          </select>
         </Field>
-        <p className="text-xs text-ink-3">
-          SKILL.md 示例：<br />
-          <code className="font-mono">{"---"}</code><br />
-          <code className="font-mono">name: code-review-checklist</code><br />
-          <code className="font-mono">description: 一句话说明这个 skill 干什么</code><br />
-          <code className="font-mono">{"---"}</code><br />
-          （以下是 skill 指令正文）
-        </p>
-        {create.isError && <p className="text-sm text-red-400">{String(create.error)}</p>}
-      </form>
-    </Dialog>
+        <Field label="分支" hint="默认 main">
+          <input
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            className={inputCls}
+            placeholder="main"
+          />
+        </Field>
+      </div>
+      <Field
+        label="仓库内路径"
+        hint="skill 目录在仓库中的相对路径；留空表示仓库根目录"
+      >
+        <input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          className={inputCls}
+          placeholder="skills/code-review"
+        />
+      </Field>
+      <Field
+        label="访问 Token"
+        hint="拉取需要 token（私有仓必须）；GitHub/GitCode 的 personal access token 皆可"
+      >
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          className={inputCls}
+          placeholder="ghp_…（可选）"
+          autoComplete="new-password"
+        />
+      </Field>
+      {install.isError && <p className="text-sm text-red-400">{String(install.error)}</p>}
+      <Button type="submit" disabled={install.isPending || !repoUrl.trim()}>
+        {install.isPending ? "安装中…" : "从仓库安装"}
+      </Button>
+    </form>
   );
 }
 
 // SkillSyncDialog 是 Feature A 的唯一入口：
 // - 未绑定 source → 来源配置表单（repo_url/provider/branch/path/token）。
-// - 已绑定 → 只读 compare 结果（state / 身份 / 权限 / 文件差异）+ 拉取/推送/PR。
-// 所有写操作成功后，react-query 同时刷新技能列表与该技能的 compare。
+// - 已绑定 → 检查更新（轻量 SHA 探测）+ 拉取远端 + 提交 PR。
+//   direct push 与文件级 diff 已按第一期决策移除：本地改动只经 PR 上游，
+//   「有没有更新」用 check（ls-remote vs 基线）回答，不展开文件列表。
+// 所有写操作成功后，react-query 刷新技能列表；check 结果只存本地 state。
 function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void }) {
   const configure = useConfigureSkillSource();
   const clear = useClearSkillSource();
   const runSync = useRunSkillSync();
   const createPr = useCreateSkillPullRequest();
+  const check = useSkillSyncCheck();
 
   const [source, setSource] = useState<SkillSource | null>(skill.source ?? null);
   const [editing, setEditing] = useState(!skill.source);
   const [pr, setPr] = useState<SkillPullRequestResult | null>(null);
+  const [checkResult, setCheckResult] = useState<SkillSyncCheck | null>(null);
   const [repoUrl, setRepoUrl] = useState(skill.source?.repo_url ?? "");
   const [provider, setProvider] = useState(skill.source?.provider ?? "");
   const [branch, setBranch] = useState(skill.source?.branch || "main");
   const [path, setPath] = useState(skill.source?.path ?? "");
   const [token, setToken] = useState("");
-
-  // compare 只在「已绑定且不在编辑」时拉取；PR 成功后列表会刷新。
-  const compare = useSkillSyncCompare(skill.id, !editing && !!source);
 
   const submitSource = (e: React.FormEvent) => {
     e.preventDefault();
@@ -421,6 +537,7 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
           setSource(updated.source ?? null);
           setEditing(false);
           setPr(null);
+          setCheckResult(null);
           setToken("");
         },
       }
@@ -434,6 +551,7 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
         setSource(null);
         setEditing(true);
         setPr(null);
+        setCheckResult(null);
         setRepoUrl("");
         setProvider("");
         setBranch("main");
@@ -443,22 +561,51 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
     });
   };
 
-  const data = compare.data;
-  const canPush = Boolean(data?.can_push);
-  const entries: SyncEntry[] = data?.entries ?? [];
-  const counts = data?.counts;
-  const state = stateMeta(data?.state);
+  const runCheck = () => {
+    setPr(null);
+    check.mutate(skill.id, {
+      onSuccess: (result) => setCheckResult(result),
+    });
+  };
+
+  const pull = () => {
+    if (
+      !confirm(
+        "拉取远端会用远端文件覆盖本地 skill 目录（含 package.zip），本地未通过 PR 提交的改动会丢失。确定继续？"
+      )
+    ) {
+      return;
+    }
+    runSync.mutate(
+      { id: skill.id, direction: "pull" },
+      {
+        onSuccess: () => {
+          setCheckResult(null);
+          setPr(null);
+        },
+      }
+    );
+  };
+
+  const submitPr = () => {
+    createPr.mutate(
+      { id: skill.id },
+      {
+        onSuccess: (result) => {
+          setPr(result);
+          setCheckResult(null);
+        },
+      }
+    );
+  };
 
   // Distinct keys force React to remount the footer when switching between the
-  // compare view and the edit form. Without this, React reuses the last button
+  // sync view and the edit form. Without this, React reuses the last button
   // DOM node and mutates it into the form's submit button; the same click then
   // submits the form with unchanged values, so "修改来源" appeared broken.
   const configuredFooter = (
     <div key="sync-view" className="contents">
       <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
-      <Button type="button" variant="ghost" onClick={() => compare.refetch()} disabled={compare.isFetching}>
-        {compare.isFetching ? "比较中…" : "重新比较"}
-      </Button>
       <Button type="button" variant="ghost" onClick={() => setEditing(true)}>修改来源</Button>
     </div>
   );
@@ -480,7 +627,9 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
   );
 
   const mutationError =
-    runSync.error ?? createPr.error ?? configure.error ?? clear.error;
+    runSync.error ?? createPr.error ?? configure.error ?? clear.error ?? check.error;
+
+  const checkBadge = checkResult ? stateMeta(checkResult.state) : null;
 
   return (
     <Dialog
@@ -499,8 +648,8 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
         {editing ? (
           <form id="skill-source-form" onSubmit={submitSource} className="space-y-4">
             <p className="text-xs text-ink-3">
-              绑定一个包含该 skill 的远端仓库目录。平台以仓库文件为准做比较：
-              本地改动可推送/发起 PR，远端改动可拉取覆盖本地（会重写本地文件与 package.zip）。
+              绑定一个包含该 skill 的远端仓库目录。绑定后可检查更新、一键拉取（拉取会用远端
+              文件重写本地目录与 package.zip）；本地改动通过 PR 提交，不支持直接推送。
             </p>
             <Field label="仓库地址" hint="http(s) 地址，例如 https://github.com/owner/repo">
               <input
@@ -547,8 +696,8 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
               label="访问 Token"
               hint={
                 source?.has_token
-                  ? "已保存 token：留空保留，填写则替换。推送 / PR 需要写权限。"
-                  : "同步（拉取/推送）与发起 PR 都需要 token 具备仓库写权限；未配置 token 时同步会返回 403。"
+                  ? "已保存 token：留空保留，填写则替换。"
+                  : "拉取需要 token（私有仓必须）；提交 PR 还要求 token 具备仓库写权限。"
               }
             >
               <input
@@ -593,7 +742,7 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
                     <span>尚未同步过</span>
                   )}
                   {source.last_remote_sha && (
-                    <span className="font-mono">远端 {source.last_remote_sha.slice(0, 8)}</span>
+                    <span className="font-mono">基线 {source.last_remote_sha.slice(0, 8)}</span>
                   )}
                   <button
                     type="button"
@@ -628,150 +777,77 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
               </div>
             )}
 
-            <div className="flex items-center gap-2">
-              {compare.isLoading ? (
-                <span className="text-xs text-ink-3">比较中…</span>
-              ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {check.isPending ? (
+                <span className="text-xs text-ink-3">检查中…</span>
+              ) : checkBadge ? (
                 <span
-                  className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${state.cls}`}
+                  className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${checkBadge.cls}`}
                 >
-                  {state.label}
+                  {checkBadge.label}
+                </span>
+              ) : (
+                <span className="text-xs text-ink-3">尚未检查</span>
+              )}
+              {checkResult?.has_update ? (
+                <span className="text-[11px] text-amber-300">远端有可拉取的更新</span>
+              ) : checkResult && !checkResult.has_update && checkResult.state === "in_sync" ? (
+                <span className="text-[11px] text-emerald-300/80">本地已是最新</span>
+              ) : null}
+              {checkResult?.remote_sha && (
+                <span
+                  className="font-mono text-[11px] text-ink-3"
+                  title={checkResult.remote_sha}
+                >
+                  远端 {checkResult.remote_sha.slice(0, 8)}
                 </span>
               )}
-              <span
-                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${
-                  canPush
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                    : "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                }`}
-              >
-                {canPush ? "有推送/PR 权限" : "无推送权限"}
-              </span>
-              {data?.identity && (
-                <span className="truncate text-[11px] text-ink-3">身份 {data.identity}</span>
-              )}
-              {data?.checked_at && (
-                <span className="ml-auto text-[11px] text-ink-3" title={fullTime(data.checked_at)}>
-                  {relTime(data.checked_at)}比较
+              {checkResult?.checked_at && (
+                <span
+                  className="ml-auto text-[11px] text-ink-3"
+                  title={fullTime(checkResult.checked_at)}
+                >
+                  {relTime(checkResult.checked_at)}检查
                 </span>
               )}
             </div>
 
-            {data?.local_missing && (
-              <p className="text-[11px] text-amber-300">
-                本地技能文件缺失（runs/skills 被清理或数据目录不完整）。拉取远端可恢复；推送与提交 PR 暂不可用。
-              </p>
-            )}
-
-            {counts && (
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                <span className="text-emerald-300">远端新增 {counts.added}</span>
-                <span className="text-amber-300">修改 {counts.modified}</span>
-                <span className="text-red-300">本地独有 {counts.removed}</span>
-                <span className="text-ink-3">未变化 {counts.unchanged}</span>
-                {data?.base_branch && <span className="text-ink-3">基线 {data.base_branch}</span>}
-                {data?.remote_sha && (
-                  <span className="font-mono text-ink-3">远端 {data.remote_sha.slice(0, 8)}</span>
-                )}
-              </div>
-            )}
-
-            {!compare.isError && entries.length > 0 && (
+            {checkResult?.state === "unknown" && (
               <p className="text-[11px] leading-relaxed text-ink-3">
-                新增=远端有本地无；本地独有=本地有远端无（拉取会删除）。
+                尚无同步基线（刚绑定来源或从未拉取过）：check 只能探测远端分支头，无法判断新旧。
+                先拉取一次建立基线。
               </p>
             )}
-
-            {compare.isError ? (
-              <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                比较失败：{String(compare.error)}
-              </p>
-            ) : entries.length ? (
-              <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-line bg-surface-1/60 px-3 py-2">
-                {SYNC_GROUPS.map((g) => {
-                  const list = entries.filter((e) => e.status === g.key);
-                  if (!list.length) return null;
-                  return (
-                    <div key={g.key}>
-                      <div className={`mb-1 text-[11px] font-medium ${g.cls}`}>
-                        {g.label}（{list.length}）
-                      </div>
-                      <ul className="space-y-0.5">
-                        {list.map((e) => (
-                          <li
-                            key={`${g.key}:${e.path}`}
-                            className="flex items-center gap-2 font-mono text-[11px] text-ink-2"
-                          >
-                            <span className={`w-3 shrink-0 ${g.cls}`}>{g.sign}</span>
-                            <span className="truncate" title={e.path}>
-                              {e.path}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : compare.isLoading ? (
-              <Skeleton className="h-16 w-full" />
-            ) : data ? (
-              <p className="rounded-md border border-line bg-surface-1/60 px-3 py-2 text-xs text-ink-3">
-                本地与远端一致，没有文件差异。
-              </p>
-            ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
-                onClick={() => {
-                  if (
-                    entries.length &&
-                    !confirm("拉取远端会用远端文件覆盖本地 skill 目录（含 package.zip），确定继续？")
-                  ) {
-                    return;
-                  }
-                  runSync.mutate({ id: skill.id, direction: "pull" });
-                }}
-                disabled={runSync.isPending}
+                onClick={runCheck}
+                disabled={check.isPending || runSync.isPending}
               >
-                {runSync.isPending && runSync.variables?.direction === "pull"
-                  ? "拉取中…"
-                  : "拉取远端"}
+                {check.isPending ? "检查中…" : "检查更新"}
               </Button>
               <Button
                 variant="outline"
-                onClick={() => runSync.mutate({ id: skill.id, direction: "push" })}
-                disabled={!canPush || runSync.isPending}
-                title={canPush ? "把本地改动直接提交到配置的分支" : "当前 token 没有推送权限"}
+                onClick={pull}
+                disabled={runSync.isPending || check.isPending}
               >
-                {runSync.isPending && runSync.variables?.direction === "push"
-                  ? "推送中…"
-                  : "推送到远端"}
+                {runSync.isPending ? "拉取中…" : "拉取远端"}
               </Button>
               <Button
                 variant="outline"
-                onClick={() => createPr.mutate({ id: skill.id })}
-                disabled={!canPush || createPr.isPending}
-                title={canPush ? "把本地改动推到新分支并创建 PR" : "当前 token 没有推送/PR 权限"}
+                onClick={submitPr}
+                disabled={createPr.isPending}
+                title="把本地改动推到 flowloop/skill-* 分支并创建 PR（直接推送已移除，这是唯一上游通道）"
               >
                 {createPr.isPending ? "创建 PR 中…" : "提交 PR"}
               </Button>
-              {!canPush && (
-                <span className="text-[11px] text-ink-3">
-                  当前 token 无仓库写权限：同步（含拉取）与 PR 都会被拒绝（403），请在「修改来源」里替换为有写权限的 token。
-                </span>
-              )}
             </div>
 
             {runSync.isSuccess && runSync.data && (
               <p className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
-                {runSync.data.action === "pull"
-                  ? "已拉取远端，本地文件与 package.zip 已更新。"
-                  : "已推送本地改动到远端分支"}
-                {runSync.data.action !== "pull" && runSync.data.commit
-                  ? `（commit ${runSync.data.commit.slice(0, 8)}）`
-                  : ""}
+                已拉取远端，本地文件与 package.zip 已更新。
+                {runSync.data.remote_sha ? `（远端 ${runSync.data.remote_sha.slice(0, 8)}）` : ""}
               </p>
             )}
 
@@ -783,14 +859,14 @@ function SkillSyncDialog({ skill, onClose }: { skill: Skill; onClose: () => void
                   String(mutationError).includes("permission") ||
                   String(mutationError).includes("权限")) && (
                   <span className="mt-1 block text-red-300/80">
-                    推送 / PR 需要 token 具备仓库写权限；可先在「修改来源」里替换 token。
+                    提交 PR 需要 token 具备仓库写权限；可先在「修改来源」里替换 token。
                   </span>
                 )}
                 {(String(mutationError).includes("no local changes") ||
                   String(mutationError).includes("没有本地改动") ||
                   String(mutationError).includes("no changes")) && (
                   <span className="mt-1 block text-red-300/80">
-                    本地与远端没有差异，无需推送或提交 PR。
+                    本地与远端没有差异，无需提交 PR。
                   </span>
                 )}
               </p>

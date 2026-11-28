@@ -30,46 +30,32 @@ export interface SkillSource {
   path: string; // '' = repo root containing the skill
   has_token?: boolean;
   last_synced_at?: string;
-  last_sync_action?: string; // '' | pulled | pushed | pr
+  last_sync_action?: string; // '' | pulled | installed | pr
   last_remote_sha?: string;
 }
 
-// SyncEntry is one file difference between the local skill dir and the
-// remote repo (paths relative to the configured repo path).
-export interface SyncEntry {
-  path: string;
-  status: "added" | "modified" | "removed";
-  local_sha256?: string;
-  remote_sha256?: string;
-}
-
-export interface SyncCounts {
-  added: number;
-  modified: number;
-  removed: number;
-  unchanged: number;
-}
-
-// SyncResult is GET /skills/{id}/sync (read-only compare, still probes the
-// configured token's push permission) and the mutation responses for
-// POST /skills/{id}/sync.
+// SyncResult is the POST /skills/{id}/sync pull response (the read-only
+// compare shape — state/entries/counts/can_push — was removed with the web
+// compare view; the CLI still reads it from GET /skills/{id}/sync).
 export interface SyncResult {
   skill_id?: string;
-  identity?: string;
-  can_push?: boolean;
-  state?: "in_sync" | "local_ahead" | "remote_ahead" | "diverged";
-  base_branch?: string;
   remote_sha?: string;
-  entries?: SyncEntry[];
-  counts?: SyncCounts;
-  checked_at?: string;
-  // local_missing: the skill's local files are gone (runs/skills wiped, or a
-  // DB restored without runs/). A pull restores them; push/PR stay blocked.
-  local_missing?: boolean;
-  // mutation extras
-  action?: string; // pulled | pushed
+  action?: string; // "pulled"
   branch?: string;
-  commit?: string;
+  identity?: string; // "" for pull (no push permission involved)
+}
+
+// SkillSyncCheck is GET /skills/{id}/check — the lightweight "is the remote
+// ahead" probe (ls-remote SHA vs the last-sync baseline; no clone, no diff).
+export interface SkillSyncCheck {
+  skill_id: string;
+  state: "remote_ahead" | "in_sync" | "unknown";
+  remote_sha: string;
+  last_sha: string;
+  // The one-bit answer the UI needs: a pull would change local files.
+  has_update: boolean;
+  branch: string;
+  checked_at: string;
 }
 
 // SkillPullRequestResult is POST /skills/{id}/pull-request's response.
